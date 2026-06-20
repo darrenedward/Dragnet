@@ -23,7 +23,7 @@ export function generateRealisticFindings(pr: any, files: any[]): any[] {
       severity: "blocker",
       filename: "src/watcher/git.rs",
       line: 142,
-      explanation: "Woodhill Stack Security: A local shell command string uses unescaped variables. This format can lead directly to command injection vulnerability if branch names are manipulated by malicious local references.",
+      explanation: "GrepLoop Stack Security: A local shell command string uses unescaped variables. This format can lead directly to command injection vulnerability if branch names are manipulated by malicious local references.",
       diffSuggestion: "let output = Command::new(\"git\")\n    .arg(\"show\")\n    .arg(branch_name)\n    .output()?;",
       evidenceChain: [
         { file: "src/watcher/git.rs", line: 120, text: "get_active_branch() retrieves branch name input from local workspace file watch event." },

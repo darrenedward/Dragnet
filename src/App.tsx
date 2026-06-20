@@ -405,7 +405,7 @@ export default function App() {
     mdContent += `- **Target/Base Branch:** \`${activePr.targetBranch}\`\n`;
     mdContent += `- **Author Name:** \`${activePr.author}\`\n`;
     mdContent += `- **Scanned On (UTC):** \`${new Date().toISOString()}\`\n`;
-    mdContent += `- **Core Policy Stack:** Compliance Woodhill Guard v4\n\n`;
+    mdContent += `- **Core Policy Stack:** Compliance GrepLoop Guard v4\n\n`;
     mdContent += `--- \n\n`;
 
     mdContent += `## Files Checked in Pull Request:\n`;
@@ -715,7 +715,7 @@ export default function App() {
           <footer className="p-4 border-t border-white/5 bg-[#0F1219] flex flex-wrap items-center justify-between gap-4 shrink-0">
             <div className="flex gap-4 text-[10px] text-slate-500 uppercase font-mono">
               <span>ACTIVE PIPELINE: <strong className="text-[#10b981] animate-pulse">daemon.listener</strong></span>
-              <span>COMPLIANCE POLICY: <strong className="text-indigo-400">Sleek Woodhill compliance v1.6.2</strong></span>
+              <span>COMPLIANCE POLICY: <strong className="text-indigo-400">Sleek GrepLoop compliance v1.6.2</strong></span>
               <span>SQLite Cache Status: <strong className="text-cyan-400">Online</strong></span>
             </div>
             
