@@ -1,7 +1,9 @@
 "use client";
 
+import { useState } from "react";
 import { motion } from "motion/react";
-import { AlertCircle, Database, X } from "lucide-react";
+import { AlertCircle, Database, FolderOpen, X } from "lucide-react";
+import DirectoryPickerModal from "./DirectoryPickerModal";
 
 interface Props {
   onClose: () => void;
@@ -38,6 +40,8 @@ export default function AddRepoModal({
   newQuietPeriod,
   setNewQuietPeriod,
 }: Props) {
+  const [showDirPicker, setShowDirPicker] = useState(false);
+
   return (
     <div className="fixed inset-0 bg-black/80 backdrop-blur-xs flex items-center justify-center z-50 p-4 select-none">
       <motion.div
@@ -79,14 +83,25 @@ export default function AddRepoModal({
           </Field>
 
           <Field label="Absolute Folder Disk Path">
-            <input
-              required
-              type="text"
-              placeholder="e.g. ./ or /Users/work/server"
-              value={newRepoPath}
-              onChange={(e) => setNewRepoPath(e.target.value)}
-              className={inputClass}
-            />
+            <div className="flex gap-2">
+              <input
+                required
+                type="text"
+                placeholder="e.g. ./ or /Users/work/server"
+                value={newRepoPath}
+                onChange={(e) => setNewRepoPath(e.target.value)}
+                className={inputClass}
+              />
+              <button
+                type="button"
+                onClick={() => setShowDirPicker(true)}
+                className="shrink-0 px-3 bg-slate-900 hover:bg-slate-800 border border-white/10 rounded text-cyan-400 transition-all cursor-pointer flex items-center gap-1"
+                title="Browse filesystem"
+              >
+                <FolderOpen size={14} />
+                <span className="text-[10px] uppercase tracking-wider">Browse</span>
+              </button>
+            </div>
             <p className="text-[9px] text-slate-600 mt-1">
               * Pro tip: Input <strong className="text-slate-400">./</strong> to read branches from the current GrepLoop checkout.
             </p>
@@ -153,6 +168,17 @@ export default function AddRepoModal({
           </div>
         </form>
       </motion.div>
+
+      {showDirPicker && (
+        <DirectoryPickerModal
+          initialPath={newRepoPath}
+          onClose={() => setShowDirPicker(false)}
+          onSelect={(p) => {
+            setNewRepoPath(p);
+            setShowDirPicker(false);
+          }}
+        />
+      )}
     </div>
   );
 }
