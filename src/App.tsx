@@ -1,36 +1,36 @@
 "use client";
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { 
-  GitBranch, 
-  Zap, 
-  BookOpen, 
-  Activity, 
-  FileCode, 
-  History, 
-  Plus, 
-  Trash2, 
-  Terminal, 
-  Search, 
-  Sliders, 
-  Database, 
-  CornerDownRight, 
-  Sparkles, 
-  ShieldAlert, 
-  CheckCircle2, 
-  AlertTriangle, 
-  Settings, 
-  X, 
-  Menu, 
-  ArrowRight, 
-  ChevronRight, 
-  ChevronDown, 
-  Download, 
-  RefreshCw, 
-  User, 
-  Calendar, 
-  Hash, 
-  AlertCircle, 
+import {
+  GitBranch,
+  Zap,
+  BookOpen,
+  Activity,
+  FileCode,
+  History,
+  Plus,
+  Trash2,
+  Terminal,
+  Search,
+  Sliders,
+  Database,
+  CornerDownRight,
+  Sparkles,
+  ShieldAlert,
+  CheckCircle2,
+  AlertTriangle,
+  Settings,
+  X,
+  Menu,
+  ArrowRight,
+  ChevronRight,
+  ChevronDown,
+  Download,
+  RefreshCw,
+  User,
+  Calendar,
+  Hash,
+  AlertCircle,
   Check,
   Code2,
   FileCode2,
@@ -41,93 +41,24 @@ import {
 import PRDTracker from './components/PRDTracker';
 import GitWatcher from './components/GitWatcher';
 import CodebaseGraph from './components/CodebaseGraph';
-
-interface Repository {
-  id: string;
-  name: string;
-  path: string;
-  baseBranch: string;
-  activeBranch: string;
-  triggerMode: 'auto' | 'mention';
-  quietPeriodSeconds: number;
-  branchPattern: string;
-  status: 'idle' | 'detected' | 'stabilizing' | 'ready' | 'reviewing';
-  lastCommitHash: string;
-  lastCommitMessage: string;
-  reviewsCount: number;
-  prCount?: number;
-}
-
-interface PullRequest {
-  id: string;
-  repoId: string;
-  title: string;
-  sourceBranch: string;
-  targetBranch: string;
-  status: string;
-  author: string;
-  commitHash: string;
-  createdAt: string;
-  description: string;
-  rating?: number | null;
-}
-
-const getStatusBadgeStyle = (status: string) => {
-  switch (status) {
-    case 'In Progress':
-      return 'bg-blue-500/10 text-blue-400 border border-blue-500/20';
-    case 'Completed':
-    case 'scanned':
-      return 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20';
-    case 'Failed':
-      return 'bg-rose-500/10 text-rose-400 border border-rose-500/20';
-    case 'Pending':
-    case 'open':
-    default:
-      return 'bg-amber-500/10 text-amber-400 border border-amber-500/20';
-  }
-};
-
-interface PRFile {
-  id: string;
-  prId: string;
-  filename: string;
-  status: 'modified' | 'added' | 'deleted';
-  additions: number;
-  deletions: number;
-  originalContent: string;
-  modifiedContent: string;
-  diff: string;
-}
-
-interface ReviewFinding {
-  id: string;
-  prId: string;
-  repoId: string;
-  category: 'Security' | 'Correctness' | 'Performance' | 'Style';
-  severity: 'blocker' | 'warning' | 'suggestion';
-  filename: string;
-  line: number;
-  explanation: string;
-  diffSuggestion: string;
-  evidenceChain?: string;
-  timestamp: string;
-}
-
-interface ActivityLog {
-  id: string;
-  action: string;
-  target: string;
-  time: string;
-  status: 'done' | 'pending';
-}
+import DbConfigView from './components/views/DbConfigView';
+import {
+  getStatusBadgeStyle,
+  type ActiveTab,
+  type ActivityLog,
+  type DbConfig,
+  type PRFile,
+  type PullRequest,
+  type Repository,
+  type ReviewFinding,
+} from './lib/types';
 
 export default function App() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-  const [activeTab, setActiveTab] = useState<'prs' | 'watcher' | 'roadmap' | 'db_config' | 'codebase'>('prs');
+  const [activeTab, setActiveTab] = useState<ActiveTab>('prs');
 
   // Multi-Database configuration states
-  const [dbConfig, setDbConfig] = useState({
+  const [dbConfig, setDbConfig] = useState<DbConfig>({
     dialect: 'postgresql',
     host: 'localhost',
     port: '',
@@ -875,228 +806,19 @@ export default function App() {
             
             <AnimatePresence mode="wait">
               {activeTab === 'db_config' && (
-                <motion.div 
-                  key="db-config-frame"
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -10 }}
-                  transition={{ duration: 0.1 }}
-                  className="flex flex-col flex-1 overflow-y-auto space-y-5"
-                >
-                  <div className="p-6 bg-[#0F1219] border border-white/10 rounded-xl relative overflow-hidden">
-                    <div className="absolute top-0 right-0 w-48 h-48 bg-cyan-500/[0.02] rounded-full blur-3xl pointer-events-none" />
-                    
-                    <div className="flex items-center gap-3 mb-4">
-                      <div className="p-2 bg-cyan-500/10 text-cyan-405 rounded-lg">
-                        <Database size={20} />
-                      </div>
-                      <div>
-                        <h3 className="text-sm font-bold text-white uppercase tracking-wider font-mono">Dynamic Database Integration Pool</h3>
-                        <p className="text-xs text-slate-400">Specify connection settings for your preferred backend database. Hot-swapping and automated schemas initialized instantly.</p>
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-4 gap-3 bg-slate-950/65 p-4 rounded-xl border border-white/5 mb-6">
-                      <div className="font-mono text-center md:border-r md:border-white/5 p-2">
-                        <div className="text-[10px] text-slate-500 uppercase">Active Dialect</div>
-                        <div className="text-xs font-bold text-cyan-400 uppercase mt-1">{dbConfig.dialect}</div>
-                      </div>
-                      <div className="font-mono text-center md:border-r md:border-white/5 p-2">
-                        <div className="text-[10px] text-slate-500 uppercase">Registered Projects</div>
-                        <div className="text-xs font-bold text-white mt-1">{repos.length}</div>
-                      </div>
-                      <div className="font-mono text-center md:border-r md:border-white/5 p-2">
-                        <div className="text-[10px] text-slate-500 uppercase">Detected PRs</div>
-                        <div className="text-xs font-bold text-indigo-400 mt-1">{prs.length}</div>
-                      </div>
-                      <div className="font-mono text-center p-2">
-                        <div className="text-[10px] text-slate-500 uppercase">Status</div>
-                        <div className={`text-[10px] font-bold uppercase mt-1 px-1.5 py-0.5 rounded border inline-block ${
-                          dbStatus === 'configured'
-                            ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20'
-                            : dbStatus === 'unconfigured'
-                            ? 'text-amber-400 bg-amber-500/10 border-amber-500/20'
-                            : 'text-slate-400 bg-slate-500/10 border-slate-500/20'
-                        }`}>
-                          {dbStatus === 'configured' ? 'Configured' : dbStatus === 'unconfigured' ? 'Not Configured' : 'Checking'}
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                      {/* Left Block: Connection details */}
-                      <div className="lg:col-span-2 space-y-4">
-                        <div className="space-y-3">
-                          <label className="text-[11px] font-mono text-slate-400 uppercase font-bold block">Database Choice</label>
-                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                            {[
-                              { id: 'postgresql', label: 'PostgreSQL', desc: 'Enterprise relational.' },
-                              { id: 'supabase', label: 'Supabase', desc: 'PostgreSQL Cloud DB with Connection Pool.' }
-                            ].map(choice => (
-                              <button
-                                key={choice.id}
-                                onClick={() => setDbConfig(prev => ({ ...prev, dialect: choice.id }))}
-                                className={`p-3 rounded-lg text-left transition-all border flex flex-col justify-between ${
-                                  dbConfig.dialect === choice.id
-                                    ? 'bg-cyan-500/10 border-cyan-400 text-white ring-1 ring-cyan-500/30'
-                                    : 'bg-slate-900/50 border-white/5 text-slate-400 hover:bg-white/5'
-                                }`}
-                              >
-                                <span className="text-xs font-bold uppercase font-mono">{choice.label}</span>
-                                <span className="text-[9px] text-slate-500 mt-1 font-sans">{choice.desc}</span>
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-
-                        {dbConfig.dialect === 'supabase' ? (
-                          <div className="space-y-2 max-w-md">
-                            <label className="text-[10px] uppercase font-mono text-slate-400 block">Supabase Connection Pool String</label>
-                            <input
-                              type="text"
-                              value={dbConfig.host}
-                              onChange={(e) => setDbConfig(prev => ({ ...prev, host: e.target.value }))}
-                              className="w-full bg-slate-950 border border-white/10 rounded-lg px-3 py-2 text-xs text-slate-100 font-mono focus:border-cyan-500 outline-none animate-fadeIn"
-                              placeholder="postgresql://...pooler.supabase.com:6543/postgres"
-                            />
-                            <p className="text-[10px] text-slate-500 italic">Enter full pooled connection string from Supabase dashboard (use session/transaction pool port 6543).</p>
-                          </div>
-                        ) : (
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-2xl bg-slate-900/25 p-4 rounded-xl border border-white/5 animate-fadeIn">
-                            <div className="space-y-1.5">
-                              <label className="text-[10px] uppercase font-mono text-slate-400 block">Hostname / Host IP</label>
-                              <input
-                                type="text"
-                                value={dbConfig.host}
-                                onChange={(e) => setDbConfig(prev => ({ ...prev, host: e.target.value }))}
-                                className="w-full bg-slate-950 border border-white/10 rounded-lg px-3 py-2 text-xs text-slate-100 font-mono focus:border-cyan-500 outline-none"
-                                placeholder="e.g. localhost or cloudsql instance ip"
-                              />
-                            </div>
-                            <div className="space-y-1.5">
-                              <label className="text-[10px] uppercase font-mono text-slate-400 block">Port</label>
-                              <input
-                                type="text"
-                                value={dbConfig.port}
-                                onChange={(e) => setDbConfig(prev => ({ ...prev, port: e.target.value }))}
-                                className="w-full bg-slate-950 border border-white/10 rounded-lg px-3 py-2 text-xs text-slate-100 font-mono focus:border-cyan-500 outline-none"
-                                placeholder={dbConfig.dialect === 'postgresql' ? '5432' : '6543'}
-                              />
-                            </div>
-                            <div className="space-y-1.5">
-                              <label className="text-[10px] uppercase font-mono text-slate-400 block">Username</label>
-                              <input
-                                type="text"
-                                value={dbConfig.username}
-                                onChange={(e) => setDbConfig(prev => ({ ...prev, username: e.target.value }))}
-                                className="w-full bg-slate-950 border border-white/10 rounded-lg px-3 py-2 text-xs text-slate-100 font-mono focus:border-cyan-500 outline-none"
-                                placeholder="e.g. postgres or root"
-                              />
-                            </div>
-                            <div className="space-y-1.5">
-                              <label className="text-[10px] uppercase font-mono text-slate-450 block">Password</label>
-                              <input
-                                type="password"
-                                value={dbConfig.password}
-                                onChange={(e) => setDbConfig(prev => ({ ...prev, password: e.target.value }))}
-                                className="w-full bg-slate-950 border border-white/10 rounded-lg px-3 py-2 text-xs text-slate-100 font-mono focus:border-cyan-500 outline-none"
-                                placeholder="Enter password to test or save"
-                              />
-                            </div>
-                            <div className="space-y-1.5 sm:col-span-2">
-                              <label className="text-[10px] uppercase font-mono text-slate-400 block">Database Name</label>
-                              <input
-                                type="text"
-                                value={dbConfig.database}
-                                onChange={(e) => setDbConfig(prev => ({ ...prev, database: e.target.value }))}
-                                className="w-full bg-slate-950 border border-white/10 rounded-lg px-3 py-2 text-xs text-slate-100 font-mono focus:border-cyan-500 outline-none"
-                                placeholder="e.g. devworld or greploop"
-                              />
-                            </div>
-                          </div>
-                        )}
-
-                        <div className="flex flex-wrap items-center gap-3 pt-2">
-                          <button
-                            onClick={handleTestDbConnection}
-                            disabled={isTestingDb}
-                            className="bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-slate-300 border border-white/10 font-mono text-xs font-bold px-4 py-2 rounded-lg transition-all flex items-center gap-2 cursor-pointer"
-                          >
-                            {isTestingDb ? (
-                              <RefreshCw size={13} className="animate-spin text-cyan-400" />
-                            ) : (
-                              <Terminal size={13} className="text-cyan-400" />
-                            )}
-                            <span>{isTestingDb ? "Testing Connection..." : "Test Connection"}</span>
-                          </button>
-
-                          <button
-                            onClick={handleSaveDbConfig}
-                            disabled={isSavingDb}
-                            className="bg-cyan-500 hover:bg-cyan-600 disabled:opacity-50 active:scale-[0.99] text-black font-semibold text-xs px-4 py-2 rounded-lg transition-all flex items-center gap-2 shadow-[0_4px_12px_rgba(6,182,212,0.15)] cursor-pointer"
-                          >
-                            {isSavingDb ? (
-                              <RefreshCw size={13} className="animate-spin" />
-                            ) : (
-                              <Database size={13} />
-                            )}
-                            <span>{isSavingDb ? "Saving..." : "Save to .env.local"}</span>
-                          </button>
-                          <span className="text-[10px] text-slate-500 italic">A dev server restart is required for the new connection to take effect.</span>
-                        </div>
-
-                        {dbTestResult && (
-                          <div className={`p-4 rounded-lg text-xs font-mono border animate-fadeIn ${
-                            dbTestResult.success 
-                              ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' 
-                              : 'bg-rose-500/10 border-rose-500/20 text-rose-400'
-                          }`}>
-                            <div className="font-bold uppercase mb-1">{dbTestResult.success ? "Verification Succeeded" : "Verification Failed"}</div>
-                            <div>{dbTestResult.message}</div>
-                          </div>
-                        )}
-
-                        {dbSaveResult && (
-                          <div className={`p-4 rounded-lg text-xs font-mono border animate-fadeIn ${
-                            dbSaveResult.success 
-                              ? 'bg-cyan-500/10 border-cyan-500/20 text-cyan-400' 
-                              : 'bg-rose-500/10 border-rose-500/20 text-rose-400'
-                          }`}>
-                            <div className="font-bold uppercase mb-1">{dbSaveResult.success ? "Configuration Applied" : "Application Failed"}</div>
-                            <div>{dbSaveResult.message}</div>
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Right Block: Explanatory card */}
-                      <div className="space-y-4">
-                        <div className="p-4 bg-slate-900/40 rounded-xl border border-white/5 space-y-4">
-                          <h4 className="text-xs font-bold font-mono text-slate-300 uppercase flex items-center gap-1.5">
-                            <Sparkles size={13} className="text-cyan-400" />
-                            <span>Why Multi-Database?</span>
-                          </h4>
-                          <p className="text-[11px] leading-relaxed text-slate-400">
-                            Professional developers deploy projects across diverse environments. 
-                            GrepLoop's <strong className="text-cyan-400">Pluggable DB Pool</strong> decouples business data from your storage driver:
-                          </p>
-                          <ul className="space-y-2 text-[10px] text-slate-500 pl-3 list-disc">
-                            <li><strong className="text-slate-300">Transient Sandbox:</strong> Work immediately anywhere with zero setup using direct local SQLite instances.</li>
-                            <li><strong className="text-slate-300">Production-ready Relational Postgres:</strong> Bridge with enterprise infrastructure or shared Google Cloud SQL/Supabase services.</li>
-                            <li><strong className="text-slate-300">Real-time Schema Builder:</strong> Simply input parameters, click apply. The backend dynamically shifts pools, boots schemas, and auto-seeds baseline indicators.</li>
-                          </ul>
-                        </div>
-
-                        <div className="p-4 rounded-xl border border-amber-500/10 bg-amber-500/[0.02] text-[11px] text-amber-500/85">
-                          <h5 className="font-bold font-mono uppercase mb-1 flex items-center gap-1">
-                            <AlertCircle size={12} />
-                            <span>Hot Swap Safety Guard</span>
-                          </h5>
-                          <span>Dynamic hot swaps trigger real-time connection pooling teardown and reconstruction. Running scans will fail gracefully and require triggering again after configuration shifts.</span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </motion.div>
+                <DbConfigView
+                  dbConfig={dbConfig}
+                  setDbConfig={setDbConfig}
+                  dbStatus={dbStatus}
+                  reposCount={repos.length}
+                  prsCount={prs.length}
+                  isTestingDb={isTestingDb}
+                  isSavingDb={isSavingDb}
+                  dbTestResult={dbTestResult}
+                  dbSaveResult={dbSaveResult}
+                  onTest={handleTestDbConnection}
+                  onSave={handleSaveDbConfig}
+                />
               )}
 
               {activeTab === 'codebase' && (
