@@ -21,3 +21,5 @@ src/generated/prisma/
 .idea/
 .vscode/
 *.swp
+*.db
+data.db
