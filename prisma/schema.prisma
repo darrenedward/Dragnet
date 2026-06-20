@@ -1,0 +1,137 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Repository {
+  id                 String          @id
+  name               String
+  path               String
+  baseBranch         String
+  activeBranch       String
+  triggerMode        String
+  quietPeriodSeconds Int
+  branchPattern      String
+  status             String
+  lastCommitHash     String
+  lastCommitMessage  String
+  lastActivityTime   String
+  stabilizationTimer Int
+  reviewsCount       Int
+  reviewHistory      ReviewHistory[]
+  pullRequests       PullRequest[]
+
+  @@map("repositories")
+}
+
+model ReviewHistory {
+  id            String     @id
+  repoId        String
+  repoName      String
+  branch        String
+  commitHash    String
+  triggerReason String
+  status        String
+  timestamp     String
+  repository    Repository @relation(fields: [repoId], references: [id], onDelete: Cascade)
+
+  @@map("review_history")
+}
+
+model PullRequest {
+  id             String           @id
+  repoId         String
+  title          String
+  sourceBranch   String
+  targetBranch   String
+  status         String
+  author         String
+  commitHash     String
+  createdAt      String
+  description    String?
+  rating         Int?
+  repository     Repository       @relation(fields: [repoId], references: [id], onDelete: Cascade)
+  prFiles        PrFile[]
+  reviewFindings ReviewFinding[]
+
+  @@map("pull_requests")
+}
+
+model PrFile {
+  id              String      @id
+  prId            String
+  filename        String
+  status          String
+  additions       Int
+  deletions       Int
+  originalContent String?
+  modifiedContent String?
+  diff            String?
+  pullRequest     PullRequest @relation(fields: [prId], references: [id], onDelete: Cascade)
+
+  @@map("pr_files")
+}
+
+model ReviewFinding {
+  id             String      @id
+  prId           String
+  repoId         String
+  category       String
+  severity       String
+  filename       String
+  line           Int?
+  explanation    String
+  diffSuggestion String?
+  evidenceChain  String?
+  timestamp      String
+  pullRequest    PullRequest @relation(fields: [prId], references: [id], onDelete: Cascade)
+
+  @@map("review_findings")
+}
+
+model Symbol {
+  id         String  @id
+  repoId     String
+  filePath   String
+  name       String
+  kind       String
+  language   String
+  lineStart  Int
+  lineEnd    Int
+  signature  String?
+  sourceHash String
+  summary    String?
+  summaryAt  BigInt?
+  embedding  String?
+
+  @@map("symbols")
+}
+
+model Edge {
+  id       String  @id
+  repoId   String
+  fromId   String
+  toId     String?
+  toRaw    String?
+  kind     String
+  filePath String
+  line     Int
+
+  @@map("edges")
+}
+
+model File {
+  repoId   String
+  filePath String
+  fileHash String
+  parsedAt BigInt
+
+  @@id([repoId, filePath])
+  @@map("files")
+}
