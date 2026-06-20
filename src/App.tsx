@@ -140,6 +140,7 @@ export default function App() {
   const [dbSaveResult, setDbSaveResult] = useState<{ success: boolean; message: string } | null>(null);
   const [isTestingDb, setIsTestingDb] = useState(false);
   const [isSavingDb, setIsSavingDb] = useState(false);
+  const [dbStatus, setDbStatus] = useState<'configured' | 'unconfigured' | 'unknown'>('unknown');
 
   const fetchDbConfig = async () => {
     try {
@@ -147,14 +148,15 @@ export default function App() {
       if (res.ok) {
         const data = await res.json();
         setDbConfig({
-          dialect: data.dialect || 'sqlite',
-          host: data.host || 'localhost',
+          dialect: data.dialect || 'postgresql',
+          host: data.host || '',
           port: data.port || '',
           username: data.username || '',
-          password: data.hasPassword ? '******' : '',
+          password: '',
           database: data.database || '',
           sqliteFile: data.sqliteFile || 'data.db'
         });
+        setDbStatus(data.configured ? 'configured' : 'unconfigured');
       }
     } catch (e) {
       console.error("Failed loading database config:", e);
@@ -172,9 +174,9 @@ export default function App() {
       });
       const data = await res.json();
       if (res.ok && data.success) {
-        setDbTestResult({ success: true, message: "Database connection tested & verified successfully! All drivers are ready." });
+        setDbTestResult({ success: true, message: "Connected. SELECT 1 returned successfully from the configured pool." });
       } else {
-        setDbTestResult({ success: false, message: data.error || "Connection refused. Please review authentication, port, database existence, or host." });
+        setDbTestResult({ success: false, message: data.error || "Connection failed. Check the connection string, credentials, and network reachability." });
       }
     } catch (err: any) {
       setDbTestResult({ success: false, message: "Network or Server Error: " + err.message });
@@ -193,15 +195,10 @@ export default function App() {
         body: JSON.stringify(dbConfig)
       });
       const data = await res.json();
-      if (res.ok) {
-        setDbSaveResult({ success: true, message: "Database connection switched & migrated successfully in real-time." });
-        // Reload all data from the clean new db
+      if (res.ok && data.success) {
+        const msg = data.message || "Saved. Restart the dev server to apply.";
+        setDbSaveResult({ success: true, message: msg });
         await fetchDbConfig();
-        await fetchRepos();
-        await fetchLogs();
-        if (selectedRepoId) {
-          await fetchPrsForSelectedRepo(selectedRepoId, false);
-        }
       } else {
         setDbSaveResult({ success: false, message: data.error || "Failed applying config." });
       }
@@ -914,7 +911,15 @@ export default function App() {
                       </div>
                       <div className="font-mono text-center p-2">
                         <div className="text-[10px] text-slate-500 uppercase">Status</div>
-                        <div className="text-[10px] font-bold text-emerald-400 uppercase mt-1 px-1.5 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20 inline-block">Connected</div>
+                        <div className={`text-[10px] font-bold uppercase mt-1 px-1.5 py-0.5 rounded border inline-block ${
+                          dbStatus === 'configured'
+                            ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20'
+                            : dbStatus === 'unconfigured'
+                            ? 'text-amber-400 bg-amber-500/10 border-amber-500/20'
+                            : 'text-slate-400 bg-slate-500/10 border-slate-500/20'
+                        }`}>
+                          {dbStatus === 'configured' ? 'Configured' : dbStatus === 'unconfigured' ? 'Not Configured' : 'Checking'}
+                        </div>
                       </div>
                     </div>
 
@@ -995,7 +1000,7 @@ export default function App() {
                                 value={dbConfig.password}
                                 onChange={(e) => setDbConfig(prev => ({ ...prev, password: e.target.value }))}
                                 className="w-full bg-slate-950 border border-white/10 rounded-lg px-3 py-2 text-xs text-slate-100 font-mono focus:border-cyan-500 outline-none"
-                                placeholder="••••••••"
+                                placeholder="Enter password to test or save"
                               />
                             </div>
                             <div className="space-y-1.5 sm:col-span-2">
@@ -1035,8 +1040,9 @@ export default function App() {
                             ) : (
                               <Database size={13} />
                             )}
-                            <span>{isSavingDb ? "Applying Schema..." : "Save & Apply Connection"}</span>
+                            <span>{isSavingDb ? "Saving..." : "Save to .env.local"}</span>
                           </button>
+                          <span className="text-[10px] text-slate-500 italic">A dev server restart is required for the new connection to take effect.</span>
                         </div>
 
                         {dbTestResult && (
