@@ -19,26 +19,73 @@ export async function POST(req: Request) {
   try {
     const body = await req.json();
     const { id, name, path: repoPath, baseBranch, activeBranch, triggerMode, quietPeriodSeconds, branchPattern } = body;
+
+    if (!repoPath || typeof repoPath !== "string") {
+      return NextResponse.json(
+        { error: "Path is required." },
+        { status: 400 },
+      );
+    }
+
+    // Pre-check for an existing link at this path. The DB also has a unique
+    // constraint on `path` (defense in depth against races), but this lets us
+    // return a friendly "already linked as X" message instead of a generic
+    // constraint-violation error.
+    const existing = await prisma.repository.findFirst({
+      where: { path: repoPath },
+      select: { id: true, name: true },
+    });
+    if (existing) {
+      return NextResponse.json(
+        {
+          error: `Directory "${repoPath}" is already linked as project "${existing.name}". Each directory can only be linked once.`,
+          existingId: existing.id,
+          existingName: existing.name,
+        },
+        { status: 409 },
+      );
+    }
+
     const cleanId = id || name.toLowerCase().replace(/[^a-z0-9]/g, "-") + "-" + Date.now();
 
-    await prisma.repository.create({
-      data: {
-        id: cleanId,
-        name: name,
-        path: repoPath,
-        baseBranch: baseBranch || "main",
-        activeBranch: activeBranch || baseBranch || "main",
-        triggerMode: triggerMode || "auto",
-        quietPeriodSeconds: quietPeriodSeconds || 10,
-        branchPattern: branchPattern || "*",
-        status: 'idle',
-        lastCommitHash: 'a1b2c3d',
-        lastCommitMessage: 'initial repository watch link',
-        lastActivityTime: new Date().toISOString(),
-        stabilizationTimer: 0,
-        reviewsCount: 0
+    try {
+      await prisma.repository.create({
+        data: {
+          id: cleanId,
+          name: name,
+          path: repoPath,
+          baseBranch: baseBranch || "main",
+          activeBranch: activeBranch || baseBranch || "main",
+          triggerMode: triggerMode || "auto",
+          quietPeriodSeconds: quietPeriodSeconds || 10,
+          branchPattern: branchPattern || "*",
+          status: 'idle',
+          lastCommitHash: 'a1b2c3d',
+          lastCommitMessage: 'initial repository watch link',
+          lastActivityTime: new Date().toISOString(),
+          stabilizationTimer: 0,
+          reviewsCount: 0
+        }
+      });
+    } catch (createErr: any) {
+      // P2002 = unique constraint violation. Catches the race where two
+      // POSTs pass the pre-check simultaneously before one commits.
+      if (createErr?.code === "P2002") {
+        const racer = await prisma.repository.findFirst({
+          where: { path: repoPath },
+          select: { id: true, name: true },
+        });
+        return NextResponse.json(
+          {
+            error: `Directory "${repoPath}" was just linked as project "${racer?.name || "unknown"}" — duplicate prevented.`,
+            existingId: racer?.id,
+            existingName: racer?.name,
+          },
+          { status: 409 },
+        );
       }
-    });
+      throw createErr;
+    }
 
     await getRealLocalPrs(repoPath, cleanId);
 

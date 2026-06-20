@@ -12,7 +12,7 @@ datasource db {
 model Repository {
   id                 String          @id
   name               String
-  path               String
+  path               String          @unique
   baseBranch         String
   activeBranch       String
   triggerMode        String
