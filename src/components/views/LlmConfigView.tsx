@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { motion } from "motion/react";
-import { AlertCircle, Cpu, RefreshCw, Search, Sparkles, Terminal } from "lucide-react";
+import { AlertCircle, Cpu, Eye, EyeOff, RefreshCw, Search, Sparkles, Terminal } from "lucide-react";
 
 interface RemoteModel {
   id: string;
@@ -35,6 +35,7 @@ export default function LlmConfigView() {
   const [isSaving, setIsSaving] = useState(false);
   const [fetchResult, setFetchResult] = useState<FetchResult | null>(null);
   const [saveResult, setSaveResult] = useState<SaveResult | null>(null);
+  const [showApiKey, setShowApiKey] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -154,6 +155,8 @@ export default function LlmConfigView() {
               value={apiKey}
               onChange={setApiKey}
               hasApiKey={hasApiKey}
+              showValue={showApiKey}
+              onToggleShow={() => setShowApiKey(!showApiKey)}
             />
 
             <div className="flex flex-wrap items-center gap-3 pt-1">
@@ -296,10 +299,14 @@ function ApiKeyField({
   value,
   onChange,
   hasApiKey,
+  showValue,
+  onToggleShow,
 }: {
   value: string;
   onChange: (v: string) => void;
   hasApiKey: boolean;
+  showValue: boolean;
+  onToggleShow: () => void;
 }) {
   return (
     <div className="space-y-1.5 max-w-2xl">
@@ -311,14 +318,25 @@ function ApiKeyField({
           </span>
         )}
       </label>
-      <input
-        type="password"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="w-full bg-slate-950 border border-white/10 rounded-lg px-3 py-2 text-xs text-slate-100 font-mono focus:border-cyan-500 outline-none"
-        placeholder={hasApiKey ? "••••••••••••••••" : "Paste API key (e.g. sk-or-v1-...)"}
-        autoComplete="off"
-      />
+      <div className="relative">
+        <input
+          type={showValue ? "text" : "password"}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          className="w-full bg-slate-950 border border-white/10 rounded-lg px-3 py-2 pr-10 text-xs text-slate-100 font-mono focus:border-cyan-500 outline-none"
+          placeholder={hasApiKey ? "••••••••••••••••" : "Paste API key (e.g. sk-or-v1-...)"}
+          autoComplete="off"
+        />
+        <button
+          type="button"
+          onClick={onToggleShow}
+          className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-cyan-400 transition-colors p-1"
+          title={showValue ? "Hide key" : "Show key"}
+          aria-label={showValue ? "Hide API key" : "Show API key"}
+        >
+          {showValue ? <EyeOff size={14} /> : <Eye size={14} />}
+        </button>
+      </div>
       <p className="text-[10px] text-slate-500 italic">
         Stored locally in .env.local. Get an OpenRouter key at{" "}
         <code>openrouter.ai/keys</code>.

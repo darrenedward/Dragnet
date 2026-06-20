@@ -1,7 +1,8 @@
 "use client";
 
+import { useState } from "react";
 import { motion } from "motion/react";
-import { AlertCircle, Database, RefreshCw, Sparkles, Terminal } from "lucide-react";
+import { AlertCircle, Database, Eye, EyeOff, RefreshCw, Sparkles, Terminal } from "lucide-react";
 import type { DbConfig } from "../../lib/types";
 
 type DbStatus = "configured" | "unconfigured" | "unknown";
@@ -183,16 +184,28 @@ function DialectPicker({ selected, onSelect }: { selected: string; onSelect: (id
 }
 
 function SupabaseField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const [showValue, setShowValue] = useState(false);
   return (
     <div className="space-y-2 max-w-md">
       <label className="text-[10px] uppercase font-mono text-slate-400 block">Supabase Connection Pool String</label>
-      <input
-        type="text"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="w-full bg-slate-950 border border-white/10 rounded-lg px-3 py-2 text-xs text-slate-100 font-mono focus:border-cyan-500 outline-none animate-fadeIn"
-        placeholder="postgresql://...pooler.supabase.com:6543/postgres"
-      />
+      <div className="relative">
+        <input
+          type={showValue ? "text" : "password"}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          className="w-full bg-slate-950 border border-white/10 rounded-lg px-3 py-2 pr-10 text-xs text-slate-100 font-mono focus:border-cyan-500 outline-none animate-fadeIn"
+          placeholder="postgresql://...pooler.supabase.com:6543/postgres"
+        />
+        <button
+          type="button"
+          onClick={() => setShowValue(!showValue)}
+          className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-cyan-400 transition-colors p-1"
+          title={showValue ? "Hide connection string" : "Show connection string"}
+          aria-label={showValue ? "Hide connection string" : "Show connection string"}
+        >
+          {showValue ? <EyeOff size={14} /> : <Eye size={14} />}
+        </button>
+      </div>
       <p className="text-[10px] text-slate-500 italic">
         Enter full pooled connection string from Supabase dashboard (use session/transaction pool port 6543).
       </p>
@@ -207,6 +220,8 @@ function PostgresFields({
   dbConfig: DbConfig;
   setDbConfig: React.Dispatch<React.SetStateAction<DbConfig>>;
 }) {
+  const [showPassword, setShowPassword] = useState(false);
+
   const field = (label: string, key: keyof DbConfig, placeholder: string, type = "text") => (
     <div className="space-y-1.5">
       <label className="text-[10px] uppercase font-mono text-slate-400 block">{label}</label>
@@ -220,12 +235,36 @@ function PostgresFields({
     </div>
   );
 
+  const passwordField = () => (
+    <div className="space-y-1.5">
+      <label className="text-[10px] uppercase font-mono text-slate-400 block">Password</label>
+      <div className="relative">
+        <input
+          type={showPassword ? "text" : "password"}
+          value={dbConfig.password}
+          onChange={(e) => setDbConfig((prev) => ({ ...prev, password: e.target.value }))}
+          className="w-full bg-slate-950 border border-white/10 rounded-lg px-3 py-2 pr-10 text-xs text-slate-100 font-mono focus:border-cyan-500 outline-none"
+          placeholder="Enter password to test or save"
+        />
+        <button
+          type="button"
+          onClick={() => setShowPassword(!showPassword)}
+          className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-cyan-400 transition-colors p-1"
+          title={showPassword ? "Hide password" : "Show password"}
+          aria-label={showPassword ? "Hide password" : "Show password"}
+        >
+          {showPassword ? <EyeOff size={14} /> : <Eye size={14} />}
+        </button>
+      </div>
+    </div>
+  );
+
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-2xl bg-slate-900/25 p-4 rounded-xl border border-white/5 animate-fadeIn">
       {field("Hostname / Host IP", "host", "e.g. localhost or cloudsql instance ip")}
       {field("Port", "port", dbConfig.dialect === "postgresql" ? "5432" : "6543")}
       {field("Username", "username", "e.g. postgres or root")}
-      {field("Password", "password", "Enter password to test or save", "password")}
+      {passwordField()}
       <div className="space-y-1.5 sm:col-span-2">{field("Database Name", "database", "e.g. greploop")}</div>
     </div>
   );
