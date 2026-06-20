@@ -76,7 +76,7 @@ This is what separates real review quality from diff-only reviewers per PRD Sect
 - [ ] **Call graph edges** — `caller → callee` per symbol. Schema: `CallEdge` table with `{ repoId, callerSymbolId, calleeSymbolId, callLocation }`
 - [ ] **Per-symbol LLM summaries** — one short paragraph per function (e.g. "Validates user session and returns the org membership"). Batched, cheap model, generated during indexing.
 - [ ] **pgvector enabled** on Supabase (it's available — just needs turning on)
-- [ ] **Embeddings** for every symbol + every docstring/comment block. Default to a local embedding model (`nomic-embed-text` via Ollama) to keep cost at zero; cloud embedding (Gemini) opt-in.
+- [ ] **Embeddings** for every symbol + every docstring/comment block. Default to a local embedding model (`nomic-embed-text` via Ollama) to keep cost at zero; cloud embedding (OpenAI-compatible, e.g. `text-embedding-3-small` via OpenRouter) opt-in.
 - [ ] **Incremental indexing** — file watcher on the repo's git HEAD. Re-index only changed files. Full re-index only on first link or manual trigger.
 - [ ] **Indexing status UI** — the dashboard already has a polling UI; make it show real progress (files indexed, symbols extracted, embeddings generated)
 
@@ -84,7 +84,7 @@ This is what separates real review quality from diff-only reviewers per PRD Sect
 
 Replace the fake `reviewService.ts` with actual LLM-driven review.
 
-- [ ] **Pluggable LLM router** — Gemini (cloud) as default for MVP, Ollama (local) as opt-in, "no LLM" rule-only fallback so the app works without an API key
+- [ ] **Pluggable LLM router** — OpenAI-compatible endpoint (OpenRouter by default, Ollama/LM Studio for local) as the only cloud path, "no LLM" rule-only fallback so the app works without an API key. Model picker in the LLM Settings tab lets you switch between any provider/model at runtime.
 - [ ] **Diff parsing** — current code reads git diff; verify it handles added/removed/modified hunks correctly
 - [ ] **Context retrieval per diff hunk** — for each hunk, pull:
   - The k nearest symbols by embedding similarity (pgvector)
@@ -240,8 +240,8 @@ GrepLoop checks other people's code for WCAG (PRD Section 14). Eat our own dog f
 
 ## Decision points (need user input, not yet resolved)
 
-1. **Default LLM backend for MVP?** Cloud Gemini (zero setup, real money per scan) vs local Ollama (one-time multi-GB download, then free). Recommend **Gemini for MVP** (fastest path to working); add Ollama as opt-in.
-2. **Default embedding model for MVP?** Local `nomic-embed-text` via Ollama (free, requires Ollama installed) vs Gemini embedding API (no setup, costs money). Recommend **Gemini embedding for MVP** for the same reason — switch to local default in Phase 3.
+1. **Default LLM backend for MVP?** ~~Cloud Gemini (zero setup, real money per scan) vs local Ollama (one-time multi-GB download, then free).~~ **Resolved:** OpenAI-compatible endpoints via OpenRouter as the only cloud path — one SDK, hundreds of models (Gemini, Claude, Qwen, etc.) selectable at runtime. Ollama/LM Studio work as just another OpenAI-compatible endpoint for local use.
+2. **Default embedding model for MVP?** ~~Local `nomic-embed-text` via Ollama (free, requires Ollama installed) vs Gemini embedding API.~~ **Resolved:** User picks from the same OpenRouter/compatible catalog in the LLM Settings tab. `findSimilar` gracefully degrades if no embedding model is configured.
 3. **Initial language support?** TypeScript only (eat our own dog food, fastest to MVP) vs TS + Python (covers more users). Recommend **TS only for MVP**, add languages one at a time.
 4. **CI environment coverage?** Add a Postgres service container for integration tests, or keep CI unit-only and run integration tests manually? Recommend **unit-only for MVP**; revisit in Phase 3.
 

@@ -117,7 +117,7 @@ export default function PRDTracker() {
       phaseId: 'phase2',
       title: 'Support OpenAI-compatible & Ollama endpoints',
       description: 'Create a pluggable router to switch LLM prompt pipelines from public cloud keys to local docker engines.',
-      isCompleted: false,
+      isCompleted: true,
       assignedTo: 'LLM Router',
       urgency: 'high',
       estimatedMinutes: 90

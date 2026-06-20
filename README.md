@@ -22,7 +22,7 @@ Self-hosted, multi-tenant code review platform. The Greptile-tier review quality
 - **Language:** TypeScript 5.8, React 19
 - **Database:** Postgres (Supabase by default) via Prisma 7.8 + `@prisma/adapter-pg`
 - **Styling:** Tailwind CSS 4
-- **AI:** Google Gemini (`@google/genai`)
+- **AI:** OpenAI-compatible endpoints (OpenRouter by default) via `openai` SDK — works with OpenRouter, Ollama, LM Studio, and any other OpenAI-compatible server
 - **Auth:** Better Auth (planned — Phase 2)
 
 ---
@@ -40,7 +40,7 @@ Self-hosted, multi-tenant code review platform. The Greptile-tier review quality
    ```bash
    cp .env.example .env.local
    ```
-   Required: `DATABASE_URL`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`. Optional: `GEMINI_API_KEY` (without it, the review engine falls back to a rule-only mode).
+   Required: `DATABASE_URL`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`. Optional: `LLM_API_KEY` — without it, the review engine falls back to a procedural rule-only mode. Configure chat + embedding models at runtime from the **LLM Settings** tab (writes to `.env.local`; restart `npm run dev` after saving).
 
 3. **Generate the Prisma client and push the schema:**
    ```bash
@@ -54,7 +54,7 @@ Self-hosted, multi-tenant code review platform. The Greptile-tier review quality
    ```
    Open http://localhost:3000.
 
-The in-app **DB Config** tab lets you re-test and re-save the database connection without editing `.env.local` by hand.
+The in-app **DB Config** tab lets you re-test and re-save the database connection without editing `.env.local` by hand. The **LLM Settings** tab lets you point GrepLoop at any OpenAI-compatible endpoint (OpenRouter, Ollama, LM Studio), browse the live model catalog, and pick chat + embedding models.
 
 ---
 

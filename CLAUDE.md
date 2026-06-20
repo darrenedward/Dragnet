@@ -10,7 +10,7 @@ See `prd.md` for the full product spec.
 - **Database:** Postgres on Supabase, accessed via Prisma 7.8 + `@prisma/adapter-pg`
 - **Styling:** Tailwind CSS 4
 - **Auth:** Better Auth (planned — multi-tenant via organization plugin)
-- **AI:** Google Gemini (`@google/genai`) for review pass
+- **AI:** OpenAI-compatible endpoints (OpenRouter by default) via `openai` SDK — pick chat + embedding models at runtime from the "LLM Settings" tab
 
 ## Conventions
 
@@ -31,6 +31,10 @@ See `prd.md` for the full product spec.
 - `reviewService.ts` and `src/services/indexingService.ts` live where they are
   because of relative-import depth. Don't relocate without checking require()
   paths from `reviewService.ts`.
+- The OpenAI client is a **lazy singleton** at `src/lib/llmClient.ts` with a
+  `globalThis` guard (mirrors `prisma.ts`). Always go through `getLlmClient()`,
+  `getChatModel()`, `getEmbeddingModel()`, `getLlmEndpoint()` — never
+  instantiate `OpenAI` at module load (breaks `next build` on empty env).
 
 ## Scripts
 
