@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Activity, Folder, GitBranch, Plus, Sparkles } from "lucide-react";
-import type { ActivityLog, LlmConfig, PullRequest, Repository } from "../lib/types";
+import type { ActivityLog, LlmPresetsState, PullRequest, Repository } from "../lib/types";
 import { getStatusBadgeStyle } from "../lib/types";
 
 interface Props {
@@ -30,24 +30,24 @@ export default function DashboardSidebar({
   onOpenLlmSettings,
   logs,
 }: Props) {
-  const [llmConfig, setLlmConfig] = useState<LlmConfig | null>(null);
+  const [llmPresets, setLlmPresets] = useState<LlmPresetsState | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    const fetchLlmConfig = async () => {
+    const fetchLlmPresets = async () => {
       try {
-        const res = await fetch("/api/llm/config");
+        const res = await fetch("/api/llm/presets");
         if (!res.ok) return;
         const data = await res.json();
-        if (!cancelled) setLlmConfig(data);
+        if (!cancelled) setLlmPresets(data);
       } catch {
         // silently leave pane empty — the LLM Settings tab is the source of truth
       }
     };
-    fetchLlmConfig();
+    fetchLlmPresets();
     // Re-poll every 10s so the sidebar reflects saves done in the settings tab
     // without needing a manual refresh.
-    const poller = setInterval(fetchLlmConfig, 10000);
+    const poller = setInterval(fetchLlmPresets, 10000);
     return () => {
       cancelled = true;
       clearInterval(poller);
@@ -73,7 +73,7 @@ export default function DashboardSidebar({
         onAddProject={onAddProject}
       />
 
-      <LlmRouterPane config={llmConfig} onOpenSettings={onOpenLlmSettings} />
+      <LlmRouterPane state={llmPresets} onOpenSettings={onOpenLlmSettings} />
 
       <LogsPane logs={logs} />
     </aside>
@@ -264,13 +264,14 @@ function PrRow({ pr, isPrSelected, onSelect }: { pr: PullRequest; isPrSelected: 
 }
 
 function LlmRouterPane({
-  config,
+  state,
   onOpenSettings,
 }: {
-  config: LlmConfig | null;
+  state: LlmPresetsState | null;
   onOpenSettings: () => void;
 }) {
-  const chatModel = config?.chatModel || "";
+  const activeChat = state?.presets.find((p) => p.id === state.activeChatPresetId) || null;
+  const chatModel = activeChat?.chatModel || "";
   const shortModel = chatModel.split("/").pop() || chatModel;
 
   return (
@@ -290,12 +291,12 @@ function LlmRouterPane({
       </div>
       <div className="bg-slate-900/60 p-2.5 rounded-lg border border-white/5">
         <div className="text-[8px] text-slate-500 uppercase font-mono block mb-0.5">Active Chat Model</div>
-        {chatModel ? (
+        {activeChat && chatModel ? (
           <div className="flex items-center justify-between gap-2">
-            <span className="text-[10px] text-cyan-400 font-mono font-bold truncate" title={chatModel}>
-              {shortModel}
+            <span className="text-[10px] text-cyan-400 font-mono font-bold truncate" title={`${activeChat.name} · ${chatModel}`}>
+              {activeChat.name} · {shortModel}
             </span>
-            {config?.hasApiKey ? (
+            {activeChat.hasApiKey ? (
               <span className="text-[8px] text-emerald-400 bg-emerald-500/10 px-1 py-0.5 rounded border border-emerald-500/20 font-mono uppercase shrink-0">
                 Key Set
               </span>
@@ -313,9 +314,9 @@ function LlmRouterPane({
             </button>
           </div>
         )}
-        {config?.endpoint && (
+        {activeChat?.endpoint && (
           <div className="text-[8px] text-slate-600 font-mono truncate mt-1">
-            {config.endpoint.replace(/^https?:\/\//, "").split("/")[0]}
+            {activeChat.endpoint.replace(/^https?:\/\//, "").split("/")[0]}
           </div>
         )}
       </div>

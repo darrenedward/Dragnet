@@ -72,12 +72,19 @@ export interface DbConfig {
   sqliteFile: string;
 }
 
-export interface LlmConfig {
+export interface LlmPresetView {
+  id: string;
+  name: string;
   endpoint: string;
   hasApiKey: boolean;
   chatModel: string;
   embeddingModel: string;
-  configured: boolean;
+}
+
+export interface LlmPresetsState {
+  presets: LlmPresetView[];
+  activeChatPresetId: string;
+  activeEmbeddingPresetId: string;
 }
 
 export type ActiveTab = "prs" | "watcher" | "roadmap" | "db_config" | "llm_config" | "codebase";
