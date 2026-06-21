@@ -227,7 +227,11 @@ export default function App() {
                   transition={{ duration: 0.1 }}
                   className="flex flex-col flex-1 overflow-y-auto"
                 >
-                  <CodebaseGraph repoId={d.selectedRepoId} repoName={activeRepo?.name || d.selectedRepoId} />
+                  <CodebaseGraph
+                    repoId={d.selectedRepoId}
+                    repoName={activeRepo?.name || d.selectedRepoId}
+                    onIndexComplete={d.handleTriggerReviewPass}
+                  />
                 </motion.div>
               )}
 

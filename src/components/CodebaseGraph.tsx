@@ -1,23 +1,26 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  Network, 
-  Search, 
-  Settings, 
-  RefreshCw, 
-  FileCode, 
-  Layers, 
-  HelpCircle, 
-  ArrowRight, 
-  FileText, 
+import {
+  Network,
+  Search,
+  Settings,
+  RefreshCw,
+  FileCode,
+  Layers,
+  HelpCircle,
+  ArrowRight,
+  FileText,
   Info,
   CheckCircle,
   Code,
-  ChevronRight
+  ChevronRight,
+  Loader2,
 } from 'lucide-react';
 
 interface CodebaseGraphProps {
   repoId: string;
   repoName: string;
+  /** Fired when an index run completes successfully so the parent can refresh indexedAt. */
+  onIndexComplete?: () => void;
 }
 
 interface SymbolNode {
@@ -39,7 +42,7 @@ interface EdgeLink {
   filePath: string;
 }
 
-export default function CodebaseGraph({ repoId, repoName }: CodebaseGraphProps) {
+export default function CodebaseGraph({ repoId, repoName, onIndexComplete }: CodebaseGraphProps) {
   const [symbols, setSymbols] = useState<SymbolNode[]>([]);
   const [edges, setEdges] = useState<EdgeLink[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
@@ -84,6 +87,7 @@ export default function CodebaseGraph({ repoId, repoName }: CodebaseGraphProps) 
         const data = await res.json();
         setIndexStats(data.stats);
         await fetchData();
+        onIndexComplete?.();
       } else {
         alert("AST Indexing compilation failed.");
       }
@@ -156,32 +160,53 @@ export default function CodebaseGraph({ repoId, repoName }: CodebaseGraphProps) 
         </div>
 
         {/* Index trigger buttons */}
-        <div className="p-3 bg-[#0F1219] border border-white/10 rounded-xl flex items-center justify-between">
+        <div className={`p-3 bg-[#0F1219] border rounded-xl flex items-center justify-between transition-colors ${
+          isIndexing ? 'border-cyan-500/40 shadow-[0_0_18px_rgba(6,182,212,0.18)]' : 'border-white/10'
+        }`}>
           <div className="flex-1 min-w-0 pr-2">
-            <div className="text-[9px] text-slate-400 uppercase font-mono font-semibold truncate leading-none">Codebase AST sync</div>
-            <div className="text-[10px] text-slate-500 mt-1 lines-1 truncate">Analyze files & extract call paths</div>
+            <div className="text-[9px] text-slate-400 uppercase font-mono font-semibold truncate leading-none">
+              {isIndexing ? 'Indexing in progress…' : 'Codebase AST sync'}
+            </div>
+            <div className="text-[10px] text-slate-500 mt-1 truncate">
+              {isIndexing ? 'Parsing files & embedding call paths' : 'Analyze files & extract call paths'}
+            </div>
           </div>
-          <button 
+          <button
             disabled={isIndexing}
             onClick={handleStartIndexing}
             className={`px-3 py-1.5 rounded-lg text-xs font-mono font-semibold transition-all flex items-center gap-1.5 shrink-0 ${
-              isIndexing 
-                ? 'bg-slate-800 text-slate-500 cursor-not-allowed' 
-                : 'bg-cyan-500 text-black hover:bg-cyan-400 shadow-[0_0_12px_rgba(6,182,212,0.2)]'
+              isIndexing
+                ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 cursor-wait'
+                : 'bg-cyan-500 text-black hover:bg-cyan-400 shadow-[0_0_12px_rgba(6,182,212,0.2)] cursor-pointer'
             }`}
           >
-            <RefreshCw size={12} className={isIndexing ? 'animate-spin' : ''} />
-            <span>{isIndexing ? 'Indexing...' : 'Index Code'}</span>
+            {isIndexing ? (
+              <Loader2 size={12} className="animate-spin" />
+            ) : (
+              <RefreshCw size={12} />
+            )}
+            <span>{isIndexing ? 'Indexing…' : 'Index Code'}</span>
           </button>
         </div>
       </div>
 
-      {indexStats && (
-        <div className="p-3.5 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 rounded-xl text-xs font-mono mb-4 flex items-center justify-between animate-fadeIn">
+      {/* Full-width indexing progress banner — much more obvious than just the button label */}
+      {isIndexing && (
+        <div className="p-3.5 bg-cyan-500/10 border border-cyan-500/30 text-cyan-200 rounded-xl text-xs font-mono mb-4 flex items-center gap-3 animate-fadeIn">
+          <Loader2 size={16} className="text-cyan-300 animate-spin shrink-0" />
+          <div className="flex-1">
+            <strong className="text-cyan-200">Indexing in progress.</strong> Parsing files, extracting AST symbols, and embedding call paths. The PR scan unlocks automatically once this completes.
+          </div>
+          <span className="text-[10px] text-cyan-400/70 uppercase tracking-wider shrink-0 hidden sm:inline">please wait…</span>
+        </div>
+      )}
+
+      {indexStats && !isIndexing && (
+        <div className="p-3.5 bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 rounded-xl text-xs font-mono mb-4 flex items-center justify-between animate-fadeIn">
           <div className="flex items-center gap-2">
             <CheckCircle size={14} className="text-emerald-400 shrink-0" />
             <span>
-              <strong>Success!</strong> Indexed codebase in <strong>{indexStats.elapsedMs}ms</strong>. Scanned <strong>{indexStats.filesProcessed} files</strong>, mapped <strong>{indexStats.symbolsExtracted} call sites</strong>.
+              <strong className="text-emerald-200">Indexing complete.</strong> Parsed <strong>{indexStats.filesProcessed} files</strong>, mapped <strong>{indexStats.symbolsExtracted} call sites</strong> in <strong>{indexStats.elapsedMs}ms</strong>. PR review scan is now unlocked.
             </span>
           </div>
           <button onClick={() => setIndexStats(null)} className="text-slate-400 hover:text-white shrink-0">✕</button>
