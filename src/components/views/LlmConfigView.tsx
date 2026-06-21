@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { motion } from "motion/react";
-import { AlertCircle, Cpu, Eye, EyeOff, RefreshCw, Search, Sparkles, Terminal } from "lucide-react";
+import { AlertCircle, CheckCircle2, Cpu, Eye, EyeOff, Plus, RefreshCw, Search, Sparkles, Terminal, Trash2 } from "lucide-react";
+import type { LlmPresetView, LlmPresetsState } from "../../lib/types";
 
 interface RemoteModel {
   id: string;
@@ -20,37 +21,80 @@ interface SaveResult {
   message: string;
 }
 
+/**
+ * Local working copy of a preset. Differs from LlmPresetView by carrying
+ * the apiKey as a free-text field (empty string when the user hasn't
+ * typed a new key — server preserves the stored one in that case).
+ */
+interface WorkingPreset {
+  id: string;
+  name: string;
+  endpoint: string;
+  apiKey: string;
+  hasApiKey: boolean;
+  chatModel: string;
+  embeddingModel: string;
+  modelsCache: RemoteModel[] | null;
+  showApiKey: boolean;
+  fetchResult: FetchResult | null;
+  isFetching: boolean;
+}
+
 const DEFAULT_ENDPOINT = "https://openrouter.ai/api/v1";
 
+function newPreset(): WorkingPreset {
+  return {
+    id: `preset-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    name: "",
+    endpoint: DEFAULT_ENDPOINT,
+    apiKey: "",
+    hasApiKey: false,
+    chatModel: "",
+    embeddingModel: "",
+    modelsCache: null,
+    showApiKey: false,
+    fetchResult: null,
+    isFetching: false,
+  };
+}
+
 export default function LlmConfigView() {
-  const [endpoint, setEndpoint] = useState(DEFAULT_ENDPOINT);
-  const [apiKey, setApiKey] = useState("");
-  const [hasApiKey, setHasApiKey] = useState(false);
-  const [chatModel, setChatModel] = useState("");
-  const [embeddingModel, setEmbeddingModel] = useState("");
-  const [models, setModels] = useState<RemoteModel[] | null>(null);
-  const [chatFilter, setChatFilter] = useState("");
-  const [embeddingFilter, setEmbeddingFilter] = useState("");
-  const [isFetching, setIsFetching] = useState(false);
+  const [presets, setPresets] = useState<WorkingPreset[]>([]);
+  const [activeChatId, setActiveChatId] = useState("");
+  const [activeEmbeddingId, setActiveEmbeddingId] = useState("");
+  const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
-  const [fetchResult, setFetchResult] = useState<FetchResult | null>(null);
   const [saveResult, setSaveResult] = useState<SaveResult | null>(null);
-  const [showApiKey, setShowApiKey] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch("/api/llm/config");
+        const res = await fetch("/api/llm/presets");
         if (!res.ok) return;
-        const data = await res.json();
+        const data: LlmPresetsState = await res.json();
         if (cancelled) return;
-        if (data.endpoint) setEndpoint(data.endpoint);
-        if (data.chatModel) setChatModel(data.chatModel);
-        if (data.embeddingModel) setEmbeddingModel(data.embeddingModel);
-        setHasApiKey(Boolean(data.hasApiKey));
-      } catch (e) {
-        console.error("Failed loading LLM config:", e);
+        setPresets(
+          data.presets.map((p) => ({
+            id: p.id,
+            name: p.name,
+            endpoint: p.endpoint,
+            apiKey: "",
+            hasApiKey: p.hasApiKey,
+            chatModel: p.chatModel,
+            embeddingModel: p.embeddingModel,
+            modelsCache: null,
+            showApiKey: false,
+            fetchResult: null,
+            isFetching: false,
+          })),
+        );
+        setActiveChatId(data.activeChatPresetId);
+        setActiveEmbeddingId(data.activeEmbeddingPresetId);
+      } catch (err) {
+        console.error("Failed loading LLM presets:", err);
+      } finally {
+        if (!cancelled) setIsLoading(false);
       }
     })();
     return () => {
@@ -58,55 +102,92 @@ export default function LlmConfigView() {
     };
   }, []);
 
-  const handleFetchModels = async () => {
-    setIsFetching(true);
-    setFetchResult(null);
+  const updatePreset = (id: string, patch: Partial<WorkingPreset>) => {
+    setPresets((prev) => prev.map((p) => (p.id === id ? { ...p, ...patch } : p)));
+  };
+
+  const handleAddPreset = () => {
+    setPresets((prev) => [...prev, newPreset()]);
+  };
+
+  const handleDeletePreset = (id: string) => {
+    if (activeChatId === id || activeEmbeddingId === id) {
+      alert("Clear the chat or embedding radio on this preset before deleting it.");
+      return;
+    }
+    setPresets((prev) => prev.filter((p) => p.id !== id));
+  };
+
+  const handleFetchModels = async (id: string) => {
+    const preset = presets.find((p) => p.id === id);
+    if (!preset) return;
+    updatePreset(id, { isFetching: true, fetchResult: null });
     try {
       const res = await fetch("/api/llm/models", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ endpoint, apiKey }),
+        body: JSON.stringify({ endpoint: preset.endpoint, apiKey: preset.apiKey }),
       });
       const data = await res.json();
       if (res.ok && data.success) {
         const list: RemoteModel[] = data.models || [];
-        setModels(list);
-        setHasApiKey(true);
-        setFetchResult({
-          success: true,
-          message: `Connected. Catalog returned ${list.length} models from ${endpoint}.`,
-          count: list.length,
+        updatePreset(id, {
+          isFetching: false,
+          modelsCache: list,
+          hasApiKey: preset.apiKey ? true : preset.hasApiKey,
+          fetchResult: {
+            success: true,
+            message: `Connected. Catalog returned ${list.length} models.`,
+            count: list.length,
+          },
         });
       } else {
-        setFetchResult({
-          success: false,
-          message: data.error || "Failed to reach endpoint. Check the URL and API key.",
+        updatePreset(id, {
+          isFetching: false,
+          fetchResult: { success: false, message: data.error || "Failed to reach endpoint." },
         });
       }
     } catch (err: any) {
-      setFetchResult({ success: false, message: "Network or Server Error: " + err.message });
-    } finally {
-      setIsFetching(false);
+      updatePreset(id, {
+        isFetching: false,
+        fetchResult: { success: false, message: "Network or Server Error: " + err.message },
+      });
     }
   };
 
-  const handleSave = async () => {
+  const handleSaveAll = async () => {
     setIsSaving(true);
     setSaveResult(null);
     try {
-      const res = await fetch("/api/llm/config", {
-        method: "POST",
+      const body = {
+        presets: presets.map((p) => ({
+          id: p.id,
+          name: p.name,
+          endpoint: p.endpoint,
+          apiKey: p.apiKey,
+          chatModel: p.chatModel,
+          embeddingModel: p.embeddingModel,
+        })),
+        activeChatPresetId: activeChatId,
+        activeEmbeddingPresetId: activeEmbeddingId,
+      };
+      const res = await fetch("/api/llm/presets", {
+        method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ endpoint, apiKey, chatModel, embeddingModel }),
+        body: JSON.stringify(body),
       });
       const data = await res.json();
-      if (res.ok && data.success) {
-        const msg = data.message || "Saved. Restart the dev server to apply.";
-        setSaveResult({ success: true, message: msg });
-        setHasApiKey(true);
-        setApiKey("");
+      if (res.ok && data.ok) {
+        setSaveResult({ success: true, message: "Presets saved. Changes take effect on the next request — no restart needed." });
+        setPresets((prev) =>
+          prev.map((p) => ({
+            ...p,
+            apiKey: "",
+            hasApiKey: p.apiKey ? true : p.hasApiKey,
+          })),
+        );
       } else {
-        setSaveResult({ success: false, message: data.error || "Failed applying config." });
+        setSaveResult({ success: false, message: data.error || "Save failed." });
       }
     } catch (err: any) {
       setSaveResult({ success: false, message: "Network or Server Error: " + err.message });
@@ -114,6 +195,14 @@ export default function LlmConfigView() {
       setIsSaving(false);
     }
   };
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center h-64 text-slate-500 font-mono text-xs">
+        Loading LLM presets...
+      </div>
+    );
+  }
 
   return (
     <motion.div
@@ -131,364 +220,381 @@ export default function LlmConfigView() {
           <div className="p-2 bg-cyan-500/10 text-cyan-405 rounded-lg">
             <Cpu size={20} />
           </div>
-          <div>
+          <div className="flex-1">
             <h3 className="text-sm font-bold text-white uppercase tracking-wider font-mono">
-              LLM Router Configuration
+              LLM Provider Presets
             </h3>
             <p className="text-xs text-slate-400">
-              Point GrepLoop at any OpenAI-compatible endpoint (OpenRouter, Ollama, LM Studio). Pick chat and embedding models from the live catalog. Saved values persist to .env.local and take effect on next server start.
+              Configure multiple providers. Pick one for chat (PR review) and one for embeddings (semantic search) — they can be the same or different. Changes save to <code>.greploop/llm-presets.json</code> and take effect immediately.
             </p>
           </div>
         </div>
 
-        <ConfigStats
-          endpoint={endpoint}
-          chatModel={chatModel}
-          embeddingModel={embeddingModel}
-          hasApiKey={hasApiKey}
-        />
-
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="lg:col-span-2 space-y-4">
-            <EndpointField value={endpoint} onChange={setEndpoint} />
-            <ApiKeyField
-              value={apiKey}
-              onChange={setApiKey}
-              hasApiKey={hasApiKey}
-              showValue={showApiKey}
-              onToggleShow={() => setShowApiKey(!showApiKey)}
-            />
-
-            <div className="flex flex-wrap items-center gap-3 pt-1">
-              <button
-                onClick={handleFetchModels}
-                disabled={isFetching || !endpoint}
-                className="bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-slate-300 border border-white/10 font-mono text-xs font-bold px-4 py-2 rounded-lg transition-all flex items-center gap-2 cursor-pointer"
-              >
-                {isFetching ? (
-                  <RefreshCw size={13} className="animate-spin text-cyan-400" />
-                ) : (
-                  <Terminal size={13} className="text-cyan-400" />
-                )}
-                <span>{isFetching ? "Fetching..." : "Fetch Models"}</span>
-              </button>
-              <button
-                onClick={handleSave}
-                disabled={isSaving || !endpoint || !chatModel}
-                className="bg-cyan-500 hover:bg-cyan-600 disabled:opacity-50 active:scale-[0.99] text-black font-semibold text-xs px-4 py-2 rounded-lg transition-all flex items-center gap-2 shadow-[0_4px_12px_rgba(6,182,212,0.15)] cursor-pointer"
-              >
-                {isSaving ? <RefreshCw size={13} className="animate-spin" /> : <Cpu size={13} />}
-                <span>{isSaving ? "Saving..." : "Save to .env.local"}</span>
-              </button>
-              <span className="text-[10px] text-slate-500 italic">
-                Chat model is required; embedding is optional. Restart dev server after save.
-              </span>
+        <div className="space-y-3">
+          {presets.length === 0 ? (
+            <div className="p-6 text-center text-xs text-slate-500 font-mono bg-slate-950/65 rounded-xl border border-dashed border-white/10">
+              No presets yet. Click "Add Preset" to configure your first provider.
             </div>
-
-            {fetchResult && (
-              <ResultBanner
-                label={fetchResult.success ? "Catalog Retrieved" : "Fetch Failed"}
-                result={fetchResult}
-                tone={fetchResult.success ? "emerald" : "rose"}
+          ) : (
+            presets.map((preset) => (
+              <PresetCard
+                key={preset.id}
+                preset={preset}
+                isActiveChat={activeChatId === preset.id}
+                isActiveEmbedding={activeEmbeddingId === preset.id}
+                canActivateChat={Boolean(preset.chatModel)}
+                canActivateEmbedding={Boolean(preset.embeddingModel)}
+                onUpdate={(patch) => updatePreset(preset.id, patch)}
+                onDelete={() => handleDeletePreset(preset.id)}
+                onFetchModels={() => handleFetchModels(preset.id)}
+                onSetActiveChat={() => setActiveChatId(activeChatId === preset.id ? "" : preset.id)}
+                onSetActiveEmbedding={() => setActiveEmbeddingId(activeEmbeddingId === preset.id ? "" : preset.id)}
               />
-            )}
-            {saveResult && (
-              <ResultBanner
-                label={saveResult.success ? "Configuration Applied" : "Application Failed"}
-                result={saveResult}
-                tone={saveResult.success ? "cyan" : "rose"}
-              />
-            )}
+            ))
+          )}
+        </div>
 
-            <ModelPicker
-              label="Chat Model (required)"
-              hint="Used for the PR review agentic loop. Must support tool/function calling for full quality — otherwise falls back to text mode."
-              models={models}
-              filter={chatFilter}
-              setFilter={setChatFilter}
-              value={chatModel}
-              onChange={setChatModel}
-              accent="cyan"
-            />
-
-            <ModelPicker
-              label="Embedding Model (optional)"
-              hint="Used to power semantic search (findSimilar tool). Leave blank to skip embeddings — review loop still works without it."
-              models={models}
-              filter={embeddingFilter}
-              setFilter={setEmbeddingFilter}
-              value={embeddingModel}
-              onChange={setEmbeddingModel}
-              accent="indigo"
-            />
-          </div>
-
-          <ExplanatoryCard />
+        <div className="flex flex-wrap items-center gap-3 pt-4 mt-4 border-t border-white/5">
+          <button
+            onClick={handleAddPreset}
+            className="bg-slate-900 hover:bg-slate-800 text-slate-300 border border-white/10 font-mono text-xs font-bold px-4 py-2 rounded-lg transition-all flex items-center gap-2 cursor-pointer"
+          >
+            <Plus size={13} className="text-cyan-400" />
+            <span>Add Preset</span>
+          </button>
+          <button
+            onClick={handleSaveAll}
+            disabled={isSaving || presets.length === 0}
+            className="bg-cyan-500 hover:bg-cyan-600 disabled:opacity-50 active:scale-[0.99] text-black font-semibold text-xs px-4 py-2 rounded-lg transition-all flex items-center gap-2 shadow-[0_4px_12px_rgba(6,182,212,0.15)] cursor-pointer"
+          >
+            {isSaving ? <RefreshCw size={13} className="animate-spin" /> : <Cpu size={13} />}
+            <span>{isSaving ? "Saving..." : "Save All"}</span>
+          </button>
+          {saveResult && (
+            <span
+              className={`text-[11px] font-mono px-2 py-1 rounded border ${
+                saveResult.success
+                  ? "text-cyan-400 bg-cyan-500/10 border-cyan-500/20"
+                  : "text-rose-400 bg-rose-500/10 border-rose-500/20"
+              }`}
+            >
+              {saveResult.message}
+            </span>
+          )}
         </div>
       </div>
+
+      <ExplanatoryCard />
     </motion.div>
   );
 }
 
-function ConfigStats({
-  endpoint,
-  chatModel,
-  embeddingModel,
-  hasApiKey,
+function PresetCard({
+  preset,
+  isActiveChat,
+  isActiveEmbedding,
+  canActivateChat,
+  canActivateEmbedding,
+  onUpdate,
+  onDelete,
+  onFetchModels,
+  onSetActiveChat,
+  onSetActiveEmbedding,
 }: {
-  endpoint: string;
-  chatModel: string;
-  embeddingModel: string;
-  hasApiKey: boolean;
+  preset: WorkingPreset;
+  isActiveChat: boolean;
+  isActiveEmbedding: boolean;
+  canActivateChat: boolean;
+  canActivateEmbedding: boolean;
+  onUpdate: (patch: Partial<WorkingPreset>) => void;
+  onDelete: () => void;
+  onFetchModels: () => void;
+  onSetActiveChat: () => void;
+  onSetActiveEmbedding: () => void;
 }) {
-  const shortEndpoint = endpoint.replace(/^https?:\/\//, "").split("/")[0];
-  const statusLabel = hasApiKey && chatModel ? "Configured" : hasApiKey ? "Partial" : "Not Configured";
-  const statusStyles =
-    statusLabel === "Configured"
-      ? "text-emerald-400 bg-emerald-500/10 border-emerald-500/20"
-      : statusLabel === "Partial"
-      ? "text-amber-400 bg-amber-500/10 border-amber-500/20"
-      : "text-slate-400 bg-slate-500/10 border-slate-500/20";
+  const isActive = isActiveChat || isActiveEmbedding;
+  const borderClass = isActive
+    ? "border-cyan-500/40 ring-1 ring-cyan-500/20"
+    : "border-white/10";
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-4 gap-3 bg-slate-950/65 p-4 rounded-xl border border-white/5 mb-6">
-      <StatCell label="Endpoint Host" value={shortEndpoint || "—"} valueClass="text-cyan-400" />
-      <StatCell label="Chat Model" value={chatModel || "—"} />
-      <StatCell label="Embedding" value={embeddingModel || "—"} valueClass="text-indigo-400" />
-      <div className="font-mono text-center p-2">
-        <div className="text-[10px] text-slate-500 uppercase">Status</div>
-        <div className={`text-[10px] font-bold uppercase mt-1 px-1.5 py-0.5 rounded border inline-block ${statusStyles}`}>
-          {statusLabel}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function StatCell({ label, value, valueClass = "text-white" }: { label: string; value: string; valueClass?: string }) {
-  return (
-    <div className="font-mono text-center md:border-r md:border-white/5 p-2">
-      <div className="text-[10px] text-slate-500 uppercase">{label}</div>
-      <div className={`text-xs font-bold uppercase mt-1 truncate ${valueClass}`} title={value}>
-        {value}
-      </div>
-    </div>
-  );
-}
-
-function EndpointField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
-  return (
-    <div className="space-y-1.5 max-w-2xl">
-      <label className="text-[10px] uppercase font-mono text-slate-400 block">Endpoint URL</label>
-      <input
-        type="text"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="w-full bg-slate-950 border border-white/10 rounded-lg px-3 py-2 text-xs text-slate-100 font-mono focus:border-cyan-500 outline-none"
-        placeholder={DEFAULT_ENDPOINT}
-      />
-      <p className="text-[10px] text-slate-500 italic">
-        OpenAI-compatible base URL. OpenRouter: <code>https://openrouter.ai/api/v1</code>. Ollama:{" "}
-        <code>http://localhost:11434/v1</code>. LM Studio: <code>http://localhost:1234/v1</code>.
-      </p>
-    </div>
-  );
-}
-
-function ApiKeyField({
-  value,
-  onChange,
-  hasApiKey,
-  showValue,
-  onToggleShow,
-}: {
-  value: string;
-  onChange: (v: string) => void;
-  hasApiKey: boolean;
-  showValue: boolean;
-  onToggleShow: () => void;
-}) {
-  return (
-    <div className="space-y-1.5 max-w-2xl">
-      <label className="text-[10px] uppercase font-mono text-slate-400 block flex items-center gap-2">
-        <span>API Key</span>
-        {hasApiKey && (
-          <span className="text-[9px] text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20 normal-case">
-            Already set — leave blank to keep
+    <div className={`bg-slate-950/65 rounded-xl border ${borderClass} p-4 space-y-3 transition-all`}>
+      <div className="flex items-center gap-2">
+        <input
+          type="text"
+          value={preset.name}
+          onChange={(e) => onUpdate({ name: e.target.value })}
+          placeholder="Preset name (e.g. OpenRouter, Ollama Local)"
+          className="flex-1 bg-transparent border-none text-sm text-white font-mono font-bold focus:outline-none placeholder:text-slate-600"
+        />
+        {isActiveChat && (
+          <span className="text-[9px] text-cyan-400 bg-cyan-500/10 px-1.5 py-0.5 rounded border border-cyan-500/20 font-mono uppercase shrink-0 flex items-center gap-1">
+            <CheckCircle2 size={9} /> Chat
           </span>
         )}
-      </label>
-      <div className="relative">
-        <input
-          type={showValue ? "text" : "password"}
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          className="w-full bg-slate-950 border border-white/10 rounded-lg px-3 py-2 pr-10 text-xs text-slate-100 font-mono focus:border-cyan-500 outline-none"
-          placeholder={hasApiKey ? "••••••••••••••••" : "Paste API key (e.g. sk-or-v1-...)"}
-          autoComplete="off"
-        />
+        {isActiveEmbedding && (
+          <span className="text-[9px] text-indigo-400 bg-indigo-500/10 px-1.5 py-0.5 rounded border border-indigo-500/20 font-mono uppercase shrink-0 flex items-center gap-1">
+            <CheckCircle2 size={9} /> Embed
+          </span>
+        )}
         <button
-          type="button"
-          onClick={onToggleShow}
-          className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-cyan-400 transition-colors p-1"
-          title={showValue ? "Hide key" : "Show key"}
-          aria-label={showValue ? "Hide API key" : "Show API key"}
+          onClick={onDelete}
+          className="text-slate-500 hover:text-rose-400 transition-colors p-1"
+          title="Delete preset"
+          aria-label="Delete preset"
         >
-          {showValue ? <EyeOff size={14} /> : <Eye size={14} />}
+          <Trash2 size={14} />
         </button>
       </div>
-      <p className="text-[10px] text-slate-500 italic">
-        Stored locally in .env.local. Get an OpenRouter key at{" "}
-        <code>openrouter.ai/keys</code>.
-      </p>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <FieldLabel label="Endpoint URL">
+          <input
+            type="text"
+            value={preset.endpoint}
+            onChange={(e) => onUpdate({ endpoint: e.target.value })}
+            placeholder={DEFAULT_ENDPOINT}
+            className="w-full bg-slate-900 border border-white/10 rounded-lg px-3 py-2 text-xs text-slate-100 font-mono focus:border-cyan-500 outline-none"
+          />
+        </FieldLabel>
+
+        <FieldLabel
+          label="API Key"
+          trailing={
+            preset.hasApiKey ? (
+              <span className="text-[9px] text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20 normal-case">
+                Stored — leave blank to keep
+              </span>
+            ) : null
+          }
+        >
+          <div className="relative">
+            <input
+              type={preset.showApiKey ? "text" : "password"}
+              value={preset.apiKey}
+              onChange={(e) => onUpdate({ apiKey: e.target.value })}
+              placeholder={preset.hasApiKey ? "••••••••••••••••" : "Paste key (blank for local endpoints)"}
+              autoComplete="off"
+              className="w-full bg-slate-900 border border-white/10 rounded-lg px-3 py-2 pr-10 text-xs text-slate-100 font-mono focus:border-cyan-500 outline-none"
+            />
+            <button
+              type="button"
+              onClick={() => onUpdate({ showApiKey: !preset.showApiKey })}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-cyan-400 transition-colors p-1"
+              title={preset.showApiKey ? "Hide key" : "Show key"}
+              aria-label={preset.showApiKey ? "Hide API key" : "Show API key"}
+            >
+              {preset.showApiKey ? <EyeOff size={14} /> : <Eye size={14} />}
+            </button>
+          </div>
+        </FieldLabel>
+      </div>
+
+      <div className="flex items-center gap-3">
+        <button
+          onClick={onFetchModels}
+          disabled={preset.isFetching || !preset.endpoint}
+          className="bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-slate-300 border border-white/10 font-mono text-xs font-bold px-3 py-1.5 rounded-lg transition-all flex items-center gap-2 cursor-pointer"
+        >
+          {preset.isFetching ? (
+            <RefreshCw size={11} className="animate-spin text-cyan-400" />
+          ) : (
+            <Terminal size={11} className="text-cyan-400" />
+          )}
+          <span>{preset.isFetching ? "Fetching..." : "Fetch Models"}</span>
+        </button>
+        {preset.fetchResult && (
+          <span
+            className={`text-[10px] font-mono ${
+              preset.fetchResult.success ? "text-emerald-400" : "text-rose-400"
+            }`}
+          >
+            {preset.fetchResult.message}
+          </span>
+        )}
+      </div>
+
+      <ModelPicker
+        label="Chat Model"
+        accent="cyan"
+        models={preset.modelsCache}
+        value={preset.chatModel}
+        onChange={(v) => onUpdate({ chatModel: v })}
+        isActive={isActiveChat}
+        canActivate={canActivateChat}
+        onSetActive={onSetActiveChat}
+      />
+
+      <ModelPicker
+        label="Embedding Model"
+        accent="indigo"
+        models={preset.modelsCache}
+        value={preset.embeddingModel}
+        onChange={(v) => onUpdate({ embeddingModel: v })}
+        isActive={isActiveEmbedding}
+        canActivate={canActivateEmbedding}
+        onSetActive={onSetActiveEmbedding}
+      />
+    </div>
+  );
+}
+
+function FieldLabel({
+  label,
+  trailing,
+  children,
+}: {
+  label: string;
+  trailing?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <label className="text-[10px] uppercase font-mono text-slate-400 flex items-center gap-2">
+        <span>{label}</span>
+        {trailing}
+      </label>
+      {children}
     </div>
   );
 }
 
 function ModelPicker({
   label,
-  hint,
+  accent,
   models,
-  filter,
-  setFilter,
   value,
   onChange,
-  accent,
+  isActive,
+  canActivate,
+  onSetActive,
 }: {
   label: string;
-  hint: string;
+  accent: "cyan" | "indigo";
   models: RemoteModel[] | null;
-  filter: string;
-  setFilter: (v: string) => void;
   value: string;
   onChange: (v: string) => void;
-  accent: "cyan" | "indigo";
+  isActive: boolean;
+  canActivate: boolean;
+  onSetActive: () => void;
 }) {
+  const [filter, setFilter] = useState("");
+  const accentText = accent === "cyan" ? "text-cyan-400" : "text-indigo-400";
+  const accentBorder = accent === "cyan" ? "border-cyan-500" : "border-indigo-500";
+  const accentBg = accent === "cyan" ? "bg-cyan-500/10" : "bg-indigo-500/10";
+  const accentRing = accent === "cyan" ? "ring-cyan-500/30" : "ring-indigo-500/30";
+
   const filtered = (models || []).filter((m) =>
     filter ? m.id.toLowerCase().includes(filter.toLowerCase()) : true,
   );
   const showList = models !== null;
-  const accentText = accent === "cyan" ? "text-cyan-400" : "text-indigo-400";
-  const accentBorder = accent === "cyan" ? "border-cyan-500" : "border-indigo-500";
 
   return (
-    <div className="space-y-2 max-w-2xl">
-      <label className="text-[10px] uppercase font-mono text-slate-400 block">{label}</label>
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between">
+        <label className="text-[10px] uppercase font-mono text-slate-400">{label}</label>
+        <button
+          onClick={onSetActive}
+          disabled={!canActivate}
+          className={`text-[9px] font-mono uppercase px-2 py-0.5 rounded border transition-all flex items-center gap-1 ${
+            isActive
+              ? `${accentBg} ${accentBorder} ${accentText}`
+              : canActivate
+              ? "border-white/10 text-slate-400 hover:bg-white/5 cursor-pointer"
+              : "border-white/5 text-slate-600 cursor-not-allowed"
+          }`}
+          title={canActivate ? "Toggle active for this role" : "Pick a model first"}
+        >
+          {isActive && <CheckCircle2 size={9} />}
+          <span>{isActive ? "Active" : canActivate ? "Set Active" : "Pick model first"}</span>
+        </button>
+      </div>
       <div className="flex items-center gap-2">
         <div className="relative flex-1">
-          <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500" />
+          <Search size={11} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500" />
           <input
             type="text"
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
             disabled={!showList}
-            placeholder={showList ? `Filter ${models!.length} models...` : "Click 'Fetch Models' first"}
-            className="w-full bg-slate-950 border border-white/10 rounded-lg pl-7 pr-3 py-1.5 text-xs text-slate-100 font-mono focus:border-cyan-500 outline-none disabled:opacity-50"
+            placeholder={showList ? `Filter ${models!.length} models...` : "Click 'Fetch Models' to populate"}
+            className="w-full bg-slate-900 border border-white/10 rounded-lg pl-7 pr-3 py-1.5 text-xs text-slate-100 font-mono focus:border-cyan-500 outline-none disabled:opacity-50"
           />
         </div>
         {value && (
-          <div className={`text-[10px] font-mono px-2 py-1 rounded border bg-slate-950 ${accentBorder} ${accentText} max-w-[50%] truncate`} title={value}>
+          <div
+            className={`text-[10px] font-mono px-2 py-1 rounded border bg-slate-950 ${accentBorder} ${accentText} max-w-[50%] truncate`}
+            title={value}
+          >
             {value}
           </div>
         )}
       </div>
-      <p className="text-[10px] text-slate-500 italic">{hint}</p>
       {showList && (
-        <div className="max-h-44 overflow-y-auto bg-slate-950/65 border border-white/5 rounded-lg">
+        <div className="max-h-32 overflow-y-auto bg-slate-950/65 border border-white/5 rounded-lg">
           {filtered.length === 0 ? (
-            <div className="p-3 text-[11px] text-slate-500 font-mono">No models match filter.</div>
+            <div className="p-2 text-[10px] text-slate-500 font-mono">No models match filter.</div>
           ) : (
-            filtered.slice(0, 200).map((m) => (
+            filtered.slice(0, 100).map((m) => (
               <button
                 key={m.id}
                 onClick={() => onChange(m.id)}
-                className={`w-full text-left px-3 py-1.5 text-[11px] font-mono transition-colors flex items-center justify-between gap-2 ${
+                className={`w-full text-left px-3 py-1 text-[11px] font-mono transition-colors flex items-center justify-between gap-2 ${
                   value === m.id
-                    ? `bg-cyan-500/10 ${accentText}`
+                    ? `${accentBg} ${accentText}`
                     : "text-slate-400 hover:bg-white/5 hover:text-slate-200"
                 }`}
               >
                 <span className="truncate">{m.id}</span>
-                {value === m.id && <span className="text-[9px] uppercase shrink-0">selected</span>}
+                {value === m.id && (
+                  <span className="text-[9px] uppercase shrink-0 flex items-center gap-1">
+                    <CheckCircle2 size={9} /> Selected
+                  </span>
+                )}
               </button>
             ))
           )}
-          {filtered.length > 200 && (
-            <div className="p-2 text-[10px] text-slate-500 font-mono text-center border-t border-white/5">
-              Showing first 200 of {filtered.length} matches — refine filter to see more.
+          {filtered.length > 100 && (
+            <div className="p-1.5 text-[10px] text-slate-500 font-mono text-center border-t border-white/5">
+              Showing first 100 of {filtered.length} — refine filter.
             </div>
           )}
+        </div>
+      )}
+      {isActive && (
+        <div className={`text-[9px] font-mono ${accentText} flex items-center gap-1 ring-1 ${accentRing} ${accentBg} px-2 py-0.5 rounded`}>
+          <CheckCircle2 size={9} /> Currently active for {label.toLowerCase()}
         </div>
       )}
     </div>
   );
 }
 
-function ResultBanner({
-  label,
-  result,
-  tone,
-}: {
-  label: string;
-  result: { success: boolean; message: string };
-  tone: "emerald" | "cyan" | "rose";
-}) {
-  const toneClass =
-    tone === "emerald"
-      ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400"
-      : tone === "cyan"
-      ? "bg-cyan-500/10 border-cyan-500/20 text-cyan-400"
-      : "bg-rose-500/10 border-rose-500/20 text-rose-400";
-  return (
-    <div className={`p-4 rounded-lg text-xs font-mono border animate-fadeIn ${toneClass}`}>
-      <div className="font-bold uppercase mb-1">{label}</div>
-      <div>{result.message}</div>
-    </div>
-  );
-}
-
 function ExplanatoryCard() {
   return (
-    <div className="space-y-4">
-      <div className="p-4 bg-slate-900/40 rounded-xl border border-white/5 space-y-4">
-        <h4 className="text-xs font-bold font-mono text-slate-300 uppercase flex items-center gap-1.5">
-          <Sparkles size={13} className="text-cyan-400" />
-          <span>Why OpenRouter?</span>
-        </h4>
-        <p className="text-[11px] leading-relaxed text-slate-400">
-          OpenRouter exposes one OpenAI-compatible API for hundreds of models from many providers
-          (Anthropic, OpenAI, Google, Qwen, Meta, Mistral, etc.). One key, one endpoint, your choice
-          of model per scan.
-        </p>
-        <ul className="space-y-2 text-[10px] text-slate-500 pl-3 list-disc">
-          <li>
-            <strong className="text-slate-300">Chat model:</strong> drives the 8-iteration review loop with tool calls.
-          </li>
-          <li>
-            <strong className="text-slate-300">Embedding model:</strong> powers semantic code search. Optional — review works without it.
-          </li>
-          <li>
-            <strong className="text-slate-300">Local fallback:</strong> point at Ollama or LM Studio for fully offline review.
-          </li>
-        </ul>
-      </div>
-      <div className="p-4 rounded-xl border border-amber-500/10 bg-amber-500/[0.02] text-[11px] text-amber-500/85">
-        <h5 className="font-bold font-mono uppercase mb-1 flex items-center gap-1">
-          <AlertCircle size={12} />
-          <span>Cost Notice</span>
-        </h5>
+    <div className="p-4 bg-slate-900/40 rounded-xl border border-white/5 space-y-3">
+      <h4 className="text-xs font-bold font-mono text-slate-300 uppercase flex items-center gap-1.5">
+        <Sparkles size={13} className="text-cyan-400" />
+        <span>How Presets Work</span>
+      </h4>
+      <ul className="space-y-2 text-[11px] text-slate-400 leading-relaxed pl-3 list-disc">
+        <li>
+          <strong className="text-slate-300">Multiple providers:</strong> configure OpenRouter, Ollama, LM Studio, etc. Each preset stores its own endpoint, key, and model selection.
+        </li>
+        <li>
+          <strong className="text-slate-300">Independent roles:</strong> chat (PR review loop) and embedding (semantic search) can use different providers — e.g. OpenRouter for chat + local Ollama for embeddings.
+        </li>
+        <li>
+          <strong className="text-slate-300">No restart:</strong> changes take effect on the next request. Keys are stored in <code>.greploop/llm-presets.json</code> with mode 0600.
+        </li>
+        <li>
+          <strong className="text-slate-300">API key masking:</strong> once saved, the key is never sent back to the browser. Leave the field blank on save to keep the stored value.
+        </li>
+      </ul>
+      <div className="text-[11px] text-amber-500/85 bg-amber-500/[0.02] border border-amber-500/10 p-3 rounded-lg flex items-start gap-2">
+        <AlertCircle size={12} className="shrink-0 mt-0.5" />
         <span>
-          Agentic review loops make multiple LLM calls per scan (up to 8 iterations × tool calls). On paid models expect roughly $0.05–$0.50 per PR. Use a cheap model (e.g. <code className="font-mono bg-amber-500/10 px-1 rounded">qwen/qwen-2.5-coder</code>) for testing.
-        </span>
-      </div>
-      <div className="p-4 rounded-xl border border-amber-500/10 bg-amber-500/[0.02] text-[11px] text-amber-500/85">
-        <h5 className="font-bold font-mono uppercase mb-1 flex items-center gap-1">
-          <AlertCircle size={12} />
-          <span>Restart Required</span>
-        </h5>
-        <span>
-          Config writes to .env.local but the LLM client only reads it at process start. After saving, restart{" "}
-          <code className="font-mono bg-amber-500/10 px-1 rounded">npm run dev</code> for the new endpoint to take effect.
+          <strong>Cost notice:</strong> agentic review loops make multiple LLM calls per scan (up to 8 iterations × tool calls). On paid models expect roughly $0.05–$0.50 per PR. Use a cheap model for testing.
         </span>
       </div>
     </div>
