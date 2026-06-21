@@ -75,7 +75,11 @@ export default function CodebaseGraph({ repoId, repoName, onIndexComplete }: Cod
     setIndexStats(null);
   }, [repoId]);
 
-  // Trigger manual codebase-wide AST parsing indexing run
+  // Trigger manual codebase-wide AST parsing indexing run.
+  // The route returns immediately (202-style); actual work runs detached and
+  // the 15s poller in useDashboardData flips `indexedAt` which surfaces here
+  // via onIndexComplete. We keep isIndexing true locally until we detect
+  // completion by polling the repo's indexedAt field.
   const handleStartIndexing = async () => {
     setIsIndexing(true);
     setIndexStats(null);
@@ -85,18 +89,44 @@ export default function CodebaseGraph({ repoId, repoName, onIndexComplete }: Cod
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        setIndexStats(data.stats);
-        await fetchData();
-        onIndexComplete?.();
+        // Server returned { started: true } — work is running in background.
+        // Poll /api/repos every 5s until indexedAt appears, then fire completion.
+        const poll = async () => {
+          for (let i = 0; i < 600; i++) {
+            await new Promise(r => setTimeout(r, 5000));
+            try {
+              const r = await fetch(`/api/repos/${repoId}`);
+              if (r.ok) {
+                const repo = await r.json();
+                if (repo?.indexedAt) {
+                  setIndexStats({
+                    elapsedMs: 0,
+                    filesProcessed: 0,
+                    symbolsExtracted: 0,
+                    background: true,
+                  });
+                  await fetchData();
+                  onIndexComplete?.();
+                  setIsIndexing(false);
+                  return;
+                }
+              }
+            } catch {}
+          }
+          setIsIndexing(false);
+        };
+        poll();
+      } else if (res.status === 409 && data.error === "ALREADY_INDEXING") {
+        // Already running — keep the in-progress banner visible.
       } else {
         alert(
           `Indexing failed (${res.status}): ${data.error || res.statusText}\n` +
           `Check the dev server console for details.`,
         );
+        setIsIndexing(false);
       }
     } catch (err: any) {
       alert("Error parsing AST structure: " + err.message);
-    } finally {
       setIsIndexing(false);
     }
   };
@@ -209,7 +239,15 @@ export default function CodebaseGraph({ repoId, repoName, onIndexComplete }: Cod
           <div className="flex items-center gap-2">
             <CheckCircle size={14} className="text-emerald-400 shrink-0" />
             <span>
-              <strong className="text-emerald-200">Indexing complete.</strong> Parsed <strong>{indexStats.filesProcessed} files</strong>, mapped <strong>{indexStats.symbolsExtracted} call sites</strong> in <strong>{indexStats.elapsedMs}ms</strong>. PR review scan is now unlocked.
+              {indexStats.background ? (
+                <>
+                  <strong className="text-emerald-200">Indexing complete.</strong> Codebase AST graph is fresh. PR review scan is now unlocked.
+                </>
+              ) : (
+                <>
+                  <strong className="text-emerald-200">Indexing complete.</strong> Parsed <strong>{indexStats.filesProcessed} files</strong>, mapped <strong>{indexStats.symbolsExtracted} call sites</strong> in <strong>{indexStats.elapsedMs}ms</strong>. PR review scan is now unlocked.
+                </>
+              )}
             </span>
           </div>
           <button onClick={() => setIndexStats(null)} className="text-slate-400 hover:text-white shrink-0">✕</button>

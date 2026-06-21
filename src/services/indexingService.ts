@@ -39,9 +39,18 @@ export interface EdgeNode {
 export class IndexingService {
 
   private static ignoreDirs = [
-    "node_modules", ".git", "dist", "build", "target", "venv", 
+    "node_modules", ".git", "dist", "build", "target", "venv",
     ".venv", "bin", "obj", ".next", "out"
   ];
+
+  /** Repo ids with an in-flight index run. Prevents concurrent requests
+   *  from racing the delete phase against each other's insert phase. */
+  private static activeIndexers = new Set<string>();
+
+  /** True if an index run is currently in progress for this repo. */
+  public static isIndexing(repoId: string): boolean {
+    return IndexingService.activeIndexers.has(repoId);
+  }
 
   /**
    * Scans a file to extract classes, functions, variable nodes and call sites.
@@ -345,6 +354,23 @@ export class IndexingService {
    * Scans a repository completely, updating database tables for symbols, files, and edges.
    */
   public static async indexFolder(repoId: string, repoPath: string): Promise<{ fileParsedCount: number; symbolsExtractedCount: number; edgesResolvedCount: number }> {
+    // Per-repo re-entrancy lock. The previous request might still be in its
+    // insert loop after the client navigated away; letting a second request
+    // start would race the deletes against the inserts and produce P2002
+    // unique-violations on File/Symbol. Reject concurrent runs explicitly.
+    if (IndexingService.activeIndexers.has(repoId)) {
+      throw new Error('Index already in progress for this repo — wait for the current run to finish.');
+    }
+    IndexingService.activeIndexers.add(repoId);
+
+    try {
+      return await IndexingService.runIndex(repoId, repoPath);
+    } finally {
+      IndexingService.activeIndexers.delete(repoId);
+    }
+  }
+
+  private static async runIndex(repoId: string, repoPath: string): Promise<{ fileParsedCount: number; symbolsExtractedCount: number; edgesResolvedCount: number }> {
     const resolvedPath = path.isAbsolute(repoPath) ? repoPath : path.resolve(process.cwd(), repoPath);
     if (!fs.existsSync(resolvedPath)) {
       throw new Error(`Repository local path "${repoPath}" could not be located.`);
@@ -374,11 +400,18 @@ export class IndexingService {
         const code = fs.readFileSync(absoluteFilePath, "utf-8");
         const hash = crypto.createHash("md5").update(code).digest("hex");
 
-        // Insert index manifest file row
-        await prisma.file.create({
-          data: {
+        // Insert index manifest file row (upsert = idempotent over (repoId,filePath)
+        // so a partial run from a crashed/timed-out previous attempt can't poison
+        // re-indexing with P2002 unique-violations)
+        await prisma.file.upsert({
+          where: { repoId_filePath: { repoId, filePath: relativePath } },
+          create: {
             repoId: repoId,
             filePath: relativePath,
+            fileHash: hash,
+            parsedAt: BigInt(Date.now())
+          },
+          update: {
             fileHash: hash,
             parsedAt: BigInt(Date.now())
           }
@@ -391,11 +424,21 @@ export class IndexingService {
         for (const meta of symbols) {
           const symId = `sym-${repoId}-${crypto.createHash("md5").update(relativePath + meta.name).digest("hex").slice(0, 10)}`;
           
-          await prisma.symbol.create({
-            data: {
+          await prisma.symbol.upsert({
+            where: { id: symId },
+            create: {
               id: symId,
               repoId: repoId,
               filePath: relativePath,
+              name: meta.name,
+              kind: meta.kind,
+              language: meta.language,
+              lineStart: meta.lineStart,
+              lineEnd: meta.lineEnd,
+              signature: meta.signature || null,
+              sourceHash: meta.sourceHash
+            },
+            update: {
               name: meta.name,
               kind: meta.kind,
               language: meta.language,

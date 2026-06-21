@@ -1,6 +1,20 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/src/lib/prisma";
 
+export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+  try {
+    const { id } = await params;
+    const repo = await prisma.repository.findUnique({ where: { id } });
+    if (!repo) {
+      return NextResponse.json({ error: "Repository record not found" }, { status: 404 });
+    }
+    return NextResponse.json(repo);
+  } catch (err: any) {
+    console.error("Error fetching repository:", err);
+    return NextResponse.json({ error: err.message }, { status: 500 });
+  }
+}
+
 export async function PUT(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
