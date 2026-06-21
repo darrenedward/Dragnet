@@ -12,6 +12,12 @@ export interface Repository {
   lastCommitMessage: string;
   reviewsCount: number;
   prCount?: number;
+  /**
+   * ISO timestamp of the last successful indexing run. Null when the repo
+   * has never been indexed — UI gates the Scan button on this and the
+   * /api/prs/[id]/scan route rejects with 409 INDEX_REQUIRED.
+   */
+  indexedAt?: string | null;
 }
 
 export interface PullRequest {

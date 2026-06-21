@@ -24,6 +24,7 @@ model Repository {
   lastActivityTime   String
   stabilizationTimer Int
   reviewsCount       Int
+  indexedAt          String?
   reviewHistory      ReviewHistory[]
   pullRequests       PullRequest[]
 

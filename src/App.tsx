@@ -276,6 +276,8 @@ export default function App() {
                   selectedFilename={d.selectedFilename}
                   onSelectFilename={d.setSelectedFilename}
                   activeFile={activeFile}
+                  repoIndexedAt={activeRepo?.indexedAt ?? null}
+                  onGoToIndexing={() => setActiveTab("codebase")}
                 />
               )}
             </AnimatePresence>

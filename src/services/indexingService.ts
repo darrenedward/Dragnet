@@ -468,8 +468,13 @@ export class IndexingService {
     // Trigger Phase B background summary & embedding generation
     this.startBackgroundEnrichment(repoId, resolvedPath);
 
-    // Mark repository status ready
-    await prisma.repository.updateMany({ where: { id: repoId }, data: { status: 'idle' } });
+    // Mark repository status ready and record indexedAt — the PR scan
+    // route gates on this field being non-null so un-indexed repos can't
+    // produce reviews that silently fall back to procedural fake findings.
+    await prisma.repository.updateMany({
+      where: { id: repoId },
+      data: { status: 'idle', indexedAt: new Date().toISOString() },
+    });
 
     return {
       fileParsedCount: filesToParse.length,

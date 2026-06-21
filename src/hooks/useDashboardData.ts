@@ -279,6 +279,11 @@ export function useDashboardData() {
         await fetchPrDetails(selectedPrId);
         await fetchRepos();
         await fetchLogs();
+      } else if (res.status === 409 && result.error === "INDEX_REQUIRED") {
+        alert(
+          result.message ||
+            "Codebase not indexed. Open the Codebase AST graph tab and run the indexer before reviewing.",
+        );
       } else {
         alert("Pipeline Scan Error: " + (result.error || "Execution timeout"));
       }
