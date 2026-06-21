@@ -479,6 +479,17 @@ function ModelPicker({
   onSetActive: () => void;
 }) {
   const [filter, setFilter] = useState("");
+  /**
+   * Tracks whether the model list is expanded. After a user picks a model
+   * we collapse the list so the selected value gets visual focus. They
+   * can click "Change" on the right to reopen it. Reset back to expanded
+   * whenever a fresh model catalog is fetched.
+   */
+  const [isExpanded, setIsExpanded] = useState(true);
+  useEffect(() => {
+    setIsExpanded(true);
+    setFilter("");
+  }, [models]);
   const accentText = accent === "cyan" ? "text-cyan-400" : "text-indigo-400";
   const accentBorder = accent === "cyan" ? "border-cyan-500" : "border-indigo-500";
   const accentBg = accent === "cyan" ? "bg-cyan-500/10" : "bg-indigo-500/10";
@@ -487,7 +498,8 @@ function ModelPicker({
   const filtered = (models || []).filter((m) =>
     filter ? m.id.toLowerCase().includes(filter.toLowerCase()) : true,
   );
-  const showList = models !== null;
+  const hasCatalog = models !== null;
+  const showList = hasCatalog && (isExpanded || !value);
 
   return (
     <div className="space-y-1.5">
@@ -516,14 +528,32 @@ function ModelPicker({
             type="text"
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
-            disabled={!showList}
-            placeholder={showList ? `Filter ${models!.length} models...` : "Click 'Fetch Models' to populate"}
+            disabled={!hasCatalog}
+            placeholder={
+              !hasCatalog
+                ? "Click 'Fetch Models' to populate"
+                : showList
+                ? `Filter ${models!.length} models...`
+                : "Selected — click Change to pick a different model"
+            }
             className="w-full bg-slate-900 border border-white/10 rounded-lg pl-7 pr-3 py-1.5 text-xs text-slate-100 font-mono focus:border-cyan-500 outline-none disabled:opacity-50"
           />
         </div>
+        {value && !showList && (
+          <button
+            onClick={() => {
+              setFilter("");
+              setIsExpanded(true);
+            }}
+            className={`text-[10px] font-mono px-2 py-1 rounded border ${accentBorder} ${accentText} ${accentBg} hover:opacity-80 cursor-pointer shrink-0`}
+            title="Reopen model list"
+          >
+            Change
+          </button>
+        )}
         {value && (
           <div
-            className={`text-[10px] font-mono px-2 py-1 rounded border bg-slate-950 ${accentBorder} ${accentText} max-w-[50%] truncate`}
+            className={`text-[10px] font-mono px-2 py-1 rounded border bg-slate-950 ${accentBorder} ${accentText} ${showList ? "max-w-[50%]" : "max-w-[60%]"} truncate`}
             title={value}
           >
             {value}
@@ -538,7 +568,10 @@ function ModelPicker({
             filtered.slice(0, 100).map((m) => (
               <button
                 key={m.id}
-                onClick={() => onChange(m.id)}
+                onClick={() => {
+                  onChange(m.id);
+                  setIsExpanded(false);
+                }}
                 className={`w-full text-left px-3 py-1 text-[11px] font-mono transition-colors flex items-center justify-between gap-2 ${
                   value === m.id
                     ? `${accentBg} ${accentText}`
