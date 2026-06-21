@@ -23,3 +23,6 @@ src/generated/prisma/
 *.swp
 *.db
 data.db
+
+# GrepLoop local state (LLM presets, etc.)
+.greploop/
