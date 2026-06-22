@@ -4,6 +4,11 @@ import { useEffect, useState } from "react";
 import { motion } from "motion/react";
 import { Check, Copy, Eye, EyeOff, Key, Plus, Trash2, X, Code, Terminal, Sparkles, Cpu } from "lucide-react";
 
+interface RepoView {
+  id: string;
+  name: string;
+}
+
 interface McpKeyView {
   id: string;
   name: string;
@@ -28,7 +33,7 @@ const tools: ToolConfig[] = [
   { id: "codex", label: "Codex", icon: Code },
 ];
 
-function InstallModal({ tool, origin, apiKey, onClose }: { tool: ToolId; origin: string; apiKey: string; onClose: () => void }) {
+function InstallModal({ tool, origin, apiKey, repoId, onClose }: { tool: ToolId; origin: string; apiKey: string; repoId?: string; onClose: () => void }) {
   const [copiedSection, setCopiedSection] = useState<string | null>(null);
 
   const copy = (text: string, section: string) => {
@@ -38,6 +43,7 @@ function InstallModal({ tool, origin, apiKey, onClose }: { tool: ToolId; origin:
   };
 
   const key = apiKey;
+  const baseUrl = repoId ? `${origin}/api/mcp/command/${repoId}` : `${origin}/api/mcp/command`;
 
   interface CmdSection { label: string; command: string; }
   const sections: Record<ToolId, { title: string; steps: CmdSection[] }> = {
@@ -46,10 +52,10 @@ function InstallModal({ tool, origin, apiKey, onClose }: { tool: ToolId; origin:
       steps: [
         {
           label: "Install MCP server (global)",
-          command: `claude mcp add --scope global --transport http bughunter ${origin}/api/mcp/command --header "Authorization: Bearer ${key}"`,
+          command: `claude mcp add --scope global --transport http bughunter ${baseUrl} --header "Authorization: Bearer ${key}"`,
         },
         {
-          label: "Install BugHunter skill (also works in OpenCode — run from project root)",
+          label: "Install BugHunter skill (also works in OpenCode)",
           command: `cp -r skills/bughunter ~/.claude/skills/`,
         },
       ],
@@ -59,7 +65,7 @@ function InstallModal({ tool, origin, apiKey, onClose }: { tool: ToolId; origin:
       steps: [
         {
           label: "Install MCP server (global)",
-          command: `mkdir -p ~/.cursor && (jq '.mcpServers.bughunter = {"type":"http","url":"${origin}/api/mcp/command","headers":{"Authorization":"Bearer ${key}"}}' ~/.cursor/mcp.json 2>/dev/null || echo '{"mcpServers":{"bughunter":{"type":"http","url":"${origin}/api/mcp/command","headers":{"Authorization":"Bearer ${key}"}}}}') > /tmp/_cursor.json && mv /tmp/_cursor.json ~/.cursor/mcp.json`,
+          command: `mkdir -p ~/.cursor && (jq '.mcpServers.bughunter = {"type":"http","url":"${baseUrl}","headers":{"Authorization":"Bearer ${key}"}}' ~/.cursor/mcp.json 2>/dev/null || echo '{"mcpServers":{"bughunter":{"type":"http","url":"${baseUrl}","headers":{"Authorization":"Bearer ${key}"}}}}') > /tmp/_cursor.json && mv /tmp/_cursor.json ~/.cursor/mcp.json`,
         },
       ],
     },
@@ -67,16 +73,8 @@ function InstallModal({ tool, origin, apiKey, onClose }: { tool: ToolId; origin:
       title: "OpenCode",
       steps: [
         {
-          label: "Install MCP server (global)",
-          command: `mkdir -p ~/.config/opencode && (jq '.mcp.bughunter = {"type":"remote","url":"${origin}/api/mcp/command","headers":{"Authorization":"Bearer ${key}"}}' ~/.config/opencode/opencode.json 2>/dev/null || echo '{"$schema":"https://opencode.ai/config.json","mcp":{"bughunter":{"type":"remote","url":"${origin}/api/mcp/command","headers":{"Authorization":"Bearer ${key}"}}}}') > /tmp/_oc.json && mv /tmp/_oc.json ~/.config/opencode/opencode.json`,
-        },
-        {
-          label: "Add slash commands (/prs, /prcheck, /prcomments)",
-          command: `node scripts/bughunter.mjs list solarplanner-1781996684911`,
-        },
-        {
-          label: "Skill — already installed if you ran the Claude Code skill step above (OpenCode reads ~/.claude/skills/)",
-          command: `ls ~/.claude/skills/bughunter/SKILL.md`,
+          label: "Install MCP server (global) + slash commands",
+          command: `mkdir -p ~/.config/opencode && (jq '.mcp.bughunter = {"type":"remote","url":"${baseUrl}","headers":{"Authorization":"Bearer ${key}"}} | .command.prs = {"description":"List pull requests for this repo","template":"Use the bughunter prlist tool to list all PRs for the current repo. If there are no PRs registered, say so."} | .command.prcheck = {"description":"Review a PR (/prcheck <number>)","template":"Use the bughunter prcheck tool to review PR #$ARGUMENTS. Show me the rating and any findings."} | .command.bugfixer = {"description":"Auto-fix loop: review → fix → re-review until 4/5 (/bugfixer <number>)","template":"Use the bughunter prcheck tool to review PR #$1. If rating >= 4/5, report PASS. Otherwise fix each finding (read the file, apply the fix, commit with '"'"'fix: address review findings'"'"'), then tell me to run /bugfixer $1 again for re-review. Loop until 4/5."}' ~/.config/opencode/opencode.json 2>/dev/null || echo '{"$schema":"https://opencode.ai/config.json","mcp":{"bughunter":{"type":"remote","url":"${baseUrl}","headers":{"Authorization":"Bearer ${key}"}}},"command":{"prs":{"description":"List pull requests for this repo","template":"Use the bughunter prlist tool to list all PRs for the current repo. If there are no PRs registered, say so."},"prcheck":{"description":"Review a PR (/prcheck <number>)","template":"Use the bughunter prcheck tool to review PR #$ARGUMENTS. Show me the rating and any findings."},"bugfixer":{"description":"Auto-fix loop: review → fix → re-review until 4/5 (/bugfixer <number>)","template":"Use the bughunter prcheck tool to review PR #$1. If rating >= 4/5, report PASS. Otherwise fix each finding (read the file, apply the fix, commit with '"'"'fix: address review findings'"'"'), then tell me to run /bugfixer $1 again for re-review. Loop until 4/5."}}}') > /tmp/_oc.json && mv /tmp/_oc.json ~/.config/opencode/opencode.json`,
         },
       ],
     },
@@ -85,7 +83,7 @@ function InstallModal({ tool, origin, apiKey, onClose }: { tool: ToolId; origin:
       steps: [
         {
           label: "Install MCP server",
-          command: `GREPLOOP_API_KEY='${key}' codex mcp add bughunter --url ${origin}/api/mcp/command --bearer-token-env-var GREPLOOP_API_KEY`,
+          command: `GREPLOOP_API_KEY='${key}' codex mcp add bughunter --url ${baseUrl} --bearer-token-env-var GREPLOOP_API_KEY`,
         },
       ],
     },
@@ -138,6 +136,7 @@ function InstallModal({ tool, origin, apiKey, onClose }: { tool: ToolId; origin:
 
 export default function McpKeysPanel() {
   const [keys, setKeys] = useState<McpKeyView[]>([]);
+  const [repos, setRepos] = useState<RepoView[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [newKeyName, setNewKeyName] = useState("");
   const [creating, setCreating] = useState(false);
@@ -146,6 +145,7 @@ export default function McpKeysPanel() {
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeTool, setActiveTool] = useState<ToolId | null>(null);
+  const [selectedRepo, setSelectedRepo] = useState<string>("");
   const [origin, setOrigin] = useState("http://localhost:3300");
 
   useEffect(() => {
@@ -159,8 +159,15 @@ export default function McpKeysPanel() {
     } catch { /* ignore */ }
   };
 
+  const fetchRepos = async () => {
+    try {
+      const res = await fetch("/api/repos");
+      if (res.ok) setRepos(await res.json());
+    } catch { /* ignore */ }
+  };
+
   useEffect(() => {
-    fetchKeys().finally(() => setIsLoading(false));
+    Promise.all([fetchKeys(), fetchRepos()]).finally(() => setIsLoading(false));
   }, []);
 
   const handleCreate = async () => {
@@ -320,6 +327,30 @@ export default function McpKeysPanel() {
 
       <div className="p-5 bg-[#0F1219] border border-white/10 rounded-xl">
         <h4 className="text-[10px] uppercase tracking-[0.2em] text-slate-500 font-mono font-bold mb-3">Connect Your Tools</h4>
+
+        {repos.length > 0 && (
+          <div className="mb-4">
+            <label className="text-[10px] uppercase tracking-[0.2em] text-slate-500 font-mono font-bold block mb-1.5">
+              Target Repository
+            </label>
+            <select
+              value={selectedRepo}
+              onChange={(e) => setSelectedRepo(e.target.value)}
+              className="w-full bg-slate-900 border border-white/10 rounded-lg px-3 py-2 text-xs font-mono text-slate-300 focus:outline-none focus:border-cyan-500/40"
+            >
+              <option value="">All repos (pass repoId manually)</option>
+              {repos.map((r) => (
+                <option key={r.id} value={r.id}>{r.name}</option>
+              ))}
+            </select>
+            {selectedRepo && (
+              <p className="text-[9px] text-slate-500 font-mono mt-1">
+                Install commands will be scoped to this repo. <code className="text-cyan-400">/prcheck 5</code> will use this repo automatically.
+              </p>
+            )}
+          </div>
+        )}
+
         <div className="flex flex-wrap gap-2">
           {tools.map((t) => {
             const Icon = t.icon;
@@ -366,7 +397,13 @@ export default function McpKeysPanel() {
       </div>
 
       {activeTool && (
-        <InstallModal tool={activeTool} origin={origin} apiKey={newKeyValue!} onClose={() => setActiveTool(null)} />
+        <InstallModal
+          tool={activeTool}
+          origin={origin}
+          apiKey={newKeyValue!}
+          repoId={selectedRepo || undefined}
+          onClose={() => setActiveTool(null)}
+        />
       )}
     </motion.div>
   );

@@ -19,6 +19,12 @@ export async function POST(req: Request) {
   try {
     const body = await req.json();
     const { id, repoId, repoName, branch, commitHash, triggerReason, status } = body;
+    const requiredFields = ["repoId", "repoName", "branch", "commitHash", "triggerReason"] as const;
+    for (const field of requiredFields) {
+      if (!body[field] || typeof body[field] !== "string") {
+        return NextResponse.json({ error: `${field} is required.` }, { status: 400 });
+      }
+    }
     const keyId = id || `rev-${Date.now()}`;
 
     await prisma.reviewHistory.create({
