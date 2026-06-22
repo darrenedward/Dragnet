@@ -46,7 +46,7 @@ function InstallModal({ tool, origin, apiKey, onClose }: { tool: ToolId; origin:
       steps: [
         {
           label: "Install MCP server",
-          command: `claude mcp add --transport http bughunter ${origin}/api/mcp/command --header "Authorization: Bearer ${key}"`,
+          command: `claude mcp add --scope global --transport http bughunter ${origin}/api/mcp/command --header "Authorization: Bearer ${key}"`,
         },
         {
           label: "Install BugHunter skill (run from project root)",
