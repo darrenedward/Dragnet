@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/src/lib/prisma";
 import { findPrByIdOrNumber, findPrByBranch } from "@/src/lib/findPr";
+import { refreshPrFiles } from "@/src/lib/getRealLocalPrs";
 import { runPrScan } from "@/reviewService";
 import { refreshPrFiles } from "@/src/lib/getRealLocalPrs";
 import { authenticateMcpRequest } from "@/src/lib/mcpAuth";
@@ -84,10 +85,26 @@ async function resolvePrFromArgs(args: any): Promise<any | null> {
   return pr;
 }
 
+<<<<<<< HEAD
 function formatFindings(pr: any, findings: any[]): string {
   const pass = pr.rating != null && pr.rating >= 4;
   let out = `## PR ${pr.sourceBranch} — "${pr.title}"\n**Rating: ${pr.rating ?? "?"}/5** — ${pr.rating != null ? (pass ? "PASS" : "FAIL") : "Not yet"}\n\n`;
   if (findings.length === 0) {
+=======
+  try {
+    const repo = await prisma.repository.findUnique({ where: { id: pr.repoId } });
+    if (repo) {
+      await refreshPrFiles(repo.path, repo.baseBranch, pr.sourceBranch, pr.id);
+    }
+  } catch (e) {
+    console.warn("[mcp] prfile refresh failed, using cached:", e);
+  }
+
+  const sr = await runPrScan(pr.id);
+  const pass = sr.rating >= 4;
+  let out = `## PR #${pr.id} — "${pr.title}"\n**Rating: ${sr.rating}/5** — ${pass ? "PASS" : "FAIL"}\n\n`;
+  if (sr.findings.length === 0) {
+>>>>>>> a39c4b6 (test: add comment for review loop demo)
     out += "No findings.\n";
   } else {
     for (const f of findings) {

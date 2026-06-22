@@ -219,6 +219,26 @@ function listBranches(repoPath: string): BranchInfo[] {
   });
 }
 
+export async function refreshPrFiles(repoPath: string, baseBranch: string, branchName: string, prId: string) {
+  const files = collectBranchFiles(repoPath, baseBranch, branchName);
+  await prisma.prFile.deleteMany({ where: { prId } });
+  if (files.length > 0) {
+    await prisma.prFile.createMany({
+      data: files.map((f, i) => ({
+        id: `file-${prId}-${i}`,
+        prId,
+        filename: f.filename,
+        status: f.status,
+        additions: f.additions,
+        deletions: f.deletions,
+        originalContent: sanitizeForPg(f.originalContent),
+        modifiedContent: sanitizeForPg(f.modifiedContent),
+        diff: sanitizeForPg(f.diff),
+      })),
+    });
+  }
+}
+
 function collectBranchFiles(
   repoPath: string,
   baseBranch: string,
