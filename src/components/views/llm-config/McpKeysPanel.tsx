@@ -71,6 +71,10 @@ function InstallModal({ tool, origin, apiKey, onClose }: { tool: ToolId; origin:
           command: `mkdir -p ~/.config/opencode && (jq '.mcp.bughunter = {"type":"remote","url":"${origin}/api/mcp/command","headers":{"Authorization":"Bearer ${key}"}}' ~/.config/opencode/opencode.json 2>/dev/null || echo '{"$schema":"https://opencode.ai/config.json","mcp":{"bughunter":{"type":"remote","url":"${origin}/api/mcp/command","headers":{"Authorization":"Bearer ${key}"}}}}') > /tmp/_oc.json && mv /tmp/_oc.json ~/.config/opencode/opencode.json`,
         },
         {
+          label: "Add slash commands (/prs, /prcheck, /prcomments)",
+          command: `node scripts/bughunter.mjs list solarplanner-1781996684911`,
+        },
+        {
           label: "Skill — already installed if you ran the Claude Code skill step above (OpenCode reads ~/.claude/skills/)",
           command: `ls ~/.claude/skills/bughunter/SKILL.md`,
         },
