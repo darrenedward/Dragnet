@@ -379,57 +379,98 @@ export class IndexingService {
     const allFiles: string[] = [];
     this.walkDirSync(resolvedPath, allFiles);
 
-    // Filter relevant files
     const targetExts = [".ts", ".tsx", ".js", ".jsx", ".py", ".rs", ".go", ".java", ".cpp", ".cc", ".h", ".hpp"];
-    const filesToParse = allFiles.filter(f => targetExts.includes(path.extname(f).toLowerCase()));
+    const filesOnDisk = allFiles
+      .filter(f => targetExts.includes(path.extname(f).toLowerCase()))
+      .map(f => ({
+        absolutePath: f,
+        relativePath: path.relative(resolvedPath, f),
+        code: fs.readFileSync(f, "utf-8"),
+      }))
+      .map(f => ({ ...f, hash: crypto.createHash("md5").update(f.code).digest("hex") }));
 
-    // Delete old index for this repo to maintain clean consistency
-    await prisma.symbol.deleteMany({ where: { repoId } });
-    await prisma.edge.deleteMany({ where: { repoId } });
-    await prisma.file.deleteMany({ where: { repoId } });
+    // Load existing files from DB to detect changes
+    const existingFiles = await prisma.file.findMany({ where: { repoId } });
+    const existingByPath = new Map(existingFiles.map(f => [f.filePath, f]));
+    const diskPaths = new Set(filesOnDisk.map(f => f.relativePath));
 
-    let symbolsCount = 0;
-    const rawCallAccumulator: { fromSymbolName: string; toRaw: string; line: number; filePath: string }[] = [];
+    // Diff: unchanged (same hash), changed (different or new), deleted (in DB but not on disk)
+    const unchanged: typeof filesOnDisk = [];
+    const changed: typeof filesOnDisk = [];
+    for (const f of filesOnDisk) {
+      const existing = existingByPath.get(f.relativePath);
+      if (existing && existing.fileHash === f.hash) {
+        unchanged.push(f);
+      } else {
+        changed.push(f);
+      }
+    }
+    const deletedFilePaths = [...existingByPath.keys()].filter(p => !diskPaths.has(p));
 
-    // Key mapped: filePath -> SymbolId
-    // NOTE: must use Object.hasOwn() when probing — keys like "toString",
-    // "hasOwnProperty", "valueOf" collide with Object.prototype methods and
-    // a naive `map[name]` truthiness check returns the inherited Function,
-    // which then crashes createMany with [object Function] as toId.
+    // If nothing changed at all, short-circuit
+    if (changed.length === 0 && deletedFilePaths.length === 0 && existingByPath.size > 0) {
+      await prisma.repository.updateMany({
+        where: { id: repoId },
+        data: { status: 'idle', indexedAt: new Date().toISOString() },
+      });
+      const totalSymbols = await prisma.symbol.count({ where: { repoId } });
+      const totalEdges = await prisma.edge.count({ where: { repoId } });
+      return { fileParsedCount: existingByPath.size, symbolsExtractedCount: totalSymbols, edgesResolvedCount: totalEdges };
+    }
+
+    // 1. Handle deleted files: remove from files, symbols, and edges
+    if (deletedFilePaths.length > 0) {
+      await prisma.file.deleteMany({ where: { repoId, filePath: { in: deletedFilePaths } } });
+      await prisma.symbol.deleteMany({ where: { repoId, filePath: { in: deletedFilePaths } } });
+      await prisma.edge.deleteMany({ where: { repoId, filePath: { in: deletedFilePaths } } });
+    }
+
+    // 2. For changed files: remove old symbols+edges (files updated below)
+    const changedPaths = changed.map(f => f.relativePath);
+    if (changedPaths.length > 0) {
+      await prisma.file.deleteMany({ where: { repoId, filePath: { in: changedPaths } } });
+      await prisma.symbol.deleteMany({ where: { repoId, filePath: { in: changedPaths } } });
+      await prisma.edge.deleteMany({ where: { repoId, filePath: { in: changedPaths } } });
+    }
+
+    // 3. Load existing (unchanged) symbols into lookup for cross-file edge resolution
     const symbolNameIdMap: Record<string, string> = {};
     const hasOwn = (k: string) => Object.prototype.hasOwnProperty.call(symbolNameIdMap, k);
     const lookup = (k: string): string | undefined => (hasOwn(k) ? symbolNameIdMap[k] : undefined);
 
-    // In-memory accumulators for bulk inserts. Per-row round-trips against
-    // the Supabase pooler take ~2s each — 500+ files × 2-3 rows per file
-    // is 30+ minutes sequentially. Batching drops that to a handful of calls.
+    const existingSymbols = await prisma.symbol.findMany({ where: { repoId } });
+    for (const sym of existingSymbols) {
+      if (!changedPaths.includes(sym.filePath)) {
+        symbolNameIdMap[`${sym.filePath}|${sym.name}`] = sym.id;
+        symbolNameIdMap[sym.name] = sym.id;
+      }
+    }
+
+    // 4. Parse changed + new files
+    let symbolsCount = 0;
+    let edgeIndex = 1;
+    const rawCallAccumulator: { fromSymbolName: string; toRaw: string; line: number; filePath: string }[] = [];
     const fileRows: { repoId: string; filePath: string; fileHash: string; parsedAt: bigint }[] = [];
     const symbolRows: { id: string; repoId: string; filePath: string; name: string; kind: string; language: string; lineStart: number; lineEnd: number; signature: string | null; sourceHash: string }[] = [];
 
-    for (const absoluteFilePath of filesToParse) {
+    for (const f of changed) {
       try {
-        const relativePath = path.relative(resolvedPath, absoluteFilePath);
-        const code = fs.readFileSync(absoluteFilePath, "utf-8");
-        const hash = crypto.createHash("md5").update(code).digest("hex");
-
         fileRows.push({
           repoId,
-          filePath: relativePath,
-          fileHash: hash,
+          filePath: f.relativePath,
+          fileHash: f.hash,
           parsedAt: BigInt(Date.now()),
         });
 
-        // Parse content
-        const { symbols, rawCalls } = this.parseFileSymbols(repoId, relativePath, code);
+        const { symbols, rawCalls } = this.parseFileSymbols(repoId, f.relativePath, f.code);
 
-        // Collect symbol rows + lookup map
         for (const meta of symbols) {
-          const symId = `sym-${repoId}-${crypto.createHash("md5").update(relativePath + meta.name).digest("hex").slice(0, 10)}`;
+          const symId = `sym-${repoId}-${crypto.createHash("md5").update(f.relativePath + meta.name).digest("hex").slice(0, 10)}`;
 
           symbolRows.push({
             id: symId,
             repoId,
-            filePath: relativePath,
+            filePath: f.relativePath,
             name: meta.name,
             kind: meta.kind,
             language: meta.language,
@@ -440,27 +481,19 @@ export class IndexingService {
           });
 
           symbolsCount++;
-          // Use a plain object without prototype-pollution risk on common
-          // method names like "toString" — store under both keys but only
-          // ever read via the lookup() helper.
-          symbolNameIdMap[`${relativePath}|${meta.name}`] = symId;
+          symbolNameIdMap[`${f.relativePath}|${meta.name}`] = symId;
           symbolNameIdMap[meta.name] = symId;
         }
 
         for (const call of rawCalls) {
-          rawCallAccumulator.push({
-            ...call,
-            filePath: relativePath
-          });
+          rawCallAccumulator.push({ ...call, filePath: f.relativePath });
         }
-
       } catch (err) {
-        console.warn(`[Indexing Warning] Failed compiling tokens for file ${absoluteFilePath}`, err);
+        console.warn(`[Indexing Warning] Failed compiling tokens for file ${f.absolutePath}`, err);
       }
     }
 
-    // Bulk insert files + symbols. Chunked to avoid Supabase statement-size
-    // limits and to keep individual queries under the pooler's patience.
+    // 5. Bulk insert file + symbol rows
     const CHUNK = 100;
     for (let i = 0; i < fileRows.length; i += CHUNK) {
       await prisma.file.createMany({ data: fileRows.slice(i, i + CHUNK), skipDuplicates: true });
@@ -469,26 +502,21 @@ export class IndexingService {
       await prisma.symbol.createMany({ data: symbolRows.slice(i, i + CHUNK), skipDuplicates: true });
     }
 
-    // Now resolve Call Graph edges in memory, then bulk insert
+    // 6. Resolve edges for changed files only (against combined symbol map)
     const edgeRows: { id: string; repoId: string; fromId: string; toId: string | null; toRaw: string; kind: string; filePath: string; line: number }[] = [];
-    let edgeIndex = 1;
 
     for (const call of rawCallAccumulator) {
       const fromSymbolId = lookup(`${call.filePath}|${call.fromSymbolName}`) || lookup(call.fromSymbolName);
       if (!fromSymbolId) continue;
 
-      // Find toSymbolId (linked function)
-      // 1. Check local file namespace matches
       let toSymbolId = lookup(`${call.filePath}|${call.toRaw}`);
       if (!toSymbolId) {
-        // 2. Scan class namespaces (e.g. Call is 'charge' and class method is 'Billing.charge')
         const matches = Object.keys(symbolNameIdMap).filter(k => Object.prototype.hasOwnProperty.call(symbolNameIdMap, k) && (k.endsWith(`.${call.toRaw}`) || k.endsWith(`::${call.toRaw}`)));
         if (matches.length > 0) {
           toSymbolId = symbolNameIdMap[matches[0]];
         }
       }
       if (!toSymbolId) {
-        // 3. Global search
         toSymbolId = lookup(call.toRaw);
       }
 
@@ -509,21 +537,20 @@ export class IndexingService {
     }
     const edgesResolved = edgeRows.length;
 
-    // Trigger Phase B background summary & embedding generation
-    this.startBackgroundEnrichment(repoId, resolvedPath);
+    // 7. Background enrichment for new symbols
+    if (changed.length > 0) {
+      this.startBackgroundEnrichment(repoId, resolvedPath);
+    }
 
-    // Mark repository status ready and record indexedAt — the PR scan
-    // route gates on this field being non-null so un-indexed repos can't
-    // produce reviews that silently fall back to procedural fake findings.
     await prisma.repository.updateMany({
       where: { id: repoId },
       data: { status: 'idle', indexedAt: new Date().toISOString() },
     });
 
     return {
-      fileParsedCount: filesToParse.length,
+      fileParsedCount: changed.length,
       symbolsExtractedCount: symbolsCount,
-      edgesResolvedCount: edgesResolved
+      edgesResolvedCount: edgesResolved,
     };
   }
 
