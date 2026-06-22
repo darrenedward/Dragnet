@@ -59,7 +59,7 @@ function InstallModal({ tool, origin, apiKey, onClose }: { tool: ToolId; origin:
       steps: [
         {
           label: "Install MCP server (global)",
-          command: `mkdir -p ~/.cursor && echo '{"mcpServers":{"bughunter":{"type":"http","url":"${origin}/api/mcp/command","headers":{"Authorization":"Bearer ${key}"}}}}' > ~/.cursor/mcp.json`,
+          command: `mkdir -p ~/.cursor && (jq '.mcpServers.bughunter = {"type":"http","url":"${origin}/api/mcp/command","headers":{"Authorization":"Bearer ${key}"}}' ~/.cursor/mcp.json 2>/dev/null || echo '{"mcpServers":{"bughunter":{"type":"http","url":"${origin}/api/mcp/command","headers":{"Authorization":"Bearer ${key}"}}}}') > /tmp/_cursor.json && mv /tmp/_cursor.json ~/.cursor/mcp.json`,
         },
       ],
     },
@@ -68,7 +68,7 @@ function InstallModal({ tool, origin, apiKey, onClose }: { tool: ToolId; origin:
       steps: [
         {
           label: "Install MCP server (global)",
-          command: `mkdir -p ~/.config/opencode && echo '{"$schema":"https://opencode.ai/config.json","mcp":{"bughunter":{"type":"remote","url":"${origin}/api/mcp/command","headers":{"Authorization":"Bearer ${key}"}}}}' > ~/.config/opencode/opencode.json`,
+          command: `mkdir -p ~/.config/opencode && (jq '.mcp.bughunter = {"type":"remote","url":"${origin}/api/mcp/command","headers":{"Authorization":"Bearer ${key}"}}' ~/.config/opencode/opencode.json 2>/dev/null || echo '{"$schema":"https://opencode.ai/config.json","mcp":{"bughunter":{"type":"remote","url":"${origin}/api/mcp/command","headers":{"Authorization":"Bearer ${key}"}}}}') > /tmp/_oc.json && mv /tmp/_oc.json ~/.config/opencode/opencode.json`,
         },
         {
           label: "Skill — already installed if you ran the Claude Code skill step above (OpenCode reads ~/.claude/skills/)",
