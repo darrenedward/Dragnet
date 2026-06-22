@@ -45,11 +45,11 @@ function InstallModal({ tool, origin, apiKey, onClose }: { tool: ToolId; origin:
       title: "Claude Code",
       steps: [
         {
-          label: "Install MCP server",
+          label: "Install MCP server (global)",
           command: `claude mcp add --scope global --transport http bughunter ${origin}/api/mcp/command --header "Authorization: Bearer ${key}"`,
         },
         {
-          label: "Install BugHunter skill (run from project root)",
+          label: "Install BugHunter skill (also works in OpenCode — run from project root)",
           command: `cp -r skills/bughunter ~/.claude/skills/`,
         },
       ],
@@ -58,8 +58,8 @@ function InstallModal({ tool, origin, apiKey, onClose }: { tool: ToolId; origin:
       title: "Cursor",
       steps: [
         {
-          label: "Install MCP server",
-          command: `mkdir -p .cursor && echo '{"mcpServers":{"bughunter":{"type":"http","url":"${origin}/api/mcp/command","headers":{"Authorization":"Bearer ${key}"}}}}' > .cursor/mcp.json`,
+          label: "Install MCP server (global)",
+          command: `mkdir -p ~/.cursor && echo '{"mcpServers":{"bughunter":{"type":"http","url":"${origin}/api/mcp/command","headers":{"Authorization":"Bearer ${key}"}}}}' > ~/.cursor/mcp.json`,
         },
       ],
     },
@@ -67,8 +67,12 @@ function InstallModal({ tool, origin, apiKey, onClose }: { tool: ToolId; origin:
       title: "OpenCode",
       steps: [
         {
-          label: "Install MCP server",
-          command: `mkdir -p .opencode && echo '{"mcpServers":{"bughunter":{"type":"http","url":"${origin}/api/mcp/command","headers":{"Authorization":"Bearer ${key}"}}}}' > .opencode/mcp.json`,
+          label: "Install MCP server (global)",
+          command: `mkdir -p ~/.config/opencode && echo '{"$schema":"https://opencode.ai/config.json","mcp":{"bughunter":{"type":"remote","url":"${origin}/api/mcp/command","headers":{"Authorization":"Bearer ${key}"}}}}' > ~/.config/opencode/opencode.json`,
+        },
+        {
+          label: "Skill — already installed if you ran the Claude Code skill step above (OpenCode reads ~/.claude/skills/)",
+          command: `ls ~/.claude/skills/bughunter/SKILL.md`,
         },
       ],
     },
@@ -77,7 +81,7 @@ function InstallModal({ tool, origin, apiKey, onClose }: { tool: ToolId; origin:
       steps: [
         {
           label: "Install MCP server",
-          command: `codex mcp add bughunter --url ${origin}/api/mcp/command --bearer-token ${key}`,
+          command: `GREPLOOP_API_KEY='${key}' codex mcp add bughunter --url ${origin}/api/mcp/command --bearer-token-env-var GREPLOOP_API_KEY`,
         },
       ],
     },

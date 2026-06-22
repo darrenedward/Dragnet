@@ -26,3 +26,4 @@ data.db
 
 # GrepLoop local state (LLM presets, etc.)
 .greploop/
+.opencode/
