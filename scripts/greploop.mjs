@@ -5,6 +5,7 @@
 //   node scripts/greploop.mjs review <branch>  # run review, exit 0/1
 
 const BASE = process.env.GREPLOOP_URL || "http://localhost:3000";
+const API_KEY = process.env.GREPLOOP_API_KEY || "";
 
 const [cmd, ...args] = process.argv.slice(2);
 
@@ -26,7 +27,7 @@ async function main() {
 
       const res = await fetch(`${BASE}/api/hooks/prepush`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...(API_KEY ? { "Authorization": `Bearer ${API_KEY}` } : {}) },
         body: JSON.stringify({ branch, repoPath, sha }),
       });
 

@@ -60,6 +60,12 @@ The pre-push hook at `scripts/hooks/pre-push` blocks pushes that fail GrepLoop A
 
 The hook calls `POST /api/hooks/prepush` which triggers `runPrScan()` and returns a pass/fail verdict.
 
+Requires `GREPLOOP_API_KEY` env var (generate from UI sidebar → MCP API Keys). Set `GREPLOOP_URL` to override `http://localhost:3000`.
+
+## MCP API keys
+
+All MCP API endpoints (`/api/mcp/*`, `/api/hooks/prepush`) require an API key via the `Authorization: Bearer <key>` header. Keys are generated from the UI sidebar → "MCP API Keys" section. Keys are hashed (SHA-256) at rest and can be revoked individually. The `scripts/greploop.mjs` CLI and `scripts/hooks/pre-push` hook read `GREPLOOP_API_KEY` from the environment.
+
 ## Agent skill
 
 The `skills/greploop/SKILL.md` file defines the `/greploop` command for Claude Code and other agentic tools. Supports:

@@ -1,8 +1,14 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/src/lib/prisma";
 import { runPrScan } from "@/reviewService";
+import { authenticateMcpRequest } from "@/src/lib/mcpAuth";
 
 export async function POST(req: Request) {
+  const auth = await authenticateMcpRequest(req);
+  if (!auth.ok) {
+    return NextResponse.json({ error: auth.error, passed: false }, { status: 401 });
+  }
+
   const body = await req.json().catch(() => ({}));
   const { branch, repoPath, sha } = body;
 

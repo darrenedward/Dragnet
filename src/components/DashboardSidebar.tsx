@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Activity, Folder, GitBranch, Plus, Sparkles } from "lucide-react";
+import { Activity, Folder, GitBranch, Key, Plus, Sparkles, Trash2, Copy, Check, ExternalLink } from "lucide-react";
 import type { ActivityLog, LlmPresetsState, PullRequest, Repository } from "../lib/types";
 import { getStatusBadgeStyle } from "../lib/types";
 
@@ -79,6 +79,8 @@ export default function DashboardSidebar({
       />
 
       <LlmRouterPane state={llmPresets} onOpenSettings={onOpenLlmSettings} />
+
+      <McpKeysPane />
 
       <LogsPane logs={logs} />
     </aside>
@@ -325,6 +327,157 @@ function LlmRouterPane({
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+interface McpKeyView {
+  id: string;
+  name: string;
+  prefix: string;
+  createdAt: string;
+  lastUsedAt: string | null;
+  revoked: boolean;
+}
+
+function McpKeysPane() {
+  const [keys, setKeys] = useState<McpKeyView[]>([]);
+  const [collapsed, setCollapsed] = useState(true);
+  const [newKeyName, setNewKeyName] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [newKeyValue, setNewKeyValue] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchKeys = async () => {
+    try {
+      const res = await fetch("/api/mcp/keys");
+      if (res.ok) setKeys(await res.json());
+    } catch { /* ignore */ }
+  };
+
+  useEffect(() => { fetchKeys(); }, []);
+
+  const handleCreate = async () => {
+    setCreating(true);
+    setError(null);
+    setNewKeyValue(null);
+    try {
+      const res = await fetch("/api/mcp/keys", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: newKeyName }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setNewKeyValue(data.key);
+        setNewKeyName("");
+        await fetchKeys();
+      } else {
+        setError(data.error);
+      }
+    } catch {
+      setError("Failed to create key.");
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const handleRevoke = async (id: string) => {
+    try {
+      await fetch(`/api/mcp/keys/${id}`, { method: "DELETE" });
+      await fetchKeys();
+    } catch { /* ignore */ }
+  };
+
+  return (
+    <div className="border-t border-white/5 bg-slate-950/30">
+      <button
+        onClick={() => setCollapsed(!collapsed)}
+        className="w-full flex items-center justify-between p-4 text-[10px] uppercase tracking-[0.2em] text-slate-500 font-extrabold font-mono hover:text-slate-300 transition-colors"
+      >
+        <div className="flex items-center gap-2">
+          <Key size={11} />
+          <span>MCP API Keys</span>
+        </div>
+        <span className="text-[9px] text-slate-600">{collapsed ? "+" : "−"}</span>
+      </button>
+
+      {!collapsed && (
+        <div className="px-4 pb-4 space-y-3">
+          <p className="text-[9px] text-slate-600 font-mono leading-relaxed">
+            API keys for remote MCP clients (Claude Code, Cursor, etc.).
+            Set the <code className="text-cyan-400">Authorization: Bearer</code> header when calling GrepLoop's MCP endpoints.
+          </p>
+
+          {keys.length === 0 ? (
+            <p className="text-[10px] text-slate-600 font-mono italic">No keys created yet.</p>
+          ) : (
+            <div className="space-y-1 max-h-32 overflow-y-auto">
+              {keys.map((k) => (
+                <div key={k.id} className="flex items-center justify-between gap-2 bg-slate-900/60 p-2 rounded border border-white/5">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[10px] font-mono font-bold text-slate-300 truncate">{k.name}</span>
+                      {k.revoked && (
+                        <span className="text-[8px] text-rose-400 bg-rose-500/10 px-1 rounded border border-rose-500/20 font-mono uppercase">Revoked</span>
+                      )}
+                    </div>
+                    <div className="text-[8px] text-slate-600 font-mono">{k.prefix}</div>
+                    <div className="text-[8px] text-slate-600 font-mono">
+                      {k.lastUsedAt ? `Last used: ${new Date(k.lastUsedAt).toLocaleDateString()}` : "Never used"}
+                    </div>
+                  </div>
+                  {!k.revoked && (
+                    <button
+                      onClick={() => handleRevoke(k.id)}
+                      className="p-1 hover:bg-rose-500/10 rounded text-slate-500 hover:text-rose-400 transition-colors"
+                      title="Revoke key"
+                    >
+                      <Trash2 size={10} />
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {newKeyValue ? (
+            <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 space-y-2">
+              <p className="text-[9px] text-amber-300 font-mono font-bold uppercase">Save this key — it won't be shown again</p>
+              <div className="bg-black/50 rounded p-2 text-[10px] font-mono text-amber-200 break-all select-all">
+                {newKeyValue}
+              </div>
+              <button
+                onClick={() => { navigator.clipboard.writeText(newKeyValue); setCopied(true); setTimeout(() => setCopied(false), 2000); }}
+                className="flex items-center gap-1 text-[9px] text-amber-400 hover:text-amber-300 font-mono"
+              >
+                {copied ? <Check size={10} /> : <Copy size={10} />}
+                <span>{copied ? "Copied!" : "Copy to clipboard"}</span>
+              </button>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <input
+                value={newKeyName}
+                onChange={(e) => setNewKeyName(e.target.value)}
+                placeholder="Key name (e.g. Claude Code)"
+                className="w-full bg-slate-900 border border-white/10 rounded px-2 py-1.5 text-[10px] font-mono text-slate-300 placeholder:text-slate-600 focus:outline-none focus:border-cyan-500/40"
+                onKeyDown={(e) => { if (e.key === "Enter" && newKeyName.trim()) handleCreate(); }}
+              />
+              {error && <p className="text-[9px] text-rose-400 font-mono">{error}</p>}
+              <button
+                onClick={handleCreate}
+                disabled={creating || !newKeyName.trim()}
+                className="w-full bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/30 text-cyan-400 text-[9px] font-mono font-bold px-2 py-1.5 rounded transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-1"
+              >
+                <Plus size={10} />
+                <span>{creating ? "Creating..." : "Generate New Key"}</span>
+              </button>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

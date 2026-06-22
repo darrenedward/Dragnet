@@ -1,17 +1,29 @@
 #!/bin/sh
 # GrepLoop pre-push hook
-# Installed by: greploop install-hooks
+# Installed by: npm run install-hooks  or  npm run greploop install-hooks
 #
 # Blocks pushes that fail the GrepLoop AI review (rating < 9/10).
 # Bypass with: git push --no-verify
 #
 # Reads branch info from git's pre-push stdin and calls the GrepLoop API.
+#
+# Configuration (set these in your shell/profile or .env):
+#   GREPLOOP_URL   - default: http://localhost:3000
+#   GREPLOOP_API_KEY - your MCP API key from the GrepLoop UI
 
 GREPLOOP_URL="${GREPLOOP_URL:-http://localhost:3000}"
+GREPLOOP_API_KEY="${GREPLOOP_API_KEY:-}"
 REPO_PATH="$(git rev-parse --show-toplevel 2>/dev/null)"
 
 if [ -z "$REPO_PATH" ]; then
   exit 0
+fi
+
+if [ -z "$GREPLOOP_API_KEY" ]; then
+  echo "⚠ GrepLoop: GREPLOOP_API_KEY not set. Generate a key from GrepLoop UI → MCP API Keys."
+  echo "  Then: export GREPLOOP_API_KEY='gl_mcp_...'"
+  echo "  Push blocked. Set the key or use --no-verify to bypass."
+  exit 1
 fi
 
 while read local_ref local_sha remote_ref remote_sha; do
@@ -27,6 +39,7 @@ while read local_ref local_sha remote_ref remote_sha; do
 
   result=$(curl -s -m 300 "$GREPLOOP_URL/api/hooks/prepush" \
     -H "Content-Type: application/json" \
+    -H "Authorization: Bearer $GREPLOOP_API_KEY" \
     -d "{\"branch\":\"$branch\",\"repoPath\":\"$REPO_PATH\",\"sha\":\"$local_sha\"")
 
   passed=$(echo "$result" | grep -o '"passed":[^,}]*' | cut -d: -f2)
@@ -37,7 +50,6 @@ while read local_ref local_sha remote_ref remote_sha; do
     echo "✓ GrepLoop: branch '$branch' approved ($rating/10)"
   elif [ -n "$error" ]; then
     echo "⚠ GrepLoop: $error"
-    echo "  Push blocked. Fix the issue or use 'git push --no-verify' to bypass."
     exit 1
   else
     echo "✗ GrepLoop: branch '$branch' blocked ($rating/10 — needs 9+)"

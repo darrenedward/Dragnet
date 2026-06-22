@@ -10,6 +10,12 @@ GrepLoop is a self-hosted AI code review engine. It indexes the codebase, builds
 
 You drive it through GrepLoop's HTTP API running at `http://localhost:3000` (the GrepLoop dev server). The review endpoint is synchronous — it blocks until the review completes (typically 30-120s for a full agentic loop).
 
+All MCP API endpoints require authentication. Pass your API key in the `Authorization` header:
+```
+Authorization: Bearer gl_mcp_<your_key>
+```
+Generate a key from the GrepLoop UI sidebar → "MCP API Keys" section. If no key is configured, tell the user to create one.
+
 ## Three ways to invoke
 
 `/greploop` works in three modes:

@@ -136,3 +136,15 @@ model File {
   @@id([repoId, filePath])
   @@map("files")
 }
+
+model McpApiKey {
+  id        String   @id @default(cuid())
+  name      String
+  prefix    String
+  hash      String   @unique
+  createdAt DateTime @default(now())
+  lastUsedAt DateTime?
+  revoked   Boolean  @default(false)
+
+  @@map("mcp_api_keys")
+}

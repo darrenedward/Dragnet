@@ -1,8 +1,14 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/src/lib/prisma";
 import { findPrByIdOrNumber } from "@/src/lib/findPr";
+import { authenticateMcpRequest } from "@/src/lib/mcpAuth";
 
-export async function GET(_req: Request, { params }: { params: Promise<{ prIdOrNumber: string }> }) {
+export async function GET(req: Request, { params }: { params: Promise<{ prIdOrNumber: string }> }) {
+  const auth = await authenticateMcpRequest(req);
+  if (!auth.ok) {
+    return NextResponse.json({ status: "Error", message: auth.error }, { status: 401 });
+  }
+
   const { prIdOrNumber } = await params;
   try {
     const pr = await findPrByIdOrNumber(prIdOrNumber);
