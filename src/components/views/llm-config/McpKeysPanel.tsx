@@ -30,7 +30,8 @@ const tools: ToolConfig[] = [
 
 function InstallModal({ tool, origin, apiKey, onClose }: { tool: ToolId; origin: string; apiKey: string | null; onClose: () => void }) {
   const [copiedSection, setCopiedSection] = useState<string | null>(null);
-  const [manualKey, setManualKey] = useState("");
+  const [localKey, setLocalKey] = useState(apiKey);
+  const [generating, setGenerating] = useState(false);
 
   const copy = (text: string, section: string) => {
     navigator.clipboard.writeText(text);
@@ -38,7 +39,21 @@ function InstallModal({ tool, origin, apiKey, onClose }: { tool: ToolId; origin:
     setTimeout(() => setCopiedSection(null), 2000);
   };
 
-  const key = apiKey || manualKey || "gl_mcp_YOUR_KEY_HERE";
+  const generate = async () => {
+    setGenerating(true);
+    try {
+      const res = await fetch("/api/mcp/keys", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: `BugHunter (${tool})` }),
+      });
+      const data = await res.json();
+      if (res.ok) setLocalKey(data.key);
+    } catch { /* ignore */ }
+    setGenerating(false);
+  };
+
+  const key = localKey;
 
   interface CmdSection { label: string; command: string; }
   const sections: Record<ToolId, { title: string; steps: CmdSection[] }> = {
@@ -101,15 +116,16 @@ function InstallModal({ tool, origin, apiKey, onClose }: { tool: ToolId; origin:
           </button>
         </div>
         <div className="p-5 space-y-5">
-          {!apiKey && (
-            <div className="space-y-2">
-              <p className="text-xs text-slate-400 font-mono">Paste your API key</p>
-              <input
-                value={manualKey}
-                onChange={(e) => setManualKey(e.target.value)}
-                placeholder="gl_mcp_..."
-                className="w-full bg-black/80 border border-white/10 rounded-lg px-3 py-2 text-xs font-mono text-cyan-300 placeholder:text-slate-600 focus:outline-none focus:border-cyan-500/40"
-              />
+          {!localKey && (
+            <div className="space-y-3">
+              <p className="text-xs text-slate-400 font-mono">Generate an API key to use with {t.title}</p>
+              <button
+                onClick={generate}
+                disabled={generating}
+                className="w-full bg-cyan-500 hover:bg-cyan-600 disabled:opacity-50 text-black font-semibold text-xs px-4 py-2.5 rounded-lg transition-all flex items-center justify-center gap-2 shadow-[0_4px_12px_rgba(6,182,212,0.15)] cursor-pointer"
+              >
+                {generating ? "Generating..." : <><Plus size={13} /> Generate Key for {t.title}</>}
+              </button>
             </div>
           )}
           {t.steps.map((step, i) => (
@@ -337,7 +353,7 @@ export default function McpKeysPanel() {
       </div>
 
       {activeTool && (
-        <InstallModal tool={activeTool} origin={origin} apiKey={newKeyValue} onClose={() => setActiveTool(null)} />
+        <InstallModal tool={activeTool} origin={origin} apiKey={newKeyValue} onClose={() => { setActiveTool(null); fetchKeys(); }} />
       )}
     </motion.div>
   );
