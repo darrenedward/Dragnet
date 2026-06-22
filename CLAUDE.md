@@ -53,6 +53,7 @@ See `prd.md` for the full product spec.
 - `npm run clean` — `rm -rf .next`
 - `npm run greploop` — `node scripts/greploop.mjs` (CLI companion: `npm run greploop install-hooks`, `npm run greploop review <branch>`)
 - `npm run install-hooks` — installs the pre-push git hook into `.git/hooks/pre-push`
+- `npm run uninstall-hooks` — removes the pre-push git hook
 
 ## Pre-push hook
 

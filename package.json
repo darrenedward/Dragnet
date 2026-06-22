@@ -4,7 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev -p 3300",
     "build": "next build",
     "start": "next start",
     "test": "vitest run",
@@ -12,7 +12,8 @@
     "clean": "rm -rf .next",
     "lint": "tsc --noEmit",
     "greploop": "node scripts/greploop.mjs",
-    "install-hooks": "bash scripts/install-hooks.sh"
+    "install-hooks": "bash scripts/install-hooks.sh",
+    "uninstall-hooks": "bash scripts/uninstall-hooks.sh"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",

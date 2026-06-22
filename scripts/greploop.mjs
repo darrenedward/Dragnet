@@ -1,8 +1,9 @@
 #! /usr/bin/env node
 // scripts/greploop.mjs — GrepLoop CLI companion
 // Usage:
-//   node scripts/greploop.mjs install-hooks   # install pre-push hook
-//   node scripts/greploop.mjs review <branch>  # run review, exit 0/1
+//   node scripts/greploop.mjs install-hooks         # install pre-push hook
+//   node scripts/greploop.mjs uninstall-hooks       # remove pre-push hook
+//   node scripts/greploop.mjs review <branch>       # run review, exit 0/1
 
 const BASE = process.env.GREPLOOP_URL || "http://localhost:3000";
 const API_KEY = process.env.GREPLOOP_API_KEY || "";
@@ -18,6 +19,14 @@ async function main() {
       const src = new URL("../hooks/pre-push", import.meta.url).pathname;
       execSync(`cp "${src}" "${dst}" && chmod +x "${dst}"`, { stdio: "inherit" });
       console.log(`✓ GrepLoop pre-push hook installed at ${dst}`);
+      break;
+    }
+    case "uninstall-hooks": {
+      const { execSync } = await import("child_process");
+      const root = execSync("git rev-parse --show-toplevel", { encoding: "utf8" }).trim();
+      const dst = `${root}/.git/hooks/pre-push`;
+      execSync(`rm -f "${dst}"`, { stdio: "inherit" });
+      console.log(`✓ GrepLoop pre-push hook removed from ${dst}`);
       break;
     }
     case "review": {
@@ -45,7 +54,7 @@ async function main() {
       break;
     }
     default:
-      console.log("Usage: greploop <install-hooks|review>");
+      console.log("Usage: greploop <install-hooks|uninstall-hooks|review>");
       process.exit(1);
   }
 }
