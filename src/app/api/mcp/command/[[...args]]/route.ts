@@ -90,7 +90,11 @@ function formatFindings(pr: any, findings: any[]): string {
     out += "No findings.\n";
   } else {
     for (const f of findings) {
-      out += `- [${f.category}|${f.severity}] ${f.filename}:${f.line} (confidence: ${((f.confidence ?? 0.5) * 100).toFixed(0)}%)\n  ${f.explanation}\n`;
+      out += `### ${f.filename}:${f.line}\n**[${f.category}|${f.severity}]** (confidence: ${((f.confidence ?? 0.5) * 100).toFixed(0)}%)\n${f.explanation}\n`;
+      if (f.diffSuggestion) {
+        out += `Suggested fix:\n\`\`\`diff\n${f.diffSuggestion}\n\`\`\`\n`;
+      }
+      out += "\n";
     }
   }
   return out;
