@@ -61,6 +61,37 @@ export async function POST(req: Request) {
       });
     }
 
+    if (cmdName === "/prlist" || cmdName === "prlist" || cmdName === "list") {
+      if (!body.repoId) {
+        return NextResponse.json({
+          status: "Error",
+          message: "Pass { repoId } in the request body to list PRs."
+        }, { status: 400 });
+      }
+
+      const prs = await prisma.pullRequest.findMany({
+        where: { repoId: body.repoId },
+        orderBy: { createdAt: "desc" },
+        take: 20,
+        select: { id: true, title: true, sourceBranch: true, rating: true, status: true, createdAt: true },
+      });
+
+      return NextResponse.json({
+        status: "Success",
+        type: "list",
+        repoId: body.repoId,
+        pullRequests: prs.map(p => ({
+          number: p.id.replace(/^pr-?/, ""),
+          id: p.id,
+          title: p.title,
+          branch: p.sourceBranch,
+          rating: p.rating != null ? `${p.rating}/5` : "Not scanned",
+          status: p.status,
+          createdAt: p.createdAt,
+        })),
+      });
+    }
+
     if (cmdName === "/prcomments" || cmdName === "prcomments" || cmdName === "comments") {
       const pr = await resolvePr(body, argVal);
       if (!pr) {
