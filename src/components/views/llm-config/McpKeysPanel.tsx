@@ -29,148 +29,75 @@ const tools: ToolConfig[] = [
 ];
 
 function InstallModal({ tool, origin, apiKey, onClose }: { tool: ToolId; origin: string; apiKey: string | null; onClose: () => void }) {
-  const [copiedSection, setCopiedSection] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
 
-  const copy = (text: string, section: string) => {
+  const copy = (text: string) => {
     navigator.clipboard.writeText(text);
-    setCopiedSection(section);
-    setTimeout(() => setCopiedSection(null), 2000);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   };
 
   const key = apiKey || "gl_mcp_YOUR_KEY_HERE";
 
-  const instructions: Record<ToolId, { title: string; steps: { label: string; code: string; lang?: string }[] }> = {
+  const commands: Record<ToolId, { title: string; command: string; desc: string }> = {
     claude: {
-      title: "Claude Code — BugHunter Skill",
-      steps: [
-        {
-          label: "Install the skill from your repo root:",
-          code: `cp -r skills/bughunter ~/.claude/skills/`,
-          lang: "bash",
-        },
-        {
-          label: "Set your API key in your shell (or .env):",
-          code: `export GREPLOOP_API_KEY='${key}'`,
-          lang: "bash",
-        },
-        {
-          label: "Then in any Claude Code session, use:",
-          code: `/bughunter review\n/bughunter fix\n/bughunter status`,
-          lang: "bash",
-        },
-      ],
+      title: "Claude Code",
+      desc: "Installs the BugHunter skill + MCP server. Then use /bughunter from any project.",
+      command: [
+        `claude mcp add --transport http bughunter ${origin}/api/mcp/command --header "Authorization: Bearer ${key}"`,
+        `cp -r skills/bughunter ~/.claude/skills/`,
+      ].join(" && "),
     },
     cursor: {
-      title: "Cursor — MCP Server Config",
-      steps: [
-        {
-          label: "Add to your project's `.cursor/mcp.json`:",
-          code: JSON.stringify(
-            {
-              mcpServers: {
-                bughunter: {
-                  type: "http",
-                  url: `${origin}/api/mcp/command`,
-                  headers: { Authorization: `Bearer ${key}` },
-                },
-              },
-            },
-            null,
-            2
-          ),
-          lang: "json",
-        },
-        {
-          label: "Then use `@bughunter` with commands like:",
-          code: `/prcheck 2\n/prcomments 2`,
-          lang: "bash",
-        },
-      ],
+      title: "Cursor",
+      desc: "Registers BugHunter as an MCP tool. Use @bughunter in Cursor Composer.",
+      command: `mkdir -p .cursor && echo '{"mcpServers":{"bughunter":{"type":"http","url":"${origin}/api/mcp/command","headers":{"Authorization":"Bearer ${key}"}}}}' > .cursor/mcp.json`,
     },
     opencode: {
-      title: "OpenCode — MCP Server Config",
-      steps: [
-        {
-          label: "Add to your `opencode.json` or tool config:",
-          code: JSON.stringify(
-            {
-              mcpServers: {
-                bughunter: {
-                  type: "http",
-                  url: `${origin}/api/mcp/command`,
-                  headers: { Authorization: `Bearer ${key}` },
-                },
-              },
-            },
-            null,
-            2
-          ),
-          lang: "json",
-        },
-        {
-          label: "Start OpenCode and invoke with:",
-          code: `/prcheck 2\n/prcomments 2`,
-          lang: "bash",
-        },
-      ],
+      title: "OpenCode",
+      desc: "Configures the MCP server. Then call /prcheck <number> from OpenCode.",
+      command: `mkdir -p .opencode && echo '{"mcpServers":{"bughunter":{"type":"http","url":"${origin}/api/mcp/command","headers":{"Authorization":"Bearer ${key}"}}}}' > .opencode/mcp.json`,
     },
     codex: {
-      title: "Codex — CLI MCP Flag",
-      steps: [
-        {
-          label: "Pass the MCP server config when launching Codex:",
-          code: `codex --mcp '${JSON.stringify({
-            bughunter: {
-              type: "http",
-              url: `${origin}/api/mcp/command`,
-              headers: { Authorization: `Bearer ${key}` },
-            },
-          })}'`,
-          lang: "bash",
-        },
-        {
-          label: "Then use commands like:",
-          code: `/prcheck 2\n/prcomments 2`,
-          lang: "bash",
-        },
-      ],
+      title: "Codex",
+      desc: "Registers the MCP server. Use /prcheck <number> in Codex sessions.",
+      command: `codex mcp add bughunter --url ${origin}/api/mcp/command --bearer-token ${key}`,
     },
   };
 
-  const instr = instructions[tool];
+  const t = commands[tool];
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm" onClick={onClose}>
       <motion.div
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="bg-[#0F1219] border border-white/10 rounded-2xl shadow-2xl w-full max-w-lg max-h-[80vh] overflow-y-auto mx-4"
+        className="bg-[#0F1219] border border-white/10 rounded-2xl shadow-2xl w-full max-w-lg mx-4"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between p-5 border-b border-white/10">
-          <h3 className="text-sm font-bold text-white uppercase tracking-wider font-mono">{instr.title}</h3>
+          <div className="flex items-center gap-3">
+            <h3 className="text-sm font-bold text-white uppercase tracking-wider font-mono">{t.title}</h3>
+          </div>
           <button onClick={onClose} className="p-1 hover:bg-white/10 rounded-lg text-slate-400 hover:text-white transition-colors cursor-pointer">
             <X size={16} />
           </button>
         </div>
-        <div className="p-5 space-y-5">
-          {instr.steps.map((step, i) => (
-            <div key={i} className="space-y-2">
-              <p className="text-xs text-slate-400 font-mono">{step.label}</p>
-              <div className="relative group">
-                <pre className="bg-black/80 rounded-lg p-3 text-[11px] font-mono text-cyan-300 overflow-x-auto whitespace-pre-wrap break-all leading-relaxed border border-white/5">
-                  {step.code}
-                </pre>
-                <button
-                  onClick={() => copy(step.code, `${tool}-${i}`)}
-                  className="absolute top-2 right-2 p-1.5 bg-slate-800/80 hover:bg-slate-700 rounded-lg text-slate-400 hover:text-cyan-400 transition-colors opacity-0 group-hover:opacity-100 cursor-pointer"
-                  title="Copy"
-                >
-                  {copiedSection === `${tool}-${i}` ? <Check size={12} /> : <Copy size={12} />}
-                </button>
-              </div>
-            </div>
-          ))}
+        <div className="p-5 space-y-4">
+          <p className="text-xs text-slate-400 font-mono leading-relaxed">{t.desc}</p>
+          <div className="relative">
+            <pre className="bg-black/80 rounded-lg p-4 text-[12px] font-mono text-cyan-300 overflow-x-auto whitespace-pre-wrap break-all leading-relaxed border border-white/5 select-all">
+              {t.command}
+            </pre>
+            <button
+              onClick={() => copy(t.command)}
+              className="absolute top-2 right-2 p-2 bg-slate-800/80 hover:bg-slate-700 rounded-lg text-slate-400 hover:text-cyan-400 transition-colors cursor-pointer"
+              title="Copy command"
+            >
+              {copied ? <Check size={14} /> : <Copy size={14} />}
+            </button>
+          </div>
+          <p className="text-[10px] text-slate-600 font-mono">Paste this in your terminal from the repo root.</p>
         </div>
       </motion.div>
     </div>
