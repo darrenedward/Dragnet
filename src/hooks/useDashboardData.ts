@@ -277,6 +277,10 @@ export function useDashboardData() {
     setIsScanning(true);
     setScanResult(null);
 
+    setPrs((prev) =>
+      prev.map((p) => (p.id === selectedPrId ? { ...p, status: "In Progress" } : p)),
+    );
+
     const activeRepoName = repos.find((r) => r.id === selectedRepoId)?.name || selectedRepoId;
 
     try {
@@ -300,15 +304,24 @@ export function useDashboardData() {
         await fetchRepos();
         await fetchLogs();
       } else if (res.status === 409 && result.error === "INDEX_REQUIRED") {
+        setPrs((prev) =>
+          prev.map((p) => (p.id === selectedPrId ? { ...p, status: "Pending" } : p)),
+        );
         alert(
           result.message ||
             "Codebase not indexed. Open the Codebase AST graph tab and run the indexer before reviewing.",
         );
       } else {
+        setPrs((prev) =>
+          prev.map((p) => (p.id === selectedPrId ? { ...p, status: "Failed" } : p)),
+        );
         alert("Pipeline Scan Error: " + (result.error || "Execution timeout"));
       }
     } catch (e: any) {
       console.error("Scan dispatch crash", e);
+      setPrs((prev) =>
+        prev.map((p) => (p.id === selectedPrId ? { ...p, status: "Failed" } : p)),
+      );
       alert("Pipeline Dispatch Crashed: " + e.message);
     } finally {
       setIsScanning(false);
