@@ -1,5 +1,6 @@
 import path from "path";
 import fs from "fs";
+import { randomUUID } from "node:crypto";
 import { execFileSync } from "child_process";
 import { prisma } from "@/src/lib/prisma";
 
@@ -232,8 +233,8 @@ export async function refreshPrFiles(repoPath: string, baseBranch: string, branc
   await prisma.prFile.deleteMany({ where: { prId } });
   if (files.length > 0) {
     await prisma.prFile.createMany({
-      data: files.map((f, i) => ({
-        id: `file-${prId}-${i}`,
+      data: files.map((f) => ({
+        id: randomUUID(),
         prId,
         filename: f.filename,
         status: f.status,
