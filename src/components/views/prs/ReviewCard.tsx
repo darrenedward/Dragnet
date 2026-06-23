@@ -100,7 +100,18 @@ export default function ReviewCard({ activePR, findings, onCopySuggestion, copyF
   const [copiedAll, setCopiedAll] = useState(false);
   const handleCopyAll = useCallback(() => {
     const text = formatFindings(activePR, findings);
-    navigator.clipboard.writeText(text);
+    try {
+      navigator.clipboard.writeText(text);
+    } catch {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+    }
     setCopiedAll(true);
     setTimeout(() => setCopiedAll(false), 2000);
   }, [activePR, findings]);

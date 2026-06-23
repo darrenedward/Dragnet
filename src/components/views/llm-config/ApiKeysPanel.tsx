@@ -37,7 +37,18 @@ function InstallModal({ tool, origin, apiKey, repoId, onClose }: { tool: ToolId;
   const [copiedSection, setCopiedSection] = useState<string | null>(null);
 
   const copy = (text: string, section: string) => {
-    navigator.clipboard.writeText(text);
+    try {
+      navigator.clipboard.writeText(text);
+    } catch {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+    }
     setCopiedSection(section);
     setTimeout(() => setCopiedSection(null), 2000);
   };
@@ -295,7 +306,7 @@ export default function ApiKeysPanel() {
                   {showKey ? <EyeOff size={14} /> : <Eye size={14} />}
                 </button>
                 <button
-                  onClick={() => { navigator.clipboard.writeText(newKeyValue!); setCopied(true); setTimeout(() => setCopied(false), 2000); }}
+                  onClick={() => { try { navigator.clipboard.writeText(newKeyValue!); } catch { const ta = document.createElement("textarea"); ta.value = newKeyValue!; ta.style.position = "fixed"; ta.style.opacity = "0"; document.body.appendChild(ta); ta.select(); document.execCommand("copy"); document.body.removeChild(ta); } setCopied(true); setTimeout(() => setCopied(false), 2000); }}
                   className="p-1.5 hover:bg-amber-500/10 rounded-lg text-amber-400 hover:text-amber-300 transition-colors cursor-pointer"
                   title="Copy to clipboard"
                 >
