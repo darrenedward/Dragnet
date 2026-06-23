@@ -8,10 +8,10 @@
 # Reads branch info from git's pre-push stdin and calls the GrepLoop API.
 #
 # Configuration (set these in your shell/profile or .env):
-#   GREPLOOP_URL   - default: http://localhost:3000
+#   GREPLOOP_URL   - default: http://localhost:3300
 #   GREPLOOP_API_KEY - your API key from the GrepLoop UI
 
-GREPLOOP_URL="${GREPLOOP_URL:-http://localhost:3000}"
+GREPLOOP_URL="${GREPLOOP_URL:-http://localhost:3300}"
 GREPLOOP_API_KEY="${GREPLOOP_API_KEY:-}"
 REPO_PATH="$(git rev-parse --show-toplevel 2>/dev/null)"
 

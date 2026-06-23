@@ -5,7 +5,7 @@
 //   node scripts/greploop.mjs uninstall-hooks       # remove pre-push hook
 //   node scripts/greploop.mjs review <branch>       # run review, exit 0/1
 
-const BASE = process.env.GREPLOOP_URL || "http://localhost:3000";
+const BASE = process.env.GREPLOOP_URL || "http://localhost:3300";
 const API_KEY = process.env.GREPLOOP_API_KEY || "";
 
 const [cmd, ...args] = process.argv.slice(2);

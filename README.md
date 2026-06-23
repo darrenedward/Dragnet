@@ -52,7 +52,7 @@ Self-hosted, multi-tenant code review platform. The Greptile-tier review quality
    ```bash
    npm run dev
    ```
-   Open http://localhost:3000.
+   Open http://localhost:3300.
 
 The in-app **DB Config** tab lets you re-test and re-save the database connection without editing `.env.local` by hand. The **LLM Settings** tab lets you point GrepLoop at any OpenAI-compatible endpoint (OpenRouter, Ollama, LM Studio), browse the live model catalog, and pick chat + embedding models.
 

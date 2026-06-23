@@ -61,7 +61,7 @@ The pre-push hook at `scripts/hooks/pre-push` blocks pushes that fail GrepLoop A
 
 The hook calls `POST /api/hooks/prepush` which triggers `runPrScan()` and returns a pass/fail verdict.
 
-Requires `GREPLOOP_API_KEY` env var (generate from UI sidebar → LLM Settings → API Keys). Set `GREPLOOP_URL` to override `http://localhost:3000`.
+Requires `GREPLOOP_API_KEY` env var (generate from UI sidebar → LLM Settings → API Keys). Set `GREPLOOP_URL` to override `http://localhost:3300`.
 
 ## API keys
 

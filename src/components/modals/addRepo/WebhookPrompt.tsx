@@ -31,7 +31,7 @@ export default function WebhookPrompt({ repoName, repoId, hasPat, onClose }: Pro
         if (!cancelled && data) setPublicUrl(data);
       })
       .catch(() => {
-        if (!cancelled) setPublicUrl({ url: "http://localhost:3000", isLocal: true });
+        if (!cancelled) setPublicUrl({ url: "http://localhost:3300", isLocal: true });
       });
     return () => {
       cancelled = true;
@@ -76,7 +76,7 @@ export default function WebhookPrompt({ repoName, repoId, hasPat, onClose }: Pro
     setTimeout(() => setCopied(null), 2000);
   };
 
-  const tunnelCommand = "cloudflared tunnel --url http://localhost:3000";
+  const tunnelCommand = "cloudflared tunnel --url http://localhost:3300";
   const isLocal = publicUrl?.isLocal ?? true;
 
   return (
