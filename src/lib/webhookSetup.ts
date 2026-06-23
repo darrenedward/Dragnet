@@ -55,6 +55,7 @@ export async function setupWebhookWithPat(
       body: JSON.stringify({
         url: targetUrl,
         push_events: true,
+      pull_requests_events: true,
         token: secret,
         enable_ssl_verification: true,
       }),
@@ -87,7 +88,7 @@ export async function setupWebhookWithPat(
     body: JSON.stringify({
       name: "web",
       active: true,
-      events: ["push"],
+      events: ["push", "pull_request"],
       config: {
         url: targetUrl,
         content_type: "json",

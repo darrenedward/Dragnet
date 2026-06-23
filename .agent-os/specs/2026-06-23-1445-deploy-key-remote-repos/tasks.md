@@ -4,7 +4,7 @@ Mark each task `- [x]` when complete. Add follow-up tasks under "Discovered duri
 
 ## Pre-flight
 
-- [x] **Revoke leaked MCP API key** in `opencode.json` (commit `4fc0596`). Key: `gl_mcp_835aa1df03b5c663832e0fe76496e67926adef72a126dff19f311e9881710a2a`. Revoked via API deletion. Generated new key `gl_mcp_4d747...`. Added `opencode.json` to `.gitignore`.
+- [x] **Revoke leaked MCP API key** in `opencode.json` (commit `4fc0596`). Key: `<KEY_REVOKED>`. Revoked via API deletion. Generated new key `gl_mcp_4d747...`. Added `opencode.json` to `.gitignore`.
 - [x] **Clean up commit `4fc0596`** — added `opencode.json` to `.gitignore`. Local-only branch, no push.
 
 ## Phase 0 — Crypto + startup hardening (no DB changes)

@@ -48,7 +48,10 @@ export async function GET(
     if (!repo) {
       return NextResponse.json({ error: "Repository not found" }, { status: 404 });
     }
-    const instructions = getManualWebhookInstructions(repo);
+    const instructions = getManualWebhookInstructions({
+      ...repo,
+      webhookSecret: repo.webhookSecret ? "(set — redacted)" : null,
+    });
     return NextResponse.json({ instructions });
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 });

@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import crypto from "crypto";
+import { execSync } from "child_process";
 import { prisma } from "../lib/prisma";
 import { currentHeadCommit } from "../lib/indexFreshness";
 
@@ -568,7 +569,7 @@ export class IndexingService {
 
   private static filterGitIgnored(repoPath: string, files: string[]): Set<string> {
     if (files.length === 0) return new Set();
-    const { execSync } = require("child_process") as typeof import("child_process");
+
     try {
       const result = execSync("git check-ignore --stdin", {
         cwd: repoPath,

@@ -73,7 +73,7 @@ export function buildSshEnv(
   writeFileSync(keyFile, deployKey, { mode: 0o600 });
   return {
     env: {
-      GIT_SSH_COMMAND: `ssh -i ${keyFile} -o StrictHostKeyChecking=no -o IdentitiesOnly=yes`,
+      GIT_SSH_COMMAND: `ssh -i ${keyFile} -o StrictHostKeyChecking=accept-new -o IdentitiesOnly=yes`,
     },
     cleanup: () => {
       try {

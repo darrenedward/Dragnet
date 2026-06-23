@@ -1,4 +1,4 @@
-import { execSync } from "child_process";
+import { execFileSync } from "child_process";
 import { createHmac, timingSafeEqual } from "crypto";
 import { prisma } from "./prisma";
 
@@ -25,7 +25,7 @@ export function verifyGitlabToken(token: string, secret: string): boolean {
 
 export function getRepoRemoteUrl(repoPath: string): string {
   try {
-    return execSync(`git -C "${repoPath}" remote get-url origin`, {
+    return execFileSync("git", ["-C", repoPath, "remote", "get-url", "origin"], {
       encoding: "utf8",
       timeout: 5000,
     }).trim();
@@ -60,7 +60,11 @@ export async function findRepoByCloneUrl(cloneUrl: string): Promise<{ id: string
 
 export function gitFetch(repoPath: string): boolean {
   try {
-    execSync(`git -C "${repoPath}" fetch origin 2>&1`, { encoding: "utf8", timeout: 30000 });
+    execFileSync("git", ["-C", repoPath, "fetch", "origin"], {
+      encoding: "utf8",
+      timeout: 30000,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
     return true;
   } catch {
     return false;

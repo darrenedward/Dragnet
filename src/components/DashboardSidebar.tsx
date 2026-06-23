@@ -277,6 +277,7 @@ function RepoRow({
               e.stopPropagation();
               onRepoSettings();
             }}
+            aria-label={`Repo settings & index stats for ${repo.name}`}
             title="Repo settings & index stats"
             className="text-slate-500 hover:text-cyan-400 transition-all cursor-pointer"
           >
@@ -288,6 +289,7 @@ function RepoRow({
               e.stopPropagation();
               onEdit();
             }}
+            aria-label={`Edit connection details for ${repo.name}`}
             title="Edit connection details"
             className="text-slate-500 hover:text-cyan-400 transition-all cursor-pointer"
           >
