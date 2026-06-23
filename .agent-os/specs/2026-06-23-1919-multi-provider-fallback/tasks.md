@@ -4,12 +4,14 @@ Mark each `- [ ]` as `- [x]` when complete. Per user convention: update this fil
 
 ## Phase 1 — Schema: primary + fallback presets
 
-- [ ] Extend `PresetsFile` interface in `src/lib/llmPresets.ts` with `primaryChatPresetId`, `fallbackChatPresetId`, `primaryEmbeddingPresetId`, `fallbackEmbeddingPresetId`.
-- [ ] Backward-compat migration in `parseFile()`: if old `activeChatPresetId` exists and `primaryChatPresetId` doesn't, copy across. Same for embedding. Trigger save on first detection.
-- [ ] Update `emptyState()` to include the four new fields (null for fallbacks).
-- [ ] Add `getFallbackChatPreset()` and `getFallbackEmbeddingPreset()` getters.
-- [ ] Update `listPresets()` to return all four slot ids.
-- [ ] Update `validatePresetsInput()` to type-check the four new fields and ensure fallback ids (when non-empty) reference existing presets.
+- [x] Extend `PresetsFile` interface in `src/lib/llmPresets.ts` with `primaryChatPresetId`, `fallbackChatPresetId`, `primaryEmbeddingPresetId`, `fallbackEmbeddingPresetId`.
+- [x] Backward-compat migration in `parseFile()`: if old `activeChatPresetId` exists and `primaryChatPresetId` doesn't, copy across. Same for embedding. Trigger save on first detection.
+- [x] Update `emptyState()` to include the four new fields (null for fallbacks).
+- [x] Add `getFallbackChatPreset()` and `getFallbackEmbeddingPreset()` getters.
+- [x] Update `listPresets()` to return all four slot ids.
+- [x] Update `validatePresetsInput()` to type-check the four new fields and ensure fallback ids (when non-empty) reference existing presets.
+- [x] Updated `src/app/api/llm/presets/route.ts` PUT handler to write the new shape.
+- [x] `npm run lint` clean.
 - [ ] Manual: load UI, confirm existing single-provider config still loads (primary slot populated, fallback empty).
 
 ## Phase 2 — Chat + embedding client chains

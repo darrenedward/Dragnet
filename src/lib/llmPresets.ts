@@ -47,8 +47,17 @@ export interface PresetView {
 
 export interface PresetsFile {
   presets: Preset[];
-  activeChatPresetId: string;
-  activeEmbeddingPresetId: string;
+  /**
+   * Primary chat preset (was `activeChatPresetId`). Used first for reviews.
+   * Old field name still readable for backward compat — see parseFile().
+   */
+  primaryChatPresetId: string;
+  /** Backup chat preset. Tried when primary fails. Empty/null = no fallback. */
+  fallbackChatPresetId: string;
+  /** Primary embedding preset (was `activeEmbeddingPresetId`). */
+  primaryEmbeddingPresetId: string;
+  /** Backup embedding preset. Tried when primary fails. Empty/null = no fallback. */
+  fallbackEmbeddingPresetId: string;
 }
 
 const PRESETS_DIR = join(/* turbopackIgnore: true */ process.cwd(), ".greploop");
@@ -61,21 +70,56 @@ const ENV_LOCAL_PATH = join(/* turbopackIgnore: true */ process.cwd(), ".env.loc
 let migrationDone = false;
 
 function emptyState(): PresetsFile {
-  return { presets: [], activeChatPresetId: "", activeEmbeddingPresetId: "" };
+  return {
+    presets: [],
+    primaryChatPresetId: "",
+    fallbackChatPresetId: "",
+    primaryEmbeddingPresetId: "",
+    fallbackEmbeddingPresetId: "",
+  };
+}
+
+/**
+ * Normalizes a raw parsed object into the current PresetsFile shape.
+ *
+ * Backward compat: files written before multi-provider fallback used
+ * `activeChatPresetId` / `activeEmbeddingPresetId`. We copy those across
+ * to the new `primaryChatPresetId` / `primaryEmbeddingPresetId` fields
+ * and default the fallbacks to empty. The normalized shape is returned
+ * in memory and persisted by the caller via `scheduleBackCompatWrite`.
+ */
+function normalizeParsed(parsed: any): PresetsFile | null {
+  if (!parsed || !Array.isArray(parsed.presets)) return null;
+
+  const primaryChat =
+    typeof parsed.primaryChatPresetId === "string"
+      ? parsed.primaryChatPresetId
+      : typeof parsed.activeChatPresetId === "string"
+        ? parsed.activeChatPresetId
+        : "";
+  const primaryEmbedding =
+    typeof parsed.primaryEmbeddingPresetId === "string"
+      ? parsed.primaryEmbeddingPresetId
+      : typeof parsed.activeEmbeddingPresetId === "string"
+        ? parsed.activeEmbeddingPresetId
+        : "";
+
+  return {
+    presets: parsed.presets,
+    primaryChatPresetId: primaryChat,
+    fallbackChatPresetId:
+      typeof parsed.fallbackChatPresetId === "string" ? parsed.fallbackChatPresetId : "",
+    primaryEmbeddingPresetId: primaryEmbedding,
+    fallbackEmbeddingPresetId:
+      typeof parsed.fallbackEmbeddingPresetId === "string" ? parsed.fallbackEmbeddingPresetId : "",
+  };
 }
 
 function parseFile(path: string): PresetsFile | null {
   try {
     const raw = readFileSync(path, "utf8");
     const parsed = JSON.parse(raw);
-    if (
-      Array.isArray(parsed.presets) &&
-      typeof parsed.activeChatPresetId === "string" &&
-      typeof parsed.activeEmbeddingPresetId === "string"
-    ) {
-      return parsed as PresetsFile;
-    }
-    return null;
+    return normalizeParsed(parsed);
   } catch {
     return null;
   }
@@ -85,18 +129,59 @@ function parseFile(path: string): PresetsFile | null {
  * Reads the presets file synchronously (file is ~2KB, sub-ms).
  * Falls back to `.bak` if the main file is missing or corrupt.
  * Returns an empty state only if neither exists.
+ *
+ * Backward compat: if the file uses the legacy `activeChatPresetId` /
+ * `activeEmbeddingPresetId` field names, the normalized new-shape state
+ * is persisted back to disk asynchronously so future reads skip the
+ * migration. The in-memory return always reflects the new shape.
  */
 export function readPresets(): PresetsFile {
   const main = existsSync(PRESETS_PATH) ? parseFile(PRESETS_PATH) : null;
-  if (main) return main;
+  if (main) {
+    maybeMigrateLegacyFields(main);
+    return main;
+  }
 
   const bak = existsSync(PRESETS_BAK) ? parseFile(PRESETS_BAK) : null;
   if (bak) {
     console.warn("[llmPresets] main file unreadable, falling back to .bak");
+    maybeMigrateLegacyFields(bak);
     return bak;
   }
 
   return emptyState();
+}
+
+/**
+ * If the parsed file still carries legacy field names, persist the
+ * normalized new-shape back to disk. Fire-and-forget — the in-memory
+ * state already reflects the new shape regardless.
+ */
+function maybeMigrateLegacyFields(state: PresetsFile): void {
+  try {
+    const raw = existsSync(PRESETS_PATH) ? readFileSync(PRESETS_PATH, "utf8") : "";
+    const parsed = raw ? JSON.parse(raw) : null;
+    if (!parsed) return;
+    const hasLegacy =
+      "activeChatPresetId" in parsed || "activeEmbeddingPresetId" in parsed;
+    const hasNewPrimary =
+      "primaryChatPresetId" in parsed || "primaryEmbeddingPresetId" in parsed;
+    if (!hasLegacy || hasNewPrimary) return;
+
+    // Strip legacy keys and persist new shape.
+    const next: any = {
+      presets: state.presets,
+      primaryChatPresetId: state.primaryChatPresetId,
+      fallbackChatPresetId: state.fallbackChatPresetId,
+      primaryEmbeddingPresetId: state.primaryEmbeddingPresetId,
+      fallbackEmbeddingPresetId: state.fallbackEmbeddingPresetId,
+    };
+    void savePresets(next)
+      .then(() => console.log("[llmPresets] migrated legacy active* fields to primary*"))
+      .catch((err) => console.warn("[llmPresets] legacy-field migration failed:", err));
+  } catch {
+    // ignore — non-fatal
+  }
 }
 
 function toView(p: Preset): PresetView {
@@ -112,37 +197,81 @@ function toView(p: Preset): PresetView {
 
 /**
  * Returns the full state with apiKeys masked. Safe to return to the client.
+ *
+ * For backward compat with older UI clients, also exposes the legacy
+ * `activeChatPresetId`/`activeEmbeddingPresetId` keys mirroring the
+ * primary slots.
  */
 export function listPresets(): {
   presets: PresetView[];
   activeChatPresetId: string;
   activeEmbeddingPresetId: string;
+  primaryChatPresetId: string;
+  fallbackChatPresetId: string;
+  primaryEmbeddingPresetId: string;
+  fallbackEmbeddingPresetId: string;
 } {
   ensureMigrated();
   const state = readPresets();
   return {
     presets: state.presets.map(toView),
-    activeChatPresetId: state.activeChatPresetId,
-    activeEmbeddingPresetId: state.activeEmbeddingPresetId,
+    activeChatPresetId: state.primaryChatPresetId,
+    activeEmbeddingPresetId: state.primaryEmbeddingPresetId,
+    primaryChatPresetId: state.primaryChatPresetId,
+    fallbackChatPresetId: state.fallbackChatPresetId,
+    primaryEmbeddingPresetId: state.primaryEmbeddingPresetId,
+    fallbackEmbeddingPresetId: state.fallbackEmbeddingPresetId,
   };
 }
 
 /**
- * Returns the full preset (including apiKey) for the active chat slot.
+ * Returns the full preset (including apiKey) for the primary chat slot.
  * Server-side only — never return this object to the client.
+ *
+ * (Was `getActiveChatPreset` in single-provider era — same semantics,
+ * the "active" slot is now the "primary" slot.)
  */
-export function getActiveChatPreset(): Preset | null {
+export function getPrimaryChatPreset(): Preset | null {
   ensureMigrated();
   const state = readPresets();
-  if (!state.activeChatPresetId) return null;
-  return state.presets.find((p) => p.id === state.activeChatPresetId) || null;
+  if (!state.primaryChatPresetId) return null;
+  return state.presets.find((p) => p.id === state.primaryChatPresetId) || null;
 }
 
-export function getActiveEmbeddingPreset(): Preset | null {
+export function getPrimaryEmbeddingPreset(): Preset | null {
   ensureMigrated();
   const state = readPresets();
-  if (!state.activeEmbeddingPresetId) return null;
-  return state.presets.find((p) => p.id === state.activeEmbeddingPresetId) || null;
+  if (!state.primaryEmbeddingPresetId) return null;
+  return state.presets.find((p) => p.id === state.primaryEmbeddingPresetId) || null;
+}
+
+/**
+ * Backup chat preset. Null when unconfigured or points at a missing preset.
+ */
+export function getFallbackChatPreset(): Preset | null {
+  ensureMigrated();
+  const state = readPresets();
+  if (!state.fallbackChatPresetId) return null;
+  if (state.fallbackChatPresetId === state.primaryChatPresetId) return null;
+  return state.presets.find((p) => p.id === state.fallbackChatPresetId) || null;
+}
+
+export function getFallbackEmbeddingPreset(): Preset | null {
+  ensureMigrated();
+  const state = readPresets();
+  if (!state.fallbackEmbeddingPresetId) return null;
+  if (state.fallbackEmbeddingPresetId === state.primaryEmbeddingPresetId) return null;
+  return state.presets.find((p) => p.id === state.fallbackEmbeddingPresetId) || null;
+}
+
+/** @deprecated Use getPrimaryChatPreset. Alias kept for existing callers. */
+export function getActiveChatPreset(): Preset | null {
+  return getPrimaryChatPreset();
+}
+
+/** @deprecated Use getPrimaryEmbeddingPreset. Alias kept for existing callers. */
+export function getActiveEmbeddingPreset(): Preset | null {
+  return getPrimaryEmbeddingPreset();
 }
 
 /**
@@ -222,8 +351,10 @@ export function migrateFromEnvLocalIfNeeded(): void {
 
   const state: PresetsFile = {
     presets: [preset],
-    activeChatPresetId: chatModel ? id : "",
-    activeEmbeddingPresetId: embeddingModel ? id : "",
+    primaryChatPresetId: chatModel ? id : "",
+    fallbackChatPresetId: "",
+    primaryEmbeddingPresetId: embeddingModel ? id : "",
+    fallbackEmbeddingPresetId: "",
   };
 
   void savePresets(state)
@@ -242,6 +373,9 @@ function ensureMigrated(): void {
 /**
  * Validation pass for incoming PUT bodies. Throws on invalid input.
  * Used by the API route so client-side bugs can't corrupt the file.
+ *
+ * Accepts either the new primary/fallback shape or the legacy active-only
+ * shape. Legacy inputs are normalized in-memory to the new shape.
  */
 export function validatePresetsInput(input: unknown): asserts input is PresetsFile {
   if (typeof input !== "object" || input === null) {
@@ -249,8 +383,33 @@ export function validatePresetsInput(input: unknown): asserts input is PresetsFi
   }
   const obj = input as Record<string, unknown>;
   if (!Array.isArray(obj.presets)) throw new Error("`presets` must be an array.");
-  if (typeof obj.activeChatPresetId !== "string") throw new Error("`activeChatPresetId` must be a string.");
-  if (typeof obj.activeEmbeddingPresetId !== "string") throw new Error("`activeEmbeddingPresetId` must be a string.");
+
+  // Tolerate either old or new field names for primary slots.
+  const primaryChat =
+    typeof obj.primaryChatPresetId === "string"
+      ? obj.primaryChatPresetId
+      : typeof obj.activeChatPresetId === "string"
+        ? obj.activeChatPresetId
+        : undefined;
+  const primaryEmbedding =
+    typeof obj.primaryEmbeddingPresetId === "string"
+      ? obj.primaryEmbeddingPresetId
+      : typeof obj.activeEmbeddingPresetId === "string"
+        ? obj.activeEmbeddingPresetId
+        : undefined;
+  if (primaryChat === undefined) throw new Error("`primaryChatPresetId` must be a string.");
+  if (primaryEmbedding === undefined) throw new Error("`primaryEmbeddingPresetId` must be a string.");
+  obj.primaryChatPresetId = primaryChat;
+  obj.primaryEmbeddingPresetId = primaryEmbedding;
+
+  if (obj.fallbackChatPresetId !== undefined && typeof obj.fallbackChatPresetId !== "string") {
+    throw new Error("`fallbackChatPresetId` must be a string when provided.");
+  }
+  if (obj.fallbackEmbeddingPresetId !== undefined && typeof obj.fallbackEmbeddingPresetId !== "string") {
+    throw new Error("`fallbackEmbeddingPresetId` must be a string when provided.");
+  }
+  if (obj.fallbackChatPresetId === undefined) obj.fallbackChatPresetId = "";
+  if (obj.fallbackEmbeddingPresetId === undefined) obj.fallbackEmbeddingPresetId = "";
 
   const ids = new Set<string>();
   for (const p of obj.presets as unknown[]) {
@@ -266,11 +425,17 @@ export function validatePresetsInput(input: unknown): asserts input is PresetsFi
     if (typeof preset.embeddingModel !== "string") throw new Error("preset.embeddingModel must be a string.");
   }
 
-  if (obj.activeChatPresetId && !ids.has(obj.activeChatPresetId)) {
-    throw new Error(`activeChatPresetId ${obj.activeChatPresetId} does not exist in presets.`);
+  if (obj.primaryChatPresetId && !ids.has(obj.primaryChatPresetId as string)) {
+    throw new Error(`primaryChatPresetId ${obj.primaryChatPresetId} does not exist in presets.`);
   }
-  if (obj.activeEmbeddingPresetId && !ids.has(obj.activeEmbeddingPresetId)) {
-    throw new Error(`activeEmbeddingPresetId ${obj.activeEmbeddingPresetId} does not exist in presets.`);
+  if (obj.primaryEmbeddingPresetId && !ids.has(obj.primaryEmbeddingPresetId as string)) {
+    throw new Error(`primaryEmbeddingPresetId ${obj.primaryEmbeddingPresetId} does not exist in presets.`);
+  }
+  if (obj.fallbackChatPresetId && !ids.has(obj.fallbackChatPresetId as string)) {
+    throw new Error(`fallbackChatPresetId ${obj.fallbackChatPresetId} does not exist in presets.`);
+  }
+  if (obj.fallbackEmbeddingPresetId && !ids.has(obj.fallbackEmbeddingPresetId as string)) {
+    throw new Error(`fallbackEmbeddingPresetId ${obj.fallbackEmbeddingPresetId} does not exist in presets.`);
   }
 }
 

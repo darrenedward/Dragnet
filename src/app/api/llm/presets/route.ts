@@ -25,7 +25,8 @@ export async function GET() {
 
 /**
  * PUT /api/llm/presets
- * Body: the full { presets, activeChatPresetId, activeEmbeddingPresetId } state.
+ * Body: the full { presets, primaryChatPresetId, fallbackChatPresetId,
+ * primaryEmbeddingPresetId, fallbackEmbeddingPresetId } state.
  * Client is source of truth — server validates and persists atomically.
  *
  * If a preset's apiKey field is empty AND we already have a stored key for
@@ -57,8 +58,10 @@ export async function PUT(req: Request) {
 
     const state: PresetsFile = {
       presets: mergedPresets,
-      activeChatPresetId: incoming.activeChatPresetId,
-      activeEmbeddingPresetId: incoming.activeEmbeddingPresetId,
+      primaryChatPresetId: incoming.primaryChatPresetId,
+      fallbackChatPresetId: incoming.fallbackChatPresetId ?? "",
+      primaryEmbeddingPresetId: incoming.primaryEmbeddingPresetId,
+      fallbackEmbeddingPresetId: incoming.fallbackEmbeddingPresetId ?? "",
     };
 
     await savePresets(state);
