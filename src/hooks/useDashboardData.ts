@@ -182,19 +182,30 @@ export function useDashboardData() {
     }
   };
 
-  // ===== Initial load + polling =====
+  // ===== Initial load =====
   useEffect(() => {
     fetchRepos();
     fetchLogs();
     fetchDbConfig();
   }, []);
 
+  // Fetch PRs + details immediately when selection changes (no polling reset).
   useEffect(() => {
-    const initial = setTimeout(() => {
+    const t = setTimeout(() => {
       if (selectedRepoId) fetchPrsForSelectedRepo(selectedRepoId, true);
       if (selectedPrId) fetchPrDetails(selectedPrId);
     }, 50);
+    return () => clearTimeout(t);
+  }, [selectedRepoId, selectedPrId]);
 
+  // Stable background poller — never resets on selection changes.
+  // Uses refs so the interval doesn't need to recreate.
+  const repoIdRef = useRef(selectedRepoId);
+  const prIdRef = useRef(selectedPrId);
+  repoIdRef.current = selectedRepoId;
+  prIdRef.current = selectedPrId;
+
+  useEffect(() => {
     const poller = setInterval(async () => {
       if (pollInFlight.current) return;
       pollInFlight.current = true;
@@ -202,19 +213,16 @@ export function useDashboardData() {
         await Promise.all([
           fetchRepos(),
           fetchLogs(),
-          selectedRepoId ? fetchPrsForSelectedRepo(selectedRepoId, true) : Promise.resolve(),
-          selectedPrId ? fetchPrDetails(selectedPrId) : Promise.resolve(),
+          repoIdRef.current ? fetchPrsForSelectedRepo(repoIdRef.current, true) : Promise.resolve(),
+          prIdRef.current ? fetchPrDetails(prIdRef.current) : Promise.resolve(),
         ]);
       } finally {
         pollInFlight.current = false;
       }
     }, 15000);
 
-    return () => {
-      clearTimeout(initial);
-      clearInterval(poller);
-    };
-  }, [selectedRepoId, selectedPrId]);
+    return () => clearInterval(poller);
+  }, []);
 
   // ===== DB actions =====
   const handleTestDbConnection = async () => {
