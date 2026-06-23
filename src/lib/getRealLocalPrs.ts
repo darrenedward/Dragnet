@@ -221,29 +221,30 @@ function listBranches(repoPath: string): BranchInfo[] {
 
 export async function refreshPrFiles(repoPath: string, baseBranch: string, branchName: string, prId: string) {
   const files = collectBranchFiles(repoPath, baseBranch, branchName);
-  // Atomic swap: delete + create inside a single transaction so a mid-write
-  // failure can't leave the PR with zero files (which would feed an empty
-  // diff to the reviewer). The diff fetches happen in collectBranchFiles
-  // *before* this block, so the transaction body is fast metadata-only I/O —
-  // safe even under pgbouncer's 5s interactive-transaction cap.
-  await prisma.$transaction(async (tx) => {
-    await tx.prFile.deleteMany({ where: { prId } });
-    if (files.length > 0) {
-      await tx.prFile.createMany({
-        data: files.map((f, i) => ({
-          id: `file-${prId}-${i}`,
-          prId,
-          filename: f.filename,
-          status: f.status,
-          additions: f.additions,
-          deletions: f.deletions,
-          originalContent: sanitizeForPg(f.originalContent),
-          modifiedContent: sanitizeForPg(f.modifiedContent),
-          diff: sanitizeForPg(f.diff),
-        })),
-      });
-    }
-  });
+  // Deliberately NOT wrapped in $transaction. The Supabase transaction
+  // pooler (PgBouncer) caps interactive transactions at 5s; the createMany
+  // payload here carries full file contents + diffs and routinely exceeds
+  // that on real PRs (we saw 13s on a feature/bug-demo scan). A transaction
+  // wrapper turns a slow write into a hard error. Sequential delete +
+  // createMany is the same pattern used in getRealLocalPrs() above — see
+  // the comment there for the full rationale. The "partial state leaves
+  // zero files" risk is repaired by the next refresh cycle.
+  await prisma.prFile.deleteMany({ where: { prId } });
+  if (files.length > 0) {
+    await prisma.prFile.createMany({
+      data: files.map((f, i) => ({
+        id: `file-${prId}-${i}`,
+        prId,
+        filename: f.filename,
+        status: f.status,
+        additions: f.additions,
+        deletions: f.deletions,
+        originalContent: sanitizeForPg(f.originalContent),
+        modifiedContent: sanitizeForPg(f.modifiedContent),
+        diff: sanitizeForPg(f.diff),
+      })),
+    });
+  }
 }
 
 function collectBranchFiles(
