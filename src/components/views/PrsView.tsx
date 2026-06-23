@@ -196,7 +196,7 @@ function PrHeader({
           {hasFindings && (
             <button
               onClick={onExportMarkdown}
-              className="px-3 py-2 bg-white/5 border border-white/10 text-slate-350 hover:bg-white/10 text-xs font-mono font-bold rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer"
+              className="px-3 py-2 bg-white/5 border border-white/10 text-slate-300 hover:bg-white/10 text-xs font-mono font-bold rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer"
               title="Download complete markdown report summary"
             >
               <Download size={13} />

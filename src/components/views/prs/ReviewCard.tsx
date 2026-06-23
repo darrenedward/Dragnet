@@ -144,7 +144,7 @@ export default function ReviewCard({ activePR, findings, onCopySuggestion, copyF
       {findings.length === 0 ? (
         <div className="p-8 text-center text-slate-500 flex flex-col items-center justify-center">
           <CheckCircle2 size={24} className="text-emerald-400 mb-1.5" />
-          <p className="text-xs font-bold text-slate-350 font-mono">Status: Ready for review scan</p>
+          <p className="text-xs font-bold text-slate-300 font-mono">Status: Ready for review scan</p>
           <p className="text-[10px] text-slate-600 font-mono mt-0.5">
             Click "Trigger AI Review Scan" to run real-time static checking.
           </p>
@@ -195,7 +195,7 @@ export default function ReviewCard({ activePR, findings, onCopySuggestion, copyF
                           </div>
                         </div>
 
-                        <p className="text-xs text-slate-350 leading-relaxed font-sans">{finding.explanation}</p>
+                        <p className="text-xs text-slate-300 leading-relaxed font-sans">{finding.explanation}</p>
 
                         {evidencePoints.length > 0 && (
                           <div className="mt-2 text-xs font-mono bg-slate-950/50 p-2.5 rounded-lg border border-white/5 space-y-1.5">

@@ -347,7 +347,7 @@ export default function CodebaseGraph({ repoId, repoName, onIndexComplete }: Cod
               <div className="w-12 h-12 rounded-full border border-dashed border-white/10 text-slate-500 flex items-center justify-center mb-3">
                 <Network size={22} className="text-slate-500 animate-pulse" />
               </div>
-              <h4 className="text-xs font-mono font-bold text-slate-350">Select an AST Symbol representation</h4>
+              <h4 className="text-xs font-mono font-bold text-slate-300">Select an AST Symbol representation</h4>
               <p className="text-[11px] text-slate-500 font-mono mt-1 w-72">
                 Click any parsed method or function from the left index panel to map callers and dependencies instantly.
               </p>
@@ -481,7 +481,7 @@ export default function CodebaseGraph({ repoId, repoName, onIndexComplete }: Cod
 
                 <div className="space-y-2.5 text-xs text-slate-400">
                   <p className="leading-relaxed">
-                    Analyzing active call graph for <strong className="text-cyan-400 font-semibold">{selectedSymbol.name}</strong> inside repository <strong className="text-slate-350">{repoName}</strong>.
+                    Analyzing active call graph for <strong className="text-cyan-400 font-semibold">{selectedSymbol.name}</strong> inside repository <strong className="text-slate-300">{repoName}</strong>.
                   </p>
                   
                   {callers.length > 0 ? (

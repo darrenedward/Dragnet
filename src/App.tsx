@@ -324,7 +324,7 @@ export default function App() {
                 onClick={() => {
                   alert("Local Export: Reports synced under '~/.greploop/reports/...' data catalog.");
                 }}
-                className="px-3 py-1.5 text-xs font-semibold bg-white/5 border border-white/10 text-slate-350 rounded hover:bg-white/10 transition-colors cursor-pointer"
+                className="px-3 py-1.5 text-xs font-semibold bg-white/5 border border-white/10 text-slate-300 rounded hover:bg-white/10 transition-colors cursor-pointer"
               >
                 Sync local report folder
               </button>

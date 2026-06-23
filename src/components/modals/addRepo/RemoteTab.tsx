@@ -148,7 +148,7 @@ export default function RemoteTab({
           <select
             value={newTriggerMode}
             onChange={(e) => setNewTriggerMode(e.target.value as "auto" | "mention")}
-            className={`${inputClass} text-slate-350 cursor-pointer`}
+            className={`${inputClass} text-slate-300 cursor-pointer`}
           >
             <option value="auto">auto pipeline</option>
             <option value="mention">@PRBot mention</option>
