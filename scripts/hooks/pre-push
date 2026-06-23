@@ -2,7 +2,7 @@
 # GrepLoop pre-push hook
 # Installed by: npm run install-hooks  or  npm run greploop install-hooks
 #
-# Blocks pushes that fail the GrepLoop AI review (rating < 4/5).
+# Blocks pushes that fail the GrepLoop AI review (rating < 8/10).
 # Bypass with: git push --no-verify
 #
 # Reads branch info from git's pre-push stdin and calls the GrepLoop API.
@@ -52,7 +52,7 @@ while read local_ref local_sha remote_ref remote_sha; do
     echo "⚠ GrepLoop: $error"
     exit 1
   else
-    echo "✗ GrepLoop: branch '$branch' blocked ($rating/5 — needs 4+)"
+    echo "✗ GrepLoop: branch '$branch' blocked ($rating/10 — needs 8+)"
     echo "  Review findings in the GrepLoop UI or run '/greploop fix' in your agent."
     echo "  To bypass: git push --no-verify"
     exit 1

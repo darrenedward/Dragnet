@@ -43,7 +43,7 @@ export async function POST(req: Request) {
     }
 
     const result = await runPrScan(pr.id);
-    const passed = result.rating >= 4;
+    const passed = result.rating >= 8;
 
     return NextResponse.json({
       passed,
@@ -51,8 +51,8 @@ export async function POST(req: Request) {
       findingsCount: result.findings.length,
       findings: result.findings,
       message: passed
-        ? `✓ GrepLoop: PR approved (${result.rating}/5)`
-        : `✗ GrepLoop: PR blocked — rating ${result.rating}/5 (requires 4+). Fix findings or use --no-verify to bypass.`,
+        ? `✓ GrepLoop: PR approved (${result.rating}/10)`
+        : `✗ GrepLoop: PR blocked — rating ${result.rating}/10 (requires 8+). Fix findings or use --no-verify to bypass.`,
       usedModel: result.usedModel,
     });
   } catch (err: any) {

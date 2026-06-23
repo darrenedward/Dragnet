@@ -17,13 +17,13 @@ All commands live under `/gloop`:
 | Command | What it does |
 |---|---|
 | `/gloop` | List all PRs for the current repo with ratings. Lets the user pick one. |
-| `/gloop <number>` | Review a specific PR. Returns rating 1-5 + findings with confidence scores. |
+| `/gloop <number>` | Review a specific PR. Returns rating 1-10 + findings with confidence scores. |
 | `/gloop status <number>` | Show existing review results without triggering a new scan. |
-| `/gloop fix <number>` | Auto-fix loop: review → fix → re-review until rating >= 4/5. |
+| `/gloop fix <number>` | Auto-fix loop: review → fix → re-review until rating >= 8/10. |
 | `/gloop fix <number> --once` | Single pass: fix all findings above 0.5 confidence, commit, done. |
 | `/gloop help` | Print this command table. Use whenever the user asks what `/gloop` can do. |
 
-Typical workflow: `/gloop` → see PR list → `/gloop 2` → see it's 2/5 → `/gloop fix 2` → loop until 4/5.
+Typical workflow: `/gloop` → see PR list → `/gloop 2` → see it's 4/10 → `/gloop fix 2` → loop until 8/10.
 
 ## How `/gloop` resolves the repo
 
@@ -46,9 +46,9 @@ Generate a key from the GrepLoop UI → Settings → API Keys. If no key is conf
 
 ## Rating scale
 
-The GrepLoop review returns a rating from 1 to 5:
-- **4–5** — Production grade, safe to merge
-- **1–3** — Needs fixes. Loop with `/gloop fix` until it passes.
+The GrepLoop review returns a rating from 1 to 10:
+- **8–10** — Production grade, safe to merge
+- **1–7** — Needs fixes. Loop with `/gloop fix` until it passes.
 
 ## API endpoints
 
@@ -66,7 +66,7 @@ Completed review response shape:
 ```
 {
   "status": "Success",
-  "rating": "4/5",
+  "rating": "8/10",
   "productionGrade": "YES" | "NO",
   "summary": "...",
   "findings": [{
@@ -106,12 +106,12 @@ Completed review response shape:
 ### `/gloop fix <number>` (and `--once`)
 
 1. **Get review** — POST `prcheck` with `{ number }`, poll `prcheckstatus` to completion.
-2. **Check rating** — If >= 4/5, report PASS and exit.
+2. **Check rating** — If >= 8/10, report PASS and exit.
 3. **Filter findings** — Only act on findings with `confidence >= 0.5`. Skip noise.
 4. **Apply fixes** — For each finding: read the file at the reported line, understand the surrounding context, apply the `diffSuggestion` (or a reasonable fix that addresses the root cause).
 5. **Commit** — `git commit -am "fix: address review findings"`.
 6. **`--once` stops here.** Otherwise re-review via `prcheck` and loop from step 2.
-7. **Stop conditions** — rating >= 4/5, or 3+ iterations with no rating improvement (warn the user and stop).
+7. **Stop conditions** — rating >= 8/10, or 3+ iterations with no rating improvement (warn the user and stop).
 8. **Report** — Show the final rating and a summary of what was fixed.
 
 ## Preconditions

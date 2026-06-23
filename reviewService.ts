@@ -102,7 +102,7 @@ const reviewResponseSchema = {
   properties: {
     rating: {
       type: "integer",
-      description: "The overall code quality rating of this PR, from 1 to 5. Grade 4 or 5 is production grade, 1-3 requires improvements.",
+      description: "The overall code quality rating of this PR, from 1 to 10. Grade 8+ is production grade, 1-7 requires improvements.",
     },
     summary: {
       type: "string",
@@ -250,12 +250,14 @@ Every finding MUST include:
 - A concrete code suggestion in diffSuggestion
 - Evidence chain showing how the issue propagates
 
-GRADING:
-- 5/5 — Flawless. No security holes, no correctness bugs, no performance traps. Production-ready.
-- 4/5 — Minor issues only (suggestions). Safe to deploy.
-- 3/5 — Has warnings or blockers. NOT production grade. Must fix.
-- 2/5 — Significant problems. Major rework needed.
-- 1/5 — Catastrophic. This code is dangerous. Reject entirely.
+GRADING (1-10 scale):
+- 10/10 — Flawless. No security holes, no correctness bugs, no performance traps. Production-ready.
+- 9/10 — Exceptional. Only nit-level suggestions.
+- 8/10 — Production grade. Minor issues only. Safe to deploy.
+- 7/10 — Solid but has warnings. Reviewer should fix warnings before merge.
+- 5-6/10 — Has blockers or significant warnings. NOT production grade. Must fix.
+- 3-4/10 — Significant problems. Major rework needed.
+- 1-2/10 — Catastrophic. This code is dangerous. Reject entirely.
 
 When done, call submitReview with the final assessment. If no tool calling available, respond with a single JSON object: { rating, summary, findings[] }.
 
@@ -288,7 +290,7 @@ export async function runPrScan(prId: string): Promise<ScanResult> {
   await prisma.pullRequest.updateMany({ where: { id: prId }, data: { status: "In Progress" } });
 
   let findings: any[] = [];
-  let rating = 3;
+  let rating = 5;
   const chatModel = getChatModel();
   let usedModel = chatModel || "unconfigured";
   let systemWarn: string | null = null;
@@ -333,7 +335,7 @@ export async function runPrScan(prId: string): Promise<ScanResult> {
     // No LLM configured — fall straight through to procedural findings.
     systemWarn = "No LLM endpoint or chat model configured. Open the LLM Settings tab, enter your OpenRouter key, and pick a model to get real reviews.";
     findings = generateRealisticFindings(pr, files);
-    rating = findings.some((f) => f.severity === "blocker") ? 2 : 3;
+    rating = findings.some((f) => f.severity === "blocker") ? 4 : 6;
   } else {
     try {
       const initialPrompt = `Your mission: audit this PR with maximum prejudice. Assume the author is hiding something. Trace every changed function across the codebase — check its callers, its callees, its error handling, its edge cases. Use \`searchCodebase\`, \`getCallers\`, and \`findSimilar\` to validate that nothing is overlooked.
@@ -436,20 +438,20 @@ ${diffPayload}`;
 
       if (finalReview) {
         findings = finalReview.findings || [];
-        rating = Math.max(1, Math.min(5, finalReview.rating || 3));
+        rating = Math.max(1, Math.min(10, finalReview.rating || 5));
       } else {
         // Loop ended without a final review (max iterations, model refusal,
         // or unparseable text). Fall through to procedural so the UI still
         // shows something.
         systemWarn = `Model ${chatModel} ended the agentic loop without a final review. Showing procedural fallback findings.`;
         findings = generateRealisticFindings(pr, files);
-        rating = findings.some((f) => f.severity === "blocker") ? 2 : 3;
+        rating = findings.some((f) => f.severity === "blocker") ? 4 : 6;
       }
     } catch (aiErr: any) {
       console.error("LLM call failed, falling back to procedural findings...", aiErr);
       systemWarn = `LLM call failed (${aiErr.message}). Showing procedural fallback findings.`;
       findings = generateRealisticFindings(pr, files);
-      rating = findings.some((f) => f.severity === "blocker") ? 2 : 3;
+      rating = findings.some((f) => f.severity === "blocker") ? 4 : 6;
     }
   }
 

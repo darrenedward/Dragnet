@@ -119,8 +119,8 @@ async function resolvePrFromArgs(args: any): Promise<any | null> {
 }
 
 function formatFindings(pr: any, findings: any[]): string {
-  const pass = pr.rating != null && pr.rating >= 4;
-  let out = `## PR ${pr.sourceBranch} — "${pr.title}"\n**Rating: ${pr.rating ?? "?"}/5** — ${pr.rating != null ? (pass ? "PASS" : "FAIL") : "Not yet"}\n\n`;
+  const pass = pr.rating != null && pr.rating >= 8;
+  let out = `## PR ${pr.sourceBranch} — "${pr.title}"\n**Rating: ${pr.rating ?? "?"}/10** — ${pr.rating != null ? (pass ? "PASS" : "FAIL") : "Not yet"}\n\n`;
   if (findings.length === 0) {
     out += "No findings.\n";
   } else {
@@ -154,7 +154,7 @@ async function handlePrCheck(args: any): Promise<string> {
   runPrScan(pr.id).then((sr) => {
     activeReviews.delete(pr.id);
     prisma.pullRequest.updateMany({ where: { id: pr.id }, data: { rating: sr.rating } }).catch(() => {});
-    console.log(`[api] review complete for ${pr.sourceBranch}: ${sr.rating}/5`);
+    console.log(`[api] review complete for ${pr.sourceBranch}: ${sr.rating}/10`);
   }).catch((err) => {
     activeReviews.delete(pr.id);
     console.error(`[api] review failed for ${pr.sourceBranch}:`, err);
@@ -200,7 +200,7 @@ async function handlePrList(args: any): Promise<string> {
   if (prs.length === 0) return "> **No pull requests found** for this repo.";
   let out = `## Pull Requests\n\n`;
   for (const p of prs) {
-    out += `- **${p.sourceBranch}** — ${p.title} — ${p.rating != null ? `${p.rating}/5` : "Not scanned"}\n`;
+    out += `- **${p.sourceBranch}** — ${p.title} — ${p.rating != null ? `${p.rating}/10` : "Not scanned"}\n`;
   }
   return out;
 }
@@ -295,7 +295,7 @@ async function handleLegacyCommand(body: any, defRepo: string | null) {
       runPrScan(pr.id).then((sr) => {
         activeReviews.delete(pr.id);
         prisma.pullRequest.updateMany({ where: { id: pr.id }, data: { rating: sr.rating } }).catch(() => {});
-        console.log(`[api-legacy] review complete for ${pr.sourceBranch}: ${sr.rating}/5`);
+        console.log(`[api-legacy] review complete for ${pr.sourceBranch}: ${sr.rating}/10`);
       }).catch((err) => {
         activeReviews.delete(pr.id);
         console.error(`[api-legacy] review failed for ${pr.sourceBranch}:`, err);
@@ -311,7 +311,7 @@ async function handleLegacyCommand(body: any, defRepo: string | null) {
       const findings = await prisma.reviewFinding.findMany({ where: { prId: pr.id } });
       return NextResponse.json({
         status: "Success", type: "comments",
-        productionScore: pr.rating ? `${pr.rating}/5` : "Not Scanned Yet",
+        productionScore: pr.rating ? `${pr.rating}/10` : "Not Scanned Yet",
         comments: findings.map((f: any) => `[${f.category} | ${f.severity}] ${f.filename}:${f.line} - ${f.explanation}`),
       });
     }
@@ -325,7 +325,7 @@ async function handleLegacyCommand(body: any, defRepo: string | null) {
         status: "Success", type: "list", repoId: rid,
         pullRequests: prs.map(p => ({
           number: p.sourceBranch, id: p.id, title: p.title,
-          branch: p.sourceBranch, rating: p.rating != null ? `${p.rating}/5` : "Not scanned",
+          branch: p.sourceBranch, rating: p.rating != null ? `${p.rating}/10` : "Not scanned",
         })),
       });
     }

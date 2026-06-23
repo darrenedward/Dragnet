@@ -94,13 +94,13 @@ This is the structural wedge against every commercial reviewer. They run one mod
 4. A reconciliation layer produces the final report:
    - **Agreement findings** (flagged by ≥2 models) → promoted to high confidence.
    - **Single-model findings** → kept, marked with which model raised them.
-   - **Rating disagreement** → surface the spread explicitly. Don't average blindly; let the human see "Claude says 5/5, GPT-4 says 2/5 — investigate."
+   - **Rating disagreement** → surface the spread explicitly. Don't average blindly; let the human see "Claude says 10/10, GPT-4 says 4/10 — investigate."
 5. UI shows the reconciled report with per-model breakdowns available on demand.
 
 ### 6.2 Why this matters
 
 - **Catches blind spots.** Different model families have different failure modes. A finding two of three models agree on is far more likely to be real.
-- **Calibrates trust.** When three frontier models all rate a PR 5/5 with zero findings, that's stronger evidence than any single model's verdict.
+- **Calibrates trust.** When three frontier models all rate a PR 10/10 with zero findings, that's stronger evidence than any single model's verdict.
 - **Cost tunable.** Run a cheap model on every PR, escalate to expensive models only on disagreement or low-rating PRs.
 
 ### 6.3 Schema implication
@@ -181,7 +181,7 @@ Three mechanisms, lowest friction first:
 3. **Commit message marker** — a commit message containing `@BugHunter review` (configurable) triggers review of that branch.
 
 ### 10.3 Pre-push hook
-Git pre-push hook (`scripts/hooks/pre-push`) calls `POST /api/hooks/prepush`, which runs `runPrScan()` and returns a pass/fail verdict. Blocks pushes that score below threshold (default: rating < 4/5). Bypass with `git push --no-verify`.
+Git pre-push hook (`scripts/hooks/pre-push`) calls `POST /api/hooks/prepush`, which runs `runPrScan()` and returns a pass/fail verdict. Blocks pushes that score below threshold (default: rating < 8/10). Bypass with `git push --no-verify`.
 
 ---
 

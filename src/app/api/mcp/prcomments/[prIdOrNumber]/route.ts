@@ -20,8 +20,8 @@ export async function GET(req: Request, { params }: { params: Promise<{ prIdOrNu
     }
 
     const findings = await prisma.reviewFinding.findMany({ where: { prId: pr.id } });
-    const ratingInfo = pr.rating ? `${pr.rating}/5` : "Unrated";
-    const isProduction = pr.rating ? (pr.rating >= 4 ? "YES" : "NO") : "N/A";
+    const ratingInfo = pr.rating ? `${pr.rating}/10` : "Unrated";
+    const isProduction = pr.rating ? (pr.rating >= 8 ? "YES" : "NO") : "N/A";
 
     return NextResponse.json({
       status: "Success",

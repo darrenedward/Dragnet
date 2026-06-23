@@ -20,14 +20,14 @@ export async function GET(req: Request, { params }: { params: Promise<{ prIdOrNu
     }
 
     const scanResult = await runPrScan(pr.id);
-    const isProductionReady = scanResult.rating >= 4;
+    const isProductionReady = scanResult.rating >= 8;
 
     return NextResponse.json({
       status: "Success",
       prId: pr.id,
       title: pr.title,
       productionGrade: isProductionReady ? "YES" : "NO",
-      rating: `${scanResult.rating}/5`,
+      rating: `${scanResult.rating}/10`,
       assessment: isProductionReady
         ? "This Pull Request is highly secure, performant, correct, and fully production grade."
         : "NOT production grade. Please review the blocker/warning findings in comments and refactor.",

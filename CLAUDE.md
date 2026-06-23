@@ -57,7 +57,7 @@ See `prd.md` for the full product spec.
 
 ## Pre-push hook
 
-The pre-push hook at `scripts/hooks/pre-push` blocks pushes that fail GrepLoop AI review (rating < 4/5). Installed via `npm run install-hooks` or `npm run greploop install-hooks`. Bypass with `git push --no-verify`.
+The pre-push hook at `scripts/hooks/pre-push` blocks pushes that fail GrepLoop AI review (rating < 8/10). Installed via `npm run install-hooks` or `npm run greploop install-hooks`. Bypass with `git push --no-verify`.
 
 The hook calls `POST /api/hooks/prepush` which triggers `runPrScan()` and returns a pass/fail verdict.
 
@@ -71,11 +71,11 @@ All authenticated endpoints (`/api/mcp/*`, `/api/hooks/prepush`) require an API 
 
 One skill ships with the repo:
 
-- **`skills/gloop/SKILL.md`** — `/gloop` command family. Reviews PRs through the GrepLoop engine and reports findings with confidence scores. Rating 1-5; 4-5 is production-grade.
+- **`skills/gloop/SKILL.md`** — `/gloop` command family. Reviews PRs through the GrepLoop engine and reports findings with confidence scores. Rating 1-10; 8+ is production-grade.
   - `/gloop` — list PRs for the current repo with ratings
   - `/gloop <number>` — review a specific PR
   - `/gloop status <number>` — show existing review results without re-scanning
-  - `/gloop fix <number>` — auto-fix loop: review → fix → re-review until 4/5
+  - `/gloop fix <number>` — auto-fix loop: review → fix → re-review until 8/10
   - `/gloop fix <number> --once` — single-pass fix, no loop
 
 Install to your user skills dir: `cp -r skills/gloop ~/.claude/skills/`. Remove any prior `~/.claude/skills/bughunter` and `~/.claude/skills/bugfixer` first — those are the old names and are no longer shipped.
