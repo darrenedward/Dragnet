@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/src/lib/prisma";
 import { findPrByIdOrNumber, findPrByBranch } from "@/src/lib/findPr";
 import { runPrScan } from "@/reviewService";
+import { refreshPrFiles } from "@/src/lib/getRealLocalPrs";
 import { authenticateMcpRequest } from "@/src/lib/mcpAuth";
 
 function defaultRepoId(url: string, args?: string[]): string | null {
