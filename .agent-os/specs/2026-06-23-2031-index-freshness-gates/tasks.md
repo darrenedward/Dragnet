@@ -28,11 +28,11 @@ Mark each `- [ ]` as `- [x]` when complete. Per user convention: update this fil
 
 ## Phase 4 — UI in-flight guard
 
-- [ ] Add derived `busy = isReindexing || isScanning` flag in `PrsView.tsx` ScanToolbar.
-- [ ] Scan button `disabled={busy || !repoIndexedAt}`.
-- [ ] Reindex button `disabled={busy}`.
-- [ ] Verify `onIndexComplete` callback refreshes `lastCommitHash` via the repos GET.
-- [ ] `npm run lint` clean.
+- [x] Add derived `busy = isReindexing || isScanning` flag in `PrsView.tsx` ScanToolbar.
+- [x] Scan button `disabled={busy || !repoIndexedAt}`.
+- [x] Reindex button `disabled={busy}`.
+- [x] Verify `onIndexComplete` callback refreshes `lastCommitHash` via the repos GET. (Chain is unchanged — `onIndexComplete` triggers `fetchRepos` in the parent which re-reads the repo row including lastCommitHash.)
+- [x] `npm run lint` clean.
 - [ ] Manual: click Reindex → Scan button disabled until Reindex lands.
 
 ## Phase 5 — Presets .bak spam
