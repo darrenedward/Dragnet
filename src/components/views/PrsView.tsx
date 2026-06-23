@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { motion } from "motion/react";
 import {
   AlertTriangle,
@@ -12,7 +13,7 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import type { PRFile, PullRequest, ReviewFinding } from "../../lib/types";
+import type { ActivityLog, PRFile, PullRequest, ReviewFinding } from "../../lib/types";
 import { getStatusBadgeStyle } from "../../lib/types";
 import IndexNowBanner from "./prs/IndexNowBanner";
 import ReviewProgress from "./prs/ReviewProgress";
@@ -41,6 +42,7 @@ interface Props {
   repoIndexedAt?: string | null;
   repoId?: string;
   onIndexComplete?: () => void;
+  logs: ActivityLog[];
 }
 
 export default function PrsView({
@@ -60,6 +62,7 @@ export default function PrsView({
   repoIndexedAt,
   repoId,
   onIndexComplete,
+  logs,
 }: Props) {
   return (
     <motion.div
@@ -94,6 +97,8 @@ export default function PrsView({
             copyFeedback={copyFeedback}
           />
         )}
+
+        <HistoryPanel logs={logs} />
       </div>
 
       <FilesPanel
@@ -351,6 +356,40 @@ function DiffView({ file }: { file: PRFile }) {
           </div>
         );
       })}
+    </div>
+  );
+}
+
+function HistoryPanel({ logs }: { logs: ActivityLog[] }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="bg-[#0F1219] border border-white/10 rounded-xl overflow-hidden">
+      <button
+        onClick={() => setOpen(!open)}
+        className="w-full px-4 py-2.5 flex items-center justify-between hover:bg-white/[0.02] transition-colors cursor-pointer"
+      >
+        <span className="text-[10px] font-mono font-extrabold uppercase tracking-wider text-slate-500">
+          Review History ({logs.length})
+        </span>
+        <span className="text-slate-600 text-xs">{open ? "▲" : "▼"}</span>
+      </button>
+      {open && (
+        <div className="px-4 pb-3 space-y-1.5 max-h-48 overflow-y-auto">
+          {logs.length === 0 ? (
+            <div className="text-[10px] text-slate-600 font-mono py-2">No reviews yet.</div>
+          ) : (
+            logs.map((log) => (
+              <div key={log.id} className="flex gap-2 text-[10px] font-mono leading-tight py-1">
+                <span className="mt-0.5 w-1.5 h-1.5 rounded-full bg-cyan-400 shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <div className="text-slate-300 truncate">{log.action}</div>
+                  <div className="text-[9px] text-slate-500">{log.target} • {log.time}</div>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      )}
     </div>
   );
 }

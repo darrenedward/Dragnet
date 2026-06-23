@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Activity, BarChart3, CheckCircle2, Folder, GitBranch, Loader2, Plus, Settings, Sparkles, XCircle } from "lucide-react";
-import type { ActivityLog, LlmPresetsState, PullRequest, Repository } from "../lib/types";
+import type { LlmPresetsState, PullRequest, Repository } from "../lib/types";
 import { getStatusBadgeStyle } from "../lib/types";
 
 interface Props {
@@ -17,7 +17,6 @@ interface Props {
   selectedPrId: string;
   onSelectPr: (prId: string) => void;
   onOpenLlmSettings: () => void;
-  logs: ActivityLog[];
 }
 
 export default function DashboardSidebar({
@@ -32,7 +31,6 @@ export default function DashboardSidebar({
   selectedPrId,
   onSelectPr,
   onOpenLlmSettings,
-  logs,
 }: Props) {
   const [llmPresets, setLlmPresets] = useState<LlmPresetsState | null>(null);
 
@@ -85,8 +83,6 @@ export default function DashboardSidebar({
         />
 
       <LlmRouterPane state={llmPresets} onOpenSettings={onOpenLlmSettings} />
-
-      <LogsPane logs={logs} />
     </aside>
   );
 }
@@ -439,29 +435,4 @@ function LlmRouterPane({
   );
 }
 
-function LogsPane({ logs }: { logs: ActivityLog[] }) {
-  return (
-    <div className="p-4 border-t border-white/5 bg-[#0A0D13]">
-      <div className="text-[10px] uppercase tracking-[0.2em] text-slate-500 mb-3 font-extrabold font-mono">
-        Recent Daemon Logs
-      </div>
-      <div className="space-y-2 max-h-24 overflow-y-auto pr-1">
-        {logs.length === 0 ? (
-          <div className="text-[10px] text-slate-600 font-mono">Waiting for git operations...</div>
-        ) : (
-          logs.map((log) => (
-            <div key={log.id} className="flex gap-2 text-[10px] font-mono leading-tight">
-              <div className="mt-1 w-1.5 h-1.5 rounded-full bg-cyan-400" />
-              <div className="flex-1 min-w-0">
-                <div className="text-slate-200 truncate">{log.action}</div>
-                <div className="text-[9px] text-slate-500">
-                  {log.target} • {log.time}
-                </div>
-              </div>
-            </div>
-          ))
-        )}
-      </div>
-    </div>
-  );
-}
+

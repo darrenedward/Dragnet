@@ -122,7 +122,6 @@ export default function App() {
             if (typeof window !== "undefined" && window.innerWidth < 768) setIsSidebarOpen(false);
           }}
           onOpenLlmSettings={() => setActiveTab("llm_config")}
-          logs={d.logs}
         />
 
         {/* Content Body Viewport */}
@@ -306,6 +305,7 @@ export default function App() {
                   repoIndexedAt={activeRepo?.indexedAt ?? null}
                   repoId={d.selectedRepoId}
                   onIndexComplete={d.handleTriggerReviewPass}
+                  logs={d.logs}
                 />
               )}
             </AnimatePresence>
