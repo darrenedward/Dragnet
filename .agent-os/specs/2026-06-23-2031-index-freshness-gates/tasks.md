@@ -21,9 +21,9 @@ Mark each `- [ ]` as `- [x]` when complete. Per user convention: update this fil
 
 ## Phase 3 — BigInt serialization fix
 
-- [ ] Map `summaryAt` BigInt → string in `/api/repos/[id]/symbols/route.ts`.
-- [ ] Check `/api/repos/[id]/files` route for same issue; fix if affected.
-- [ ] `npm run lint` clean.
+- [x] Map `summaryAt` BigInt → string in `/api/repos/[id]/symbols/route.ts`.
+- [x] Check `/api/repos/[id]/files` route for same issue; fix if affected. (Audited — `/callgraph` already maps to safe shape, `/edges` has no BigInt column, no `/files` route exists.)
+- [x] `npm run lint` clean.
 - [ ] Manual: `curl localhost:3300/api/repos/{id}/symbols` returns 200 array, no BigInt error.
 
 ## Phase 4 — UI in-flight guard
