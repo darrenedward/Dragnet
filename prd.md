@@ -352,7 +352,7 @@ Each category can be toggled per-repo.
 │  ┌──────────────┐    ┌────────────────┐    ┌─────────────────────────┐   │
 │  │ Next.js Web  │    │ Route Handlers │    │ Background Workers      │   │
 │  │ (UI: repos,  │◄──►│ (auth, repos,  │◄──►│ (watcher, indexer,      │   │
-│  │ PRs, reports)│    │ reviews, MCP)  │    │ review runner, ensemble)│   │
+│  │ PRs, reports)│    │ reviews, API)  │    │ review runner, ensemble)│   │
 │  └──────────────┘    └────────┬───────┘    └──────────┬──────────────┘   │
 │                               │                        │                  │
 │                               ▼                        ▼                  │
@@ -440,7 +440,7 @@ For single-model reviews (the current default), one `ReviewPass` is created per 
 - Auto and mention trigger modes; pre-push git hook.
 - Cloud-API and local-Ollama backends, configurable per-repo, chat and embedding roles independent.
 - Web UI for browsing reports with evidence chains and history.
-- MCP API key system for programmatic access (CLI, hooks, integrations).
+- API key system for programmatic access (CLI, hooks, integrations). Bearer-auth keys (`gl_` prefix; legacy `gl_mcp_` keys still authenticate) gate `/api/command`, `/api/prcheck`, `/api/prcomments`, `/api/hooks/prepush`. The `/gloop` Claude Code skill drives the same endpoints via `GREPLOOP_API_KEY`.
 
 **Out of scope for v1:**
 - Multi-LLM ensemble reconciliation UI (schema lands in v1, reconciliation logic + UI is Phase 1.5).

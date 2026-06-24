@@ -1,4 +1,3 @@
-# Opus Findings — GrepLoop
 
 Session review of the GrepLoop workflow (self-hosted Greptile/CodeRabbit
 alternative). Covers one UI fix delivered this session plus a full

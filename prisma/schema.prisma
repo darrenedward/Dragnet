@@ -269,7 +269,7 @@ model Invitation {
   @@map("invitations")
 }
 
-model McpApiKey {
+model ApiKey {
   id        String   @id @default(cuid())
   name      String
   prefix    String
@@ -278,5 +278,5 @@ model McpApiKey {
   lastUsedAt DateTime?
   revoked   Boolean  @default(false)
 
-  @@map("mcp_api_keys")
+  @@map("api_keys")
 }

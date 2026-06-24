@@ -28,12 +28,12 @@ export async function authenticateApiRequest(req: Request): Promise<{ ok: boolea
     return { ok: false, error: "Invalid API key format. Keys start with 'gl_'." };
   }
 
-  const key = await prisma.mcpApiKey.findUnique({ where: { hash } });
+  const key = await prisma.apiKey.findUnique({ where: { hash } });
   if (!key || key.revoked) {
     return { ok: false, error: "API key not found or has been revoked." };
   }
 
-  await prisma.mcpApiKey.update({
+  await prisma.apiKey.update({
     where: { id: key.id },
     data: { lastUsedAt: new Date() },
   });

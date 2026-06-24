@@ -9,7 +9,7 @@ export async function GET(req: Request) {
   } catch {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  const keys = await prisma.mcpApiKey.findMany({
+  const keys = await prisma.apiKey.findMany({
     orderBy: { createdAt: "desc" },
     select: { id: true, name: true, prefix: true, createdAt: true, lastUsedAt: true, revoked: true },
   });
@@ -30,7 +30,7 @@ export async function POST(req: Request) {
 
   const { raw, prefix, hash } = generateApiKey();
 
-  await prisma.mcpApiKey.create({
+  await prisma.apiKey.create({
     data: { name, prefix, hash },
   });
 
