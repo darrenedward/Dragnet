@@ -91,6 +91,7 @@ model ReviewRun {
   reviewFindings   ReviewFinding[]
 
   @@index([prId, status, completedAt])
+  @@index([repoId, status, completedAt])
   @@map("review_runs")
 }
 
@@ -150,6 +151,7 @@ model ReviewFinding {
   reviewRun          ReviewRun?  @relation(fields: [reviewRunId], references: [id], onDelete: Cascade)
 
   @@index([reviewRunId])
+  @@index([prId, reviewRunId])
   @@map("review_findings")
 }
 
@@ -168,6 +170,8 @@ model Symbol {
   summaryAt  BigInt?
   embedding  Unsupported("vector(1536)")?
 
+  @@index([repoId, filePath])
+  @@index([repoId, name])
   @@map("symbols")
 }
 
@@ -181,6 +185,9 @@ model Edge {
   filePath String
   line     Int
 
+  @@index([repoId, toId, kind])
+  @@index([repoId, toId])
+  @@index([repoId, fromId])
   @@map("edges")
 }
 

@@ -1,6 +1,17 @@
 import { getChatClient, getChatModel, getEmbeddingChain } from "../lib/llmClient";
 
 /**
+ * Required embedding dimensionality. Matches the `vector(1536)` column
+ * type on `symbols.embedding` in `prisma/schema.prisma`. Vectors of any
+ * other length are rejected by Postgres on insert with a cryptic error,
+ * so we guard here and skip the write instead.
+ *
+ * If you swap to an embedding model with a different output dim,
+ * update this constant AND the schema column in the same PR.
+ */
+export const EMBEDDING_DIM = 1536;
+
+/**
  * Module-level circuit breaker. Once every provider in the embedding chain
  * has failed in a single session, subsequent calls short-circuit to []
  * without touching the network. Prevents log spam from the indexing service
@@ -78,9 +89,23 @@ ${sourceCode}`;
       try {
         const response = await client.embeddings.create({ model, input: text });
         const vec = response.data?.[0]?.embedding || [];
-        if (vec.length > 0) return vec;
-        // Empty-but-no-throw response is unusual but not fatal — try next.
-        console.warn(`[embedding] provider ${name} returned empty vector, trying next`);
+        if (vec.length === 0) {
+          // Empty-but-no-throw response is unusual but not fatal — try next.
+          console.warn(`[embedding] provider ${name} returned empty vector, trying next`);
+          continue;
+        }
+        if (vec.length !== EMBEDDING_DIM) {
+          // Wrong-shape vector — persisting it would either fail at the
+          // DB cast or, worse, succeed with corrupted similarity scores.
+          // Skip + warn so the summary still lands.
+          console.warn(
+            `[embedding] provider ${name} returned ${vec.length} dimensions, ` +
+              `schema requires ${EMBEDDING_DIM}. Summary saved; semantic search ` +
+              `disabled for this symbol. Swap the model or update EMBEDDING_DIM.`,
+          );
+          return [];
+        }
+        return vec;
       } catch (err: any) {
         console.warn(`[embedding] provider ${name} failed: ${(err?.message || String(err)).slice(0, 120)}`);
         continue;
