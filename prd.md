@@ -331,6 +331,15 @@ Publishing rules:
 ### 14.6 Fallback behavior
 If no LLM is configured, the review returns no findings, `rating: null`, and an actionable `systemWarn` explaining that the chat model is unconfigured or unavailable. BugHunter must never silently fabricate procedural findings in normal operation. Any demo findings must be gated behind an explicit `DEMO_MODE=true` flag and visually labeled as demo output.
 
+### 14.7 Current implementation gap audit
+As of 2026-06-24, the current codebase is aligned with the PRD architecture but not yet compliant with the PRD bar:
+
+- `IndexingService` still uses custom pattern matching for symbol/call extraction. Replace it with tree-sitter before claiming v1 indexing quality.
+- `searchCodebase` currently performs name/substring lookup; semantic search exists separately as `findSimilar`. The tool contract should match the PRD: semantic search over embedded summaries.
+- Edge kind casing must be normalized between index writes and review reads (`call` vs `CALLS`) so caller/callee retrieval actually works.
+- Candidate findings are persisted after enum clamping but before evidence validation or counter-evidence verification. Add the verifier before rendering blockers.
+- `ReviewPass` and ensemble reconciliation are not in the current schema yet; single-model review remains the v1 default, but the schema hook should land before Phase 1.5.
+
 ---
 
 ## 15. Evidence Chains & Report Format

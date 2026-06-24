@@ -67,6 +67,16 @@ A 774-line `App.tsx` makes every Phase 1 edit painful. The Woodhill strings will
 
 This is the longest phase. It has three sub-tracks that come together at the end:
 
+### Current gap audit (2026-06-24)
+
+The repo has the right broad architecture, but the next implementation pass should treat these as adoption blockers for the PRD:
+
+- Current indexing is pattern/regex based, not tree-sitter based.
+- `getCallers` and indexed edge rows disagree on edge kind casing (`CALLS` vs `call`).
+- `searchCodebase` is substring lookup, while the PRD defines it as semantic search over embedded summaries.
+- Findings are persisted without a verifier that validates evidence lines or retrieves counter-evidence.
+- `ReviewPass`/ensemble schema is still absent; keep single-model as v1 behavior, but leave the schema migration path clean.
+
 ### Track 1A: Codebase indexing (the Greptile-tier wedge)
 
 This is what separates real review quality from diff-only reviewers per PRD Section 1.

@@ -186,3 +186,52 @@ handlers via `requireSession()`. A `matcher` config scoping `/api/:path*`
   its closing `}` (`…\"sha\":\"$local_sha\""`), so the prepush request body
   was malformed and the route fell back to `{}` → 400. Fixed — added the
   closing brace so the hook can actually post a valid body.
+
+---
+
+## 6. PRD alignment update — tree-sitter and false-positive controls
+
+Follow-up review of the current codebase against `prd.md` found that the
+architecture is directionally aligned but still below the PRD bar in two
+important places:
+
+1. **Indexer precision:** the PRD requires real tree-sitter parsing for the
+   Greptile-tier wedge. The current `IndexingService` still describes and
+   implements custom pattern matching/regex-style extraction. That is useful
+   scaffolding, but it is not precise enough for stable AST ranges, repeatable
+   symbol identity, import/call-site structure, or evidence validation.
+2. **Finding verification:** the review loop produces findings and persists
+   them after enum clamping, but it does not yet run a counter-evidence pass
+   that tries to disprove each claim. This is why findings can be overstated:
+   for example, "route has no auth" is materially different from "route has no
+   handler-level auth, but `proxy.ts` partially gates it."
+
+Docs updated:
+
+- `prd.md` now makes real tree-sitter parsing non-negotiable for v1 and marks
+  regex parsing as scaffolding only.
+- `prd.md` now specifies a counter-evidence verification stage before findings
+  are persisted or rendered as blockers.
+- `roadmap.md` now includes explicit Track 1A tasks for tree-sitter replacement,
+  stable AST identity, normalized edge kinds, import/export edges, and indexer
+  fixture tests.
+- `roadmap.md` now includes Track 1B tasks for `findingVerifier.ts`,
+  counter-evidence retrieval, downgrade/discard rules, and wording guardrails.
+
+Adopted verification rule:
+
+> The review model produces candidate findings. BugHunter only publishes a
+> final finding after local counter-evidence has been gathered and the finding
+> has been classified as `confirmed`, `likely`, `partially_mitigated`,
+> `needs_verification`, or `false_positive`.
+
+Publishing guardrails:
+
+- `false_positive` findings are discarded.
+- `needs_verification` findings cannot be blockers.
+- `partially_mitigated` findings must describe the mitigation and cannot use
+  absolute wording.
+- Blockers require a full entrypoint-to-impact chain plus counter-evidence
+  checked.
+- Findings with invalid file paths, nonexistent lines, or empty evidence chains
+  are discarded before persistence.
