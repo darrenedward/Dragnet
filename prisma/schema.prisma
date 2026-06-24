@@ -73,6 +73,27 @@ model ReviewHistory {
   @@map("review_history")
 }
 
+model ReviewRun {
+  id               String         @id
+  prId             String
+  repoId           String
+  commitHash       String
+  diffHash         String
+  reviewConfigHash String
+  status           String         // "in_progress" | "completed" | "failed"
+  startedAt        DateTime
+  completedAt      DateTime?
+  model            String?
+  rating           Int?
+  triggerReason    String?        // "manual" | "prepush" | "prcheck" | "webhook" | "legacy"
+  forced           Boolean        @default(false)
+  pullRequest      PullRequest    @relation(fields: [prId], references: [id], onDelete: Cascade)
+  reviewFindings   ReviewFinding[]
+
+  @@index([prId, status, completedAt])
+  @@map("review_runs")
+}
+
 model PullRequest {
   id             String           @id
   repoId         String
@@ -88,6 +109,7 @@ model PullRequest {
   repository     Repository       @relation(fields: [repoId], references: [id], onDelete: Cascade)
   prFiles        PrFile[]
   reviewFindings ReviewFinding[]
+  reviewRuns     ReviewRun[]
 
   @@map("pull_requests")
 }
@@ -109,20 +131,25 @@ model PrFile {
 }
 
 model ReviewFinding {
-  id             String      @id
-  prId           String
-  repoId         String
-  category       String
-  severity       String
-  filename       String
-  line           Int?
-  explanation    String
-  diffSuggestion String?
-  evidenceChain  String?
-  confidence     Float?
-  timestamp      String
-  pullRequest    PullRequest @relation(fields: [prId], references: [id], onDelete: Cascade)
+  id                 String      @id
+  prId               String
+  reviewRunId        String?
+  repoId             String
+  category           String
+  severity           String
+  filename           String
+  line               Int?
+  explanation        String
+  diffSuggestion     String?
+  evidenceChain      String?
+  confidence         Float?
+  verificationStatus String?
+  verificationNote   String?
+  timestamp          String
+  pullRequest        PullRequest @relation(fields: [prId], references: [id], onDelete: Cascade)
+  reviewRun          ReviewRun?  @relation(fields: [reviewRunId], references: [id], onDelete: Cascade)
 
+  @@index([reviewRunId])
   @@map("review_findings")
 }
 
