@@ -3,6 +3,8 @@ import path from "node:path";
 import { prisma } from "./src/lib/prisma";
 import { getChatChain } from "./src/lib/llmClient";
 import { randomUUID } from "node:crypto";
+import { verifyFindings, type CandidateFinding } from "./src/services/findingVerifier";
+import { completeReviewRun } from "./src/lib/reviewFreshness";
 
 export interface ScanResult {
   success: boolean;
@@ -226,7 +228,7 @@ Do not sugarcoat. Do not soften the blow. If the code is bad, say so. If it's cl
  * findings + a null rating and surfaces the reason via systemWarn — it never
  * fabricates templated findings.
  */
-export async function runPrScan(prId: string, preloadedFiles?: any[]): Promise<ScanResult> {
+export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunId?: string): Promise<ScanResult> {
   console.log(`[scan] runPrScan: starting for prId=${prId}, preloadedFiles=${preloadedFiles?.length}`);
   // 1. Fetch Pull Request details
   const pr = await prisma.pullRequest.findUnique({ where: { id: prId } });
@@ -535,23 +537,56 @@ ${diffPayload}`;
   console.log(`[scan] runPrScan: persisting ${findings.length} findings`);
   await prisma.reviewFinding.deleteMany({ where: { prId } });
 
-  const findingsData = findings.map(finding => ({
-    id: randomUUID(),
-    prId: prId,
-    repoId: pr.repoId,
+  // 6a. Run the verifier BEFORE persistence so verification status is
+  // stored on each row. Assign candidate IDs up front so the verifier
+  // result map can be keyed by ID and looked up during the row build.
+  const withIds = findings.map(finding => ({ finding, id: randomUUID() }));
+  const candidates: CandidateFinding[] = withIds.map(({ finding, id }) => ({
+    id,
     category: finding.category || "Style",
     severity: finding.severity || "suggestion",
     filename: finding.filename || files[0].filename,
-    line: finding.line || 1,
-    explanation: finding.explanation || "No explanation provided.",
-    diffSuggestion: finding.diffSuggestion || null,
-    evidenceChain: finding.evidenceChain ? JSON.stringify(finding.evidenceChain) : null,
-    confidence: finding.confidence != null ? finding.confidence : null,
-    timestamp: new Date().toISOString(),
+    line: finding.line || null,
+    explanation: finding.explanation || "",
   }));
-  
+  const verification = repo?.path
+    ? await verifyFindings(candidates, repo.path, prId)
+    : new Map();
+  const rejectedCount = Array.from(verification.values()).filter(v => v.status === "rejected").length;
+  if (rejectedCount > 0) {
+    console.log(`[scan] runPrScan: verifier rejected ${rejectedCount}/${candidates.length} finding(s)`);
+  }
+
+  const findingsData = withIds.map(({ finding, id }) => {
+    const v = verification.get(id);
+    return {
+      id,
+      prId: prId,
+      reviewRunId: reviewRunId ?? null,
+      repoId: pr.repoId,
+      category: finding.category || "Style",
+      severity: finding.severity || "suggestion",
+      filename: finding.filename || files[0].filename,
+      line: finding.line || 1,
+      explanation: finding.explanation || "No explanation provided.",
+      diffSuggestion: finding.diffSuggestion || null,
+      evidenceChain: finding.evidenceChain ? JSON.stringify(finding.evidenceChain) : null,
+      confidence: finding.confidence != null ? finding.confidence : null,
+      verificationStatus: v?.status ?? null,
+      verificationNote: v?.note ?? null,
+      timestamp: new Date().toISOString(),
+    };
+  });
+
   if (findingsData.length > 0) {
     await prisma.reviewFinding.createMany({ data: findingsData });
+  }
+
+  // 6b. Mark the ReviewRun complete with the final rating. Best-effort —
+  // completeReviewRun swallows errors so a status-write failure never
+  // masks the actual scan result.
+  if (reviewRunId) {
+    void completeReviewRun(reviewRunId, { status: "completed", rating });
   }
 
   // 7. Update PR rating + status
@@ -589,6 +624,9 @@ ${diffPayload}`;
   } catch (err: any) {
     console.error(`[scan] runPrScan: fatal error`, err);
     await prisma.pullRequest.updateMany({ where: { id: prId }, data: { status: "Failed" } });
+    if (reviewRunId) {
+      void completeReviewRun(reviewRunId, { status: "failed" });
+    }
     throw err;
   }
 }
