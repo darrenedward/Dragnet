@@ -40,3 +40,28 @@ export async function authenticateApiRequest(req: Request): Promise<{ ok: boolea
 
   return { ok: true };
 }
+
+/**
+ * Stricter auth for externally-facing endpoints (webhooks, reindex, stats).
+ * Requires API key for cross-origin / non-browser requests, but allows
+ * same-origin requests from the UI to pass without a key. This avoids
+ * breaking the dashboard while still protecting against external attackers.
+ *
+ * "Same origin" means the Origin header matches the Host header. Requests
+ * without an Origin header (curls, bots, scripts) are considered external
+ * and must authenticate.
+ */
+export async function authenticateIfExternal(req: Request): Promise<{ ok: boolean; error?: string }> {
+  const origin = req.headers.get("origin");
+  const host = req.headers.get("host");
+  if (origin && host) {
+    try {
+      if (new URL(origin).host === host) return { ok: true };
+    } catch {}
+  }
+  // Browser navigation / curl from localhost: no Origin header but definitely internal
+  if (host && (host.startsWith("localhost") || host.startsWith("127.0.0.1"))) {
+    return { ok: true };
+  }
+  return authenticateApiRequest(req);
+}

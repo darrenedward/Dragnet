@@ -1,10 +1,13 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/src/lib/prisma";
+import { authenticateIfExternal } from "@/src/lib/apiAuth";
 import { IndexingService } from "@/src/services/indexingService";
 
 export const runtime = "nodejs";
 
-export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const auth = await authenticateIfExternal(req);
+  if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: 401 });
   try {
     const { id } = await params;
     const repo = await prisma.repository.findUnique({ where: { id } });

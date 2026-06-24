@@ -28,10 +28,11 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "No matching repository found" }, { status: 404 });
   }
 
-  if (matched.webhookSecret) {
-    if (!verifyGithubSignature(rawBody, signature, matched.webhookSecret)) {
-      return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
-    }
+  if (!matched.webhookSecret) {
+    return NextResponse.json({ error: "Webhook secret not configured for this repository" }, { status: 401 });
+  }
+  if (!verifyGithubSignature(rawBody, signature, matched.webhookSecret)) {
+    return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
   }
 
   if (event === "pull_request" && payload.action) {

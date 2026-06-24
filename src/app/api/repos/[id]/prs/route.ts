@@ -25,14 +25,14 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       return NextResponse.json({ error: "Repository not found" }, { status: 404 });
     }
 
-    if (!refreshPromises.has(id)) {
+    // Fire-and-forget: return current DB state immediately, refresh in background.
+    if (repo.path && !refreshPromises.has(id)) {
       refreshPromises.set(id,
         getRealLocalPrs(repo.path, id)
           .catch((err) => console.warn(`Background PR refresh failed for ${id}:`, err))
           .finally(() => refreshPromises.delete(id))
       );
     }
-    await refreshPromises.get(id)!;
 
     const prs = await prisma.pullRequest.findMany({
       where: { repoId: id },
@@ -57,7 +57,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       return NextResponse.json({ error: "Repository not found" }, { status: 404 });
     }
 
-    await getRealLocalPrs(repo.path, id);
+    if (repo.path) await getRealLocalPrs(repo.path, id);
 
     const prs = await prisma.pullRequest.findMany({
       where: { repoId: id },

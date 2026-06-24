@@ -33,10 +33,11 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "No matching repository found" }, { status: 404 });
   }
 
-  if (matched.webhookSecret) {
-    if (!verifyGitlabToken(token, matched.webhookSecret)) {
-      return NextResponse.json({ error: "Invalid token" }, { status: 401 });
-    }
+  if (!matched.webhookSecret) {
+    return NextResponse.json({ error: "Webhook secret not configured for this repository" }, { status: 401 });
+  }
+  if (!verifyGitlabToken(token, matched.webhookSecret)) {
+    return NextResponse.json({ error: "Invalid token" }, { status: 401 });
   }
 
   if (event === "Merge Request Hook") {

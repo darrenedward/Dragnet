@@ -89,10 +89,15 @@ function interpolatePat(cloneUrl: string, pat?: string): string {
   if (!pat) return cloneUrl;
   try {
     const u = new URL(cloneUrl);
+    if (u.protocol !== "https:") {
+      console.warn(`[gitRemote] PAT only works with HTTPS URLs, got protocol "${u.protocol}" for "${cloneUrl}" — PAT ignored`);
+      return cloneUrl;
+    }
     u.username = "x-access-token";
     u.password = pat;
     return u.toString();
   } catch {
+    console.warn(`[gitRemote] Failed to parse cloneUrl for PAT injection — "${cloneUrl}" is not a valid URL (SSH?); PAT ignored`);
     return cloneUrl;
   }
 }

@@ -1,11 +1,15 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/src/lib/prisma";
+import { authenticateIfExternal } from "@/src/lib/apiAuth";
 import { setupWebhookWithPat, deleteWebhook, getManualWebhookInstructions } from "@/src/lib/webhookSetup";
 
 export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const auth = await authenticateIfExternal(req);
+  if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: 401 });
+
   try {
     const { id } = await params;
     const repo = await prisma.repository.findUnique({ where: { id } });
@@ -39,9 +43,12 @@ export async function POST(
 }
 
 export async function GET(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const auth = await authenticateIfExternal(req);
+  if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: 401 });
+
   try {
     const { id } = await params;
     const repo = await prisma.repository.findUnique({ where: { id } });
@@ -59,9 +66,12 @@ export async function GET(
 }
 
 export async function DELETE(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const auth = await authenticateIfExternal(req);
+  if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: 401 });
+
   try {
     const { id } = await params;
     await deleteWebhook(id);
