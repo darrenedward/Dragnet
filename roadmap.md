@@ -81,8 +81,8 @@ The repo has the right broad architecture, but the next implementation pass shou
 
 This is what separates real review quality from diff-only reviewers per PRD Section 1.
 
-- [ ] **Replace regex/pattern indexing with real tree-sitter** — TypeScript/JavaScript first (eat our own dog food — GrepLoop itself is TS). Grammar: `tree-sitter-typescript`. Regex extraction is scaffolding only and does not satisfy the PRD.
-- [ ] **Stable AST node identity** — symbol IDs derived from repo, file, node kind, name, and line range so re-indexing is repeatable enough for evidence chains.
+- [x] **Replace regex/pattern indexing with real tree-sitter** — TypeScript/JavaScript first (eat our own dog food — GrepLoop itself is TS). Grammar: `tree-sitter-typescript`. Regex extraction is scaffolding only and does not satisfy the PRD. **Done 2026-06-24** — see `.agent-os/specs/2026-06-24-1645-tree-sitter-indexer-ts-js/`.
+- [x] **Stable AST node identity** — symbol IDs derived from repo, file, node kind, name, and line range so re-indexing is repeatable enough for evidence chains.
 - [ ] **Symbol extraction** — functions, classes, methods, exports. Schema: `Symbol` table with `{ repoId, filePath, name, kind, startLine, endLine, signature }`
 - [ ] **Call graph edges** — `caller → callee` per symbol. Schema: `Edge` table with `{ repoId, fromId, toId, toRaw, kind, filePath, line }`. Normalize edge kinds (`CALLS` vs `call`) so review tools and index rows agree.
 - [ ] **Import/export graph** — extract `IMPORTS`, `DEFINES`, `EXTENDS`, and unresolved edges where tree-sitter can identify structure but not targets.

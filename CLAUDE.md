@@ -50,6 +50,21 @@ See `prd.md` for the full product spec.
   Source of truth is `src/lib/llmPresets.ts`. The old `.env.local` LLM_*
   vars auto-migrate into one preset on first read; new code reads from the
   presets file, not env vars.
+- The tree-sitter parser + per-extension `Language` are **lazy singletons**
+  at `src/lib/treeSitter.ts` with a `globalThis.__treeSitterCache` guard
+  (mirrors `prisma.ts` and `llmClient.ts`). Always go through `getParser()`
+  / `getLanguage(ext)` / `isSupportedFilePath(filePath)`. v1 ships grammars
+  for `.ts`, `.tsx`, `.js`, `.jsx` only — other extensions log a
+  `[indexing] skipping <file>: no grammar yet` warning and contribute zero
+  symbols. Never call `Parser.init()` or `Language.load()` at module load
+  (breaks `next build`). `.wasm` files are copied from `node_modules/` into
+  `public/grammars/` by `scripts/copy-grammars.mjs` on `postinstall`.
+- Indexing lives in `src/services/indexing/` — split per the 500-line rule:
+  `tsParser.ts` (tree-sitter extraction), `graphBuilder.ts` (rawCalls →
+  edges), `incrementalUpdater.ts` (file-hash diff), `indexOrchestrator.ts`
+  (`IndexingService` class + background enrichment), `types.ts`, and
+  `index.ts` (barrel). The legacy `src/services/indexingService.ts` is now
+  a one-line re-export shim for back-compat.
 
 ## Scripts
 
@@ -121,3 +136,15 @@ only — never real credentials. `.greploop/` is also gitignored — it holds
 **Cause:** the model ran but never produced a `submitReview` tool call. Usually means the model doesn't support function calling, or the model is too small to follow the agentic loop. Tail `/tmp/greploop-dev.log` for `[review] iteration N/8` + `[review] tool …` + `[review] loop exited without submitReview` lines to confirm.
 
 **Fix:** switch to a model that supports function calling (most OpenRouter chat models do; some local Ollama models don't).
+
+**Symptom:** Indexing completes but `Symbol` / `Edge` rows are empty, and `/tmp/greploop-dev.log` shows `[indexing] skipping <file>: no grammar yet (v1 supports .ts/.tsx/.js/.jsx)` for every file.
+
+**Cause:** `npm install` ran without the `postinstall` hook (or the hook failed silently), so `public/grammars/*.wasm` is missing. `treeSitter.ts` falls back to `node_modules/tree-sitter-typescript/` but in some bundler/CWD configurations that path isn't reachable at parse time.
+
+**Fix:** run `npm run postinstall` (or `npm run copy-grammars`) and confirm `ls public/grammars/*.wasm` shows `tree-sitter-typescript.wasm` + `tree-sitter-tsx.wasm` + `tree-sitter-javascript.wasm` + `tree-sitter-jsx.wasm`. Restart the dev server.
+
+**Symptom:** Indexing completes for `.ts`/`.tsx` files but skips `.py`, `.go`, `.rs`, etc. with the `no grammar yet` warning.
+
+**Cause:** v1 only ships TS/JS grammars. Other languages are intentionally logged-and-skipped (honest partial indexing, not a regex fallback that would produce wrong line ranges).
+
+**Fix:** nothing to fix — this is expected. Follow-on specs add per-language grammars (`tree-sitter-python`, `tree-sitter-go`, etc.). The pattern is documented in `.agent-os/specs/2026-06-24-1645-tree-sitter-indexer-ts-js/plan.md`.

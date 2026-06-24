@@ -10,6 +10,7 @@ Self-hosted, multi-tenant code review platform. The Greptile-tier review quality
 
 - Watches one or more local git repositories
 - Indexes the whole codebase (tree-sitter → call graph → summaries → vector embeddings)
+  - **v1:** TypeScript / JavaScript (`.ts`, `.tsx`, `.js`, `.jsx`) via `tree-sitter-typescript`. Other languages are walked but contribute zero symbols until their grammar spec lands — honest partial indexing, not a regex fallback. Adding Python/Go/Ruby/etc. is a small additive spec per language (pattern proven by the TS/JS spec).
 - On PR scan, retrieves codebase context beyond the diff and runs an LLM-driven agentic review
 - Produces structured findings backed by evidence chains (every finding cites real code)
 - Runs entirely inside your infrastructure — source code never leaves your network

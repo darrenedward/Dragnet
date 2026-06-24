@@ -75,18 +75,18 @@ Mark each `- [ ]` as `- [x]` when complete. Per user convention: update this fil
 
 ## Phase 8 — Docs + final verification
 
-- [ ] Add `CLAUDE.md` conventions entry for `treeSitter.ts` singleton (mirror the `llmClient.ts` paragraph).
-- [ ] Add `CLAUDE.md` Troubleshooting: "If indexing skips all files with 'no grammar yet' — `npm run postinstall` didn't copy `.wasm`. Check `public/grammars/`."
-- [ ] Update `README.md` to mention TS/JS support (drop any stale "all languages" claim).
-- [ ] Update `prd.md:337` gap audit — mark tree-sitter item resolved.
-- [ ] Update `roadmap.md:84` Track 1A task #1 — mark `[x]`.
-- [ ] Mark all items in this `tasks.md` complete.
+- [x] Add `CLAUDE.md` conventions entry for `treeSitter.ts` singleton (mirror the `llmClient.ts` paragraph).
+- [x] Add `CLAUDE.md` Troubleshooting: "If indexing skips all files with 'no grammar yet' — `npm run postinstall` didn't copy `.wasm`. Check `public/grammars/`."
+- [x] Update `README.md` to mention TS/JS support (drop any stale "all languages" claim).
+- [x] Update `prd.md:337` gap audit — mark tree-sitter item resolved.
+- [x] Update `roadmap.md:84` Track 1A task #1 — mark `[x]`.
+- [x] Mark all items in this `tasks.md` complete.
 
 ## Final verification
 
-- [ ] `npm run lint` clean (tsc --noEmit).
-- [ ] `npm test` — all tests pass.
-- [ ] `npm run build` — production build succeeds.
+- [x] `npm run lint` clean (tsc --noEmit).
+- [x] `npm test` — all tests pass (55/55 across 6 files).
+- [x] `npm run build` — production build succeeds.
 - [ ] Manual: start dev server, register GrepLoop's own repo, trigger indexing. Confirm `Symbol` rows have correct line ranges + `Edge` rows have `kind = "CALLS"`.
 - [ ] Manual: trigger PR scan on a TS-only branch. Findings cite real line numbers.
-- [ ] Commit each phase individually per the user's `git add .` convention.
+- [x] Commit each phase individually per the user's `git add .` convention.

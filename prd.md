@@ -334,7 +334,7 @@ If no LLM is configured, the review returns no findings, `rating: null`, and an 
 ### 14.7 Current implementation gap audit
 As of 2026-06-24, the current codebase is aligned with the PRD architecture but not yet compliant with the PRD bar:
 
-- `IndexingService` still uses custom pattern matching for symbol/call extraction. Replace it with tree-sitter before claiming v1 indexing quality.
+- ~~`IndexingService` still uses custom pattern matching for symbol/call extraction. Replace it with tree-sitter before claiming v1 indexing quality.~~ **Resolved 2026-06-24** — `IndexingService` now uses `tree-sitter` via `src/services/indexing/tsParser.ts` for `.ts/.tsx/.js/.jsx`. Regex parser deleted. Other languages remain pending their own grammar specs (see `.agent-os/specs/2026-06-24-1645-tree-sitter-indexer-ts-js/`).
 - `searchCodebase` currently performs name/substring lookup; semantic search exists separately as `findSimilar`. The tool contract should match the PRD: semantic search over embedded summaries.
 - Edge kind casing must be normalized between index writes and review reads (`call` vs `CALLS`) so caller/callee retrieval actually works.
 - Candidate findings are persisted after enum clamping but before evidence validation or counter-evidence verification. Add the verifier before rendering blockers.
