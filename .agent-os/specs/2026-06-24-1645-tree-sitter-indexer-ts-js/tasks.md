@@ -8,70 +8,70 @@ Mark each `- [ ]` as `- [x]` when complete. Per user convention: update this fil
 
 ## Phase 2 — Install deps + grammar packaging
 
-- [ ] `npm install web-tree-sitter tree-sitter-typescript`.
-- [ ] Add `"postinstall": "node scripts/copy-grammars.mjs"` to `package.json`.
-- [ ] Create `scripts/copy-grammars.mjs` that copies all `.wasm` files from `node_modules/tree-sitter-typescript/` into `public/grammars/`.
-- [ ] Add `public/grammars/` to `.gitignore`.
-- [ ] Run `npm run postinstall` manually; verify `ls public/grammars/*.wasm` shows TS + TSX (and JS + JSX if shipped).
-- [ ] `npm run lint` clean.
+- [x] `npm install web-tree-sitter tree-sitter-typescript`.
+- [x] Add `"postinstall": "node scripts/copy-grammars.mjs"` to `package.json`.
+- [x] Create `scripts/copy-grammars.mjs` that copies all `.wasm` files from `node_modules/tree-sitter-typescript/` into `public/grammars/`.
+- [x] Add `public/grammars/` to `.gitignore`.
+- [x] Run `npm run postinstall` manually; verify `ls public/grammars/*.wasm` shows TS + TSX (and JS + JSX if shipped).
+- [x] `npm run lint` clean.
 
 ## Phase 3 — `treeSitter.ts` lazy singleton
 
-- [ ] Create `src/lib/treeSitter.ts` exporting `getParser()`, `getLanguage(ext)`, `getLanguageByFilePath(filePath)`.
-- [ ] Mirror `globalThis.__treeSitterCache` guard from `llmClient.ts`.
-- [ ] Never call `Parser.init()` or `Language.load()` at module load.
-- [ ] Confirm `npm run build` doesn't break (catches WASM-at-build-time issues).
-- [ ] `npm run lint` clean.
+- [x] Create `src/lib/treeSitter.ts` exporting `getParser()`, `getLanguage(ext)`, `getLanguageByFilePath(filePath)`.
+- [x] Mirror `globalThis.__treeSitterCache` guard from `llmClient.ts`.
+- [x] Never call `Parser.init()` or `Language.load()` at module load.
+- [x] Confirm `npm run build` doesn't break (catches WASM-at-build-time issues).
+- [x] `npm run lint` clean.
 
 ## Phase 4 — Split `indexingService.ts` into `indexing/` directory
 
-- [ ] Create `src/services/indexing/types.ts` (SymbolNode, EdgeNode, ParsedFile interfaces).
-- [ ] Create `src/services/indexing/legacyRegexParser.ts` (temporary copy of `parseFileSymbols` + `findBlockEnd` for parity tests).
-- [ ] Create `src/services/indexing/graphBuilder.ts` (edge resolution from raw calls — logic from `:539-567`).
-- [ ] Create `src/services/indexing/incrementalUpdater.ts` (file diff logic from `:421-481`).
-- [ ] Create `src/services/indexing/indexOrchestrator.ts` (`IndexingService` class: `indexFolder`, `runIndex`, `isIndexing`, re-entrancy lock).
-- [ ] Create `src/services/indexing/index.ts` barrel re-exporting `IndexingService` (back-compat for callers).
-- [ ] Update callers if any import path changes (`grep -rn "indexingService" src/`).
-- [ ] Verify each file under 500 lines (`wc -l src/services/indexing/*.ts`).
-- [ ] Delete old `src/services/indexingService.ts`.
-- [ ] `npm run lint` clean.
-- [ ] `npm test` — existing tests still pass.
+- [x] Create `src/services/indexing/types.ts` (SymbolNode, EdgeNode, ParsedFile interfaces).
+- [x] Create `src/services/indexing/legacyRegexParser.ts` (temporary copy of `parseFileSymbols` + `findBlockEnd` for parity tests).
+- [x] Create `src/services/indexing/graphBuilder.ts` (edge resolution from raw calls — logic from `:539-567`).
+- [x] Create `src/services/indexing/incrementalUpdater.ts` (file diff logic from `:421-481`).
+- [x] Create `src/services/indexing/indexOrchestrator.ts` (`IndexingService` class: `indexFolder`, `runIndex`, `isIndexing`, re-entrancy lock).
+- [x] Create `src/services/indexing/index.ts` barrel re-exporting `IndexingService` (back-compat for callers).
+- [x] Update callers if any import path changes (`grep -rn "indexingService" src/`).
+- [x] Verify each file under 500 lines (`wc -l src/services/indexing/*.ts`).
+- [x] Delete old `src/services/indexingService.ts`.
+- [x] `npm run lint` clean.
+- [x] `npm test` — existing tests still pass.
 
 ## Phase 5 — Tree-sitter TS/JS parser
 
-- [ ] Create `src/services/indexing/tsParser.ts` with `parseFileSymbols(repoId, filePath, content)` matching the existing return shape.
-- [ ] Use tree-sitter query DSL for symbol extraction (functions, arrow consts, classes, methods).
-- [ ] Use tree-sitter query DSL for call-site extraction (`call_expression`).
-- [ ] Symbol ID = `hash(repoId + filePath + kind + name + lineStart)`.
-- [ ] Edge kind normalized to `CALLS` everywhere.
-- [ ] JSX/TSX dispatched to `tree-sitter-tsx.wasm` grammar.
-- [ ] Audit `reviewService.ts` and all other edge-kind readers; normalize to `CALLS` in the same commit.
-- [ ] Anonymous/default exports get synthetic names (`default`, `anonymous-${lineStart}`).
-- [ ] `npm run lint` clean.
+- [x] Create `src/services/indexing/tsParser.ts` with `parseFileSymbols(repoId, filePath, content)` matching the existing return shape.
+- [x] Use tree-sitter query DSL for symbol extraction (functions, arrow consts, classes, methods).
+- [x] Use tree-sitter query DSL for call-site extraction (`call_expression`).
+- [x] Symbol ID = `hash(repoId + filePath + kind + name + lineStart)`.
+- [x] Edge kind normalized to `CALLS` everywhere.
+- [x] JSX/TSX dispatched to `tree-sitter-tsx.wasm` grammar.
+- [x] Audit `reviewService.ts` and all other edge-kind readers; normalize to `CALLS` in the same commit.
+- [x] Anonymous/default exports get synthetic names (`default`, `anonymous-${lineStart}`).
+- [x] `npm run lint` clean.
 
 ## Phase 6 — Parity tests
 
-- [ ] Create `tests/indexing/` directory.
-- [ ] Create fixtures: `tests/indexing/fixtures/{functions,classes,methods,jsx,imports,nested,calls}.{ts,tsx,js,jsx}`.
-- [ ] Create `tests/indexing/parity.test.ts`:
-  - [ ] Symbol count per fixture matches expected.
-  - [ ] Each symbol's `(lineStart, lineEnd)` correct (manual verification).
-  - [ ] Symbol IDs stable across two parses of identical input.
-  - [ ] Tree-sitter parser agrees with legacy regex parser on named functions/classes (regression guard).
-- [ ] Cover edge cases that broke the regex: template literals with `{`, JSX, comments containing `function`.
-- [ ] `npm test` — all parity tests pass + existing tests still pass.
+- [x] Create `tests/indexing/` directory.
+- [x] Create fixtures: `tests/indexing/fixtures/{functions,classes,methods,jsx,imports,nested,calls}.{ts,tsx,js,jsx}`.
+- [x] Create `tests/indexing/parity.test.ts`:
+  - [x] Symbol count per fixture matches expected.
+  - [x] Each symbol's `(lineStart, lineEnd)` correct (manual verification).
+  - [x] Symbol IDs stable across two parses of identical input.
+  - [x] Tree-sitter parser agrees with legacy regex parser on named functions/classes (regression guard).
+- [x] Cover edge cases that broke the regex: template literals with `{`, JSX, comments containing `function`.
+- [x] `npm test` — all parity tests pass + existing tests still pass.
 
 ## Phase 7 — Wire new parser + delete regex code
 
-- [ ] Replace `parseFileSymbols` call in `indexOrchestrator.ts` with `tsParser.ts` import.
-- [ ] Add extension gate: `.ts/.tsx/.js/.jsx` → tree-sitter; others → `[indexing] skipping {file}: no grammar yet` + contribute zero symbols.
-- [ ] Delete `src/services/indexing/legacyRegexParser.ts`.
-- [ ] Delete `findBlockEnd` if still present anywhere.
-- [ ] Delete the regex patterns (now dead code in legacy file).
-- [ ] Update class header comment (no longer "custom pattern-matching lexer").
-- [ ] `npm run lint` clean.
-- [ ] `npm test` — all tests pass.
-- [ ] `npm run build` — production build succeeds.
+- [x] Replace `parseFileSymbols` call in `indexOrchestrator.ts` with `tsParser.ts` import.
+- [x] Add extension gate: `.ts/.tsx/.js/.jsx` → tree-sitter; others → `[indexing] skipping {file}: no grammar yet` + contribute zero symbols.
+- [x] Delete `src/services/indexing/legacyRegexParser.ts`.
+- [x] Delete `findBlockEnd` if still present anywhere.
+- [x] Delete the regex patterns (now dead code in legacy file).
+- [x] Update class header comment (no longer "custom pattern-matching lexer").
+- [x] `npm run lint` clean.
+- [x] `npm test` — all tests pass.
+- [x] `npm run build` — production build succeeds (1 pre-existing NFT warning from next.config.ts, unrelated).
 
 ## Phase 8 — Docs + final verification
 
