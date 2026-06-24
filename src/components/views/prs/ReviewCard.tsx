@@ -1,8 +1,18 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import { CheckCircle2, Copy, Network, ShieldAlert } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Copy, Network, ShieldAlert } from "lucide-react";
 import type { PullRequest, ReviewFinding } from "../../../lib/types";
+
+export interface ReviewRunMeta {
+  id: string;
+  commitHash: string;
+  diffHash: string;
+  completedAt: string | null;
+  rating: number | null;
+  model: string | null;
+  triggerReason: string | null;
+}
 
 const severityOrder = ["blocker", "warning", "suggestion"] as const;
 
@@ -30,6 +40,9 @@ const severityConfig = {
 interface Props {
   activePR: PullRequest | undefined;
   findings: ReviewFinding[];
+  reviewRun?: ReviewRunMeta | null;
+  rejectedCount?: number;
+  stale?: boolean;
   onCopySuggestion: (text: string, id: string) => void;
   copyFeedback: string | null;
 }
@@ -96,8 +109,9 @@ function parseEvidence(chain: ReviewFinding["evidenceChain"]): Array<{ file: str
   }
 }
 
-export default function ReviewCard({ activePR, findings, onCopySuggestion, copyFeedback }: Props) {
+export default function ReviewCard({ activePR, findings, reviewRun, rejectedCount, stale, onCopySuggestion, copyFeedback }: Props) {
   const [copiedAll, setCopiedAll] = useState(false);
+  const [showRejected, setShowRejected] = useState(false);
   const handleCopyAll = useCallback(() => {
     const text = formatFindings(activePR, findings);
     try {
@@ -125,6 +139,28 @@ export default function ReviewCard({ activePR, findings, onCopySuggestion, copyF
           <span className="text-xs uppercase font-mono tracking-wider font-extrabold text-slate-400">
             AI Core Code Audit Findings ({findings.length})
           </span>
+          {reviewRun && (
+            <span className="ml-2 text-[10px] font-mono text-slate-500 flex items-center gap-1.5">
+              <span className="text-slate-400">Reviewed:</span>
+              <code className="text-cyan-400 bg-cyan-400/5 px-1.5 py-0.5 rounded">
+                {reviewRun.commitHash.slice(0, 7)}
+              </code>
+              {reviewRun.completedAt && (
+                <span className="text-slate-600">
+                  {formatRelativeTime(reviewRun.completedAt)}
+                </span>
+              )}
+            </span>
+          )}
+          {stale && (
+            <span
+              title="The PR diff has changed since this review ran. Re-scan to refresh."
+              className="flex items-center gap-1 px-2 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/25 text-[9px] font-mono font-bold uppercase"
+            >
+              <AlertTriangle size={10} />
+              <span>Stale</span>
+            </span>
+          )}
         </div>
 
         <div className="flex items-center gap-2">
@@ -193,6 +229,22 @@ export default function ReviewCard({ activePR, findings, onCopySuggestion, copyF
                               {finding.category}
                             </span>
                             <span className="text-xs font-semibold text-white tracking-tight">{finding.filename}</span>
+                            {finding.verificationStatus === "downgraded" && (
+                              <span
+                                title={finding.verificationNote || "Real issue but overstated"}
+                                className="text-[9px] font-mono uppercase px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/25 font-bold"
+                              >
+                                ↓ Downgraded
+                              </span>
+                            )}
+                            {finding.verificationStatus === "unverified" && (
+                              <span
+                                title={finding.verificationNote || "Verifier couldn't reach a verdict"}
+                                className="text-[9px] font-mono uppercase px-1.5 py-0.5 rounded bg-slate-700/40 text-slate-400 border border-white/10 font-bold"
+                              >
+                                ? Unverified
+                              </span>
+                            )}
                           </div>
                           <div className="flex items-center gap-2">
                             {finding.confidence !== undefined && finding.confidence !== null && (
@@ -252,6 +304,43 @@ export default function ReviewCard({ activePR, findings, onCopySuggestion, copyF
           })}
         </div>
       )}
+
+      {(rejectedCount ?? 0) > 0 && (
+        <div className="border-t border-white/5 bg-slate-950/30">
+          <button
+            onClick={() => setShowRejected((v) => !v)}
+            className="w-full px-4 py-2 flex items-center justify-between text-left hover:bg-white/[0.02] transition-colors cursor-pointer"
+          >
+            <span className="text-[10px] font-mono uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
+              <ShieldAlert size={11} className="text-slate-600" />
+              Verifier filtered: {rejectedCount} finding{(rejectedCount ?? 0) === 1 ? "" : "s"}
+            </span>
+            <span className="text-[10px] font-mono text-slate-600">
+              {showRejected ? "▲ hide" : "▼ show"}
+            </span>
+          </button>
+          {showRejected && (
+            <div className="px-4 py-2 text-[10px] font-mono text-slate-600 italic border-t border-white/5">
+              Rejected findings are kept for audit but hidden from the main list.
+              Use <code className="text-slate-500">?force=true</code> on the scan endpoint to bypass the cache and re-verify.
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
+}
+
+function formatRelativeTime(iso: string): string {
+  try {
+    const then = new Date(iso).getTime();
+    const now = Date.now();
+    const sec = Math.max(1, Math.floor((now - then) / 1000));
+    if (sec < 60) return `${sec}s ago`;
+    if (sec < 3600) return `${Math.floor(sec / 60)}m ago`;
+    if (sec < 86400) return `${Math.floor(sec / 3600)}h ago`;
+    return `${Math.floor(sec / 86400)}d ago`;
+  } catch {
+    return "";
+  }
 }

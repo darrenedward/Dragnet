@@ -1,10 +1,18 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/src/lib/prisma";
 import { findPrByIdOrNumber } from "@/src/lib/findPr";
-import { runPrScan } from "@/reviewService";
+import { runPrScan, SYSTEM_INSTRUCTION } from "@/reviewService";
 import { authenticateApiRequest } from "@/src/lib/apiAuth";
 import { IndexingService } from "@/src/services/indexingService";
 import { assertIndexFresh } from "@/src/lib/indexFreshness";
+import { refreshPrFiles } from "@/src/lib/getRealLocalPrs";
+import { getChatChain } from "@/src/lib/llmClient";
+import {
+  computeDiffHash,
+  computeReviewConfigHash,
+  shortHash,
+  createReviewRun,
+} from "@/src/lib/reviewFreshness";
 
 export async function GET(req: Request, { params }: { params: Promise<{ prIdOrNumber: string }> }) {
   const auth = await authenticateApiRequest(req);
@@ -26,7 +34,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ prIdOrNu
 
     const repo = await prisma.repository.findUnique({
       where: { id: pr.repoId },
-      select: { id: true, name: true, indexedAt: true, lastCommitHash: true, path: true },
+      select: { id: true, name: true, indexedAt: true, lastCommitHash: true, path: true, baseBranch: true },
     });
     if (!repo) {
       return NextResponse.json({
@@ -46,15 +54,42 @@ export async function GET(req: Request, { params }: { params: Promise<{ prIdOrNu
       }
     }
 
-    const scanResult = await runPrScan(pr.id);
-    const isProductionReady = scanResult.rating >= 8;
+    // Refresh files + create in_progress ReviewRun so the run is tracked.
+    // prcheck is an explicit CLI invocation — always runs the scan (no
+    // short-circuit), unlike the dashboard route.
+    const chatChain = getChatChain();
+    let files: any[] = [];
+    if (repo.path && pr.sourceBranch) {
+      try {
+        files = await refreshPrFiles(repo.path, repo.baseBranch || "main", pr.sourceBranch, pr.id);
+      } catch (e) {
+        console.warn("[prcheck] refreshPrFiles failed, using cached:", e);
+      }
+    }
+    const diffHash = computeDiffHash(files);
+    const configHash = chatChain.length > 0
+      ? computeReviewConfigHash(chatChain, shortHash(SYSTEM_INSTRUCTION))
+      : "";
+
+    const reviewRunId = await createReviewRun({
+      prId: pr.id,
+      repoId: pr.repoId,
+      commitHash: pr.commitHash,
+      diffHash,
+      reviewConfigHash: configHash,
+      model: chatChain[0]?.model ?? null,
+      triggerReason: "prcheck",
+    });
+
+    const scanResult = await runPrScan(pr.id, files, reviewRunId);
+    const isProductionReady = scanResult.rating !== null && scanResult.rating >= 8;
 
     return NextResponse.json({
       status: "Success",
       prId: pr.id,
       title: pr.title,
       productionGrade: isProductionReady ? "YES" : "NO",
-      rating: `${scanResult.rating}/10`,
+      rating: scanResult.rating !== null ? `${scanResult.rating}/10` : "—",
       assessment: isProductionReady
         ? "This Pull Request is highly secure, performant, correct, and fully production grade."
         : "NOT production grade. Please review the blocker/warning findings in comments and refactor.",

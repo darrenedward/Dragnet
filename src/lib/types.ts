@@ -65,6 +65,8 @@ export interface ReviewFinding {
   evidenceChain?: string;
   confidence?: number;
   timestamp: string;
+  verificationStatus?: "verified" | "downgraded" | "rejected" | "unverified" | null;
+  verificationNote?: string | null;
 }
 
 export interface ActivityLog {

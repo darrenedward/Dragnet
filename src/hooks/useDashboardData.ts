@@ -47,6 +47,17 @@ export function useDashboardData() {
   const [prFiles, setPrFiles] = useState<PRFile[]>([]);
   const [selectedFilename, setSelectedFilename] = useState<string>("");
   const [findings, setFindings] = useState<ReviewFinding[]>([]);
+  const [reviewRun, setReviewRun] = useState<{
+    id: string;
+    commitHash: string;
+    diffHash: string;
+    completedAt: string | null;
+    rating: number | null;
+    model: string | null;
+    triggerReason: string | null;
+  } | null>(null);
+  const [rejectedCount, setRejectedCount] = useState(0);
+  const [stale, setStale] = useState(false);
   const [logs, setLogs] = useState<ActivityLog[]>([]);
 
   // ===== Scan / UI feedback =====
@@ -155,8 +166,17 @@ export function useDashboardData() {
 
       const findingsRes = await fetch(`/api/prs/${prId}/findings`);
       const findingsData = await findingsRes.json();
-      if (Array.isArray(findingsData)) {
+      if (findingsData && typeof findingsData === "object" && "findings" in findingsData) {
+        setFindings(findingsData.findings);
+        setReviewRun(findingsData.reviewRun ?? null);
+        setRejectedCount(findingsData.rejectedCount ?? 0);
+        setStale(Boolean(findingsData.stale));
+      } else if (Array.isArray(findingsData)) {
+        // Backward compat with older route shape.
         setFindings(findingsData);
+        setReviewRun(null);
+        setRejectedCount(0);
+        setStale(false);
       }
     } catch (e) {
       console.error("Failed retrieving PR files/findings detailed block", e);
@@ -492,6 +512,9 @@ export function useDashboardData() {
     selectedFilename,
     setSelectedFilename,
     findings,
+    reviewRun,
+    rejectedCount,
+    stale,
     logs,
     fetchPrsForSelectedRepo,
     // scan

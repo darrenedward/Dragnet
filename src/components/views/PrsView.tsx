@@ -33,6 +33,17 @@ interface Props {
   scanResult: ScanResult | null;
   onDismissScanResult: () => void;
   findings: ReviewFinding[];
+  reviewRun?: {
+    id: string;
+    commitHash: string;
+    diffHash: string;
+    completedAt: string | null;
+    rating: number | null;
+    model: string | null;
+    triggerReason: string | null;
+  } | null;
+  rejectedCount?: number;
+  stale?: boolean;
   onCopySuggestion: (text: string, id: string) => void;
   copyFeedback: string | null;
   prFiles: PRFile[];
@@ -53,6 +64,9 @@ export default function PrsView({
   scanResult,
   onDismissScanResult,
   findings,
+  reviewRun,
+  rejectedCount,
+  stale,
   onCopySuggestion,
   copyFeedback,
   prFiles,
@@ -93,6 +107,9 @@ export default function PrsView({
           <ReviewCard
             activePR={activePR}
             findings={findings}
+            reviewRun={reviewRun}
+            rejectedCount={rejectedCount}
+            stale={stale}
             onCopySuggestion={onCopySuggestion}
             copyFeedback={copyFeedback}
           />

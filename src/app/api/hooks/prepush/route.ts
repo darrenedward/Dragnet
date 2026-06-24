@@ -1,9 +1,17 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/src/lib/prisma";
-import { runPrScan } from "@/reviewService";
+import { runPrScan, SYSTEM_INSTRUCTION } from "@/reviewService";
 import { authenticateApiRequest } from "@/src/lib/apiAuth";
 import { IndexingService } from "@/src/services/indexingService";
 import { assertIndexFresh } from "@/src/lib/indexFreshness";
+import { refreshPrFiles } from "@/src/lib/getRealLocalPrs";
+import { getChatChain } from "@/src/lib/llmClient";
+import {
+  computeDiffHash,
+  computeReviewConfigHash,
+  shortHash,
+  createReviewRun,
+} from "@/src/lib/reviewFreshness";
 
 export async function POST(req: Request) {
   const auth = await authenticateApiRequest(req);
@@ -58,7 +66,35 @@ export async function POST(req: Request) {
       );
     }
 
-    const result = await runPrScan(pr.id);
+    // Refresh files from the actual git state on disk and create an
+    // in_progress ReviewRun. The pre-push hook doesn't short-circuit on
+    // cache hits — pushes should always run the gate, not trust a stale
+    // review (the dev may have fixed the issue locally without re-scanning).
+    const chatChain = getChatChain();
+    let files: any[] = [];
+    if (repo.path && pr.sourceBranch) {
+      try {
+        files = await refreshPrFiles(repo.path, repo.baseBranch || "main", pr.sourceBranch, pr.id);
+      } catch (e) {
+        console.warn("[prepush] refreshPrFiles failed, using cached PrFiles:", e);
+      }
+    }
+    const diffHash = computeDiffHash(files);
+    const configHash = chatChain.length > 0
+      ? computeReviewConfigHash(chatChain, shortHash(SYSTEM_INSTRUCTION))
+      : "";
+
+    const reviewRunId = await createReviewRun({
+      prId: pr.id,
+      repoId: repo.id,
+      commitHash: sha || pr.commitHash,
+      diffHash,
+      reviewConfigHash: configHash,
+      model: chatChain[0]?.model ?? null,
+      triggerReason: "prepush",
+    });
+
+    const result = await runPrScan(pr.id, files, reviewRunId);
 
     // A null rating means the LLM chain couldn't produce a review (provider
     // outage / misconfig / model without tool-calling) — NOT a code-quality

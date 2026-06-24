@@ -2,11 +2,64 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/src/lib/prisma";
 import { findPrByIdOrNumber, findPrByBranch } from "@/src/lib/findPr";
 import { refreshPrFiles } from "@/src/lib/getRealLocalPrs";
-import { runPrScan } from "@/reviewService";
+import { runPrScan, SYSTEM_INSTRUCTION } from "@/reviewService";
 import { authenticateApiRequest } from "@/src/lib/apiAuth";
 import { IndexingService } from "@/src/services/indexingService";
 import { assertIndexFresh } from "@/src/lib/indexFreshness";
 import { isReviewActive, beginReview, endReview } from "@/src/lib/reviewLocks";
+import { getChatChain } from "@/src/lib/llmClient";
+import {
+  computeDiffHash,
+  computeReviewConfigHash,
+  shortHash,
+  createReviewRun,
+} from "@/src/lib/reviewFreshness";
+
+/**
+ * Start a tracked review: refresh files, create an in_progress ReviewRun,
+ * then kick off runPrScan with the run attached. Used by both the JSON-RPC
+ * prcheck tool and the legacy `prcheck` command — single source of truth
+ * for the triggerReason, file refresh, and run lifecycle.
+ *
+ * Returns the PR's sourceBranch so callers can format user-facing strings.
+ */
+async function startTrackedReview(pr: any, repo: any): Promise<{ sourceBranch: string }> {
+  const chatChain = getChatChain();
+  let files: any[] = [];
+  if (repo?.path && pr.sourceBranch) {
+    try {
+      files = await refreshPrFiles(repo.path, repo.baseBranch || "main", pr.sourceBranch, pr.id);
+    } catch (e) {
+      console.warn("[api] prfile refresh failed, using cached:", e);
+    }
+  }
+  const diffHash = computeDiffHash(files);
+  const configHash = chatChain.length > 0
+    ? computeReviewConfigHash(chatChain, shortHash(SYSTEM_INSTRUCTION))
+    : "";
+
+  const reviewRunId = await createReviewRun({
+    prId: pr.id,
+    repoId: pr.repoId,
+    commitHash: pr.commitHash,
+    diffHash,
+    reviewConfigHash: configHash,
+    model: chatChain[0]?.model ?? null,
+    triggerReason: "prcheck",
+  });
+
+  beginReview(pr.id);
+  runPrScan(pr.id, files, reviewRunId).then((sr) => {
+    endReview(pr.id);
+    prisma.pullRequest.updateMany({ where: { id: pr.id }, data: { rating: sr.rating } }).catch(() => {});
+    console.log(`[api] review complete for ${pr.sourceBranch}: ${sr.rating}/10`);
+  }).catch((err) => {
+    endReview(pr.id);
+    console.error(`[api] review failed for ${pr.sourceBranch}:`, err);
+  });
+
+  return { sourceBranch: pr.sourceBranch };
+}
 
 function defaultRepoId(url: string, args?: string[]): string | null {
   if (args && args.length > 0) return args[0];
@@ -133,21 +186,7 @@ async function handlePrCheck(args: any): Promise<string> {
     }
   }
 
-  try {
-    await refreshPrFiles(repo.path, repo.baseBranch, pr.sourceBranch, pr.id);
-  } catch (e) {
-    console.warn("[api] prfile refresh failed, using cached:", e);
-  }
-
-  beginReview(pr.id);
-  runPrScan(pr.id).then((sr) => {
-    endReview(pr.id);
-    prisma.pullRequest.updateMany({ where: { id: pr.id }, data: { rating: sr.rating } }).catch(() => {});
-    console.log(`[api] review complete for ${pr.sourceBranch}: ${sr.rating}/10`);
-  }).catch((err) => {
-    endReview(pr.id);
-    console.error(`[api] review failed for ${pr.sourceBranch}:`, err);
-  });
+  await startTrackedReview(pr, repo);
 
   return `> **Review started** for PR \`${pr.sourceBranch}\`.\n>\n> This runs in the background. Check results with \`prcheckstatus ${pr.sourceBranch}\` or view in the GrepLoop dashboard.\n>\n> Alternatively, use \`prcomments ${pr.sourceBranch}\` for the latest persisted findings.`;
 }
@@ -296,15 +335,7 @@ async function handleLegacyCommand(body: any, defRepo: string | null) {
           message: `> ⚠ **${freshness.kind === "INDEX_REQUIRED" ? "Index required" : "Stale index"}.** ${freshness.message}`,
         });
       }
-      beginReview(pr.id);
-      runPrScan(pr.id).then((sr) => {
-        endReview(pr.id);
-        prisma.pullRequest.updateMany({ where: { id: pr.id }, data: { rating: sr.rating } }).catch(() => {});
-        console.log(`[api-legacy] review complete for ${pr.sourceBranch}: ${sr.rating}/10`);
-      }).catch((err) => {
-        endReview(pr.id);
-        console.error(`[api-legacy] review failed for ${pr.sourceBranch}:`, err);
-      });
+      await startTrackedReview(pr, repo);
       return NextResponse.json({
         status: "Accepted",
         message: `> **Review started** for \`${pr.sourceBranch}\`. Poll with \`prcheckstatus ${pr.sourceBranch}\`.`,

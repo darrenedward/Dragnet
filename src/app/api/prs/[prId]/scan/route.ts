@@ -1,16 +1,25 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/src/lib/prisma";
-import { runPrScan } from "@/reviewService";
+import { runPrScan, SYSTEM_INSTRUCTION } from "@/reviewService";
 import { refreshPrFiles } from "@/src/lib/getRealLocalPrs";
 import { assertIndexFresh } from "@/src/lib/indexFreshness";
 import { IndexingService } from "@/src/services/indexingService";
 import { getChatChain, getEmbeddingChain } from "@/src/lib/llmClient";
 import { isReviewActive, beginReview, endReview } from "@/src/lib/reviewLocks";
+import {
+  computeDiffHash,
+  computeReviewConfigHash,
+  shortHash,
+  assertReviewFreshness,
+  createReviewRun,
+} from "@/src/lib/reviewFreshness";
 
 export async function POST(req: Request, { params }: { params: Promise<{ prId: string }> }) {
   const { prId } = await params;
   await req.json().catch(() => ({}));
   console.log(`[scan] route: POST received for prId=${prId}`);
+
+  const force = new URL(req.url).searchParams.get("force") === "true";
 
   // Tracks whether THIS request acquired the review lock, so a failure
   // before acquisition never clears a concurrent scan's lock.
@@ -27,7 +36,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
     }
     const pr = await prisma.pullRequest.findUnique({
       where: { id: prId },
-      select: { repoId: true, sourceBranch: true, targetBranch: true },
+      select: { repoId: true, sourceBranch: true, targetBranch: true, commitHash: true },
     });
     if (!pr) {
       console.log(`[scan] route: PR ${prId} not found`);
@@ -64,6 +73,50 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
       console.log(`[scan] route: freshness check OK (indexedAt=${repo.indexedAt})`);
     }
 
+    // Refresh PR files BEFORE freshness check — diffHash needs the files
+    // whether we hit cache or run the scan. Cheap if files haven't changed.
+    const repoPath = repo.path;
+    const baseBranch = pr.targetBranch || repo.baseBranch || "main";
+    let files: any[] = [];
+    if (repoPath && pr.sourceBranch) {
+      console.log(`[scan] route: refreshing PR files from git`);
+      files = await refreshPrFiles(repoPath, baseBranch, pr.sourceBranch, prId);
+      console.log(`[scan] route: got ${files.length} files`);
+    } else {
+      console.log(`[scan] route: no repoPath or sourceBranch - skipping file refresh`);
+    }
+
+    // Review freshness guard. If a completed ReviewRun exists for the same
+    // (commitHash, diffHash, reviewConfigHash), short-circuit and return the
+    // cached findings. `force=true` bypasses.
+    const currentDiffHash = computeDiffHash(files);
+    const currentConfigHash = computeReviewConfigHash(chatChain, shortHash(SYSTEM_INSTRUCTION));
+    console.log(`[scan] route: diffHash=${currentDiffHash.slice(0, 8) || "(empty)"}, configHash=${currentConfigHash.slice(0, 8)}, force=${force}`);
+
+    if (!force) {
+      const fresh = await assertReviewFreshness(
+        { id: prId, commitHash: pr.commitHash },
+        currentDiffHash,
+        currentConfigHash,
+      );
+      if (fresh.ok === true) {
+        console.log(`[scan] route: cache HIT on runId=${fresh.runId} — short-circuiting`);
+        const findings = await prisma.reviewFinding.findMany({
+          where: { reviewRunId: fresh.runId, verificationStatus: { not: "rejected" } },
+          select: { id: true, category: true, severity: true, filename: true, line: true, explanation: true, diffSuggestion: true, evidenceChain: true, confidence: true, verificationStatus: true, verificationNote: true, timestamp: true },
+        });
+        return NextResponse.json({
+          cached: true,
+          runId: fresh.runId,
+          rating: fresh.rating,
+          findings,
+          usedModel: null,
+        });
+      }
+      // fresh.ok === false → narrowed to STALE_RUN / NO_RUN
+      console.log(`[scan] route: cache MISS — running scan`);
+    }
+
     // Concurrency guard — shared with the command/prcheck routes. Two scans of one PR
     // would race deleteMany→createMany, double-increment reviewsCount, and
     // duplicate reviewHistory. Reject the duplicate without touching the
@@ -82,19 +135,20 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
     const deletedLogs = await prisma.reviewLog.deleteMany({ where: { prId } });
     console.log(`[scan] route: status set to In Progress, deleted ${deletedLogs.count} stale review logs`);
 
-    const repoPath = repo.path;
-    const baseBranch = pr.targetBranch || repo.baseBranch || "main";
-    let files: any[] = [];
-    if (repoPath && pr.sourceBranch) {
-      console.log(`[scan] route: refreshing PR files from git`);
-      files = await refreshPrFiles(repoPath, baseBranch, pr.sourceBranch, prId);
-      console.log(`[scan] route: got ${files.length} files`);
-    } else {
-      console.log(`[scan] route: no repoPath or sourceBranch - skipping file refresh`);
-    }
+    const reviewRunId = await createReviewRun({
+      prId,
+      repoId: pr.repoId,
+      commitHash: pr.commitHash,
+      diffHash: currentDiffHash,
+      reviewConfigHash: currentConfigHash,
+      model: chatChain[0]?.model ?? null,
+      triggerReason: "manual",
+      forced: force,
+    });
+    console.log(`[scan] route: created in_progress ReviewRun ${reviewRunId}`);
 
     console.log(`[scan] route: calling runPrScan with ${files.length} files`);
-    const result = await runPrScan(prId, files);
+    const result = await runPrScan(prId, files, reviewRunId);
     console.log(`[scan] route: runPrScan complete - rating=${result.rating}, findings=${result.findings?.length}, model=${result.usedModel}`);
 
     if (acquired) endReview(prId);

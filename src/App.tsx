@@ -296,6 +296,9 @@ export default function App() {
                   scanResult={d.scanResult}
                   onDismissScanResult={() => d.setScanResult(null)}
                   findings={d.findings}
+                  reviewRun={d.reviewRun}
+                  rejectedCount={d.rejectedCount}
+                  stale={d.stale}
                   onCopySuggestion={d.handleCopyCode}
                   copyFeedback={d.copyFeedback}
                   prFiles={d.prFiles}
