@@ -116,7 +116,14 @@ const reviewResponseSchema = {
  *  findings and mismatches the header count. */
 const VALID_CATEGORIES = ["Correctness", "Security", "Performance", "Accessibility", "Style"];
 const VALID_SEVERITIES = ["blocker", "warning", "suggestion"];
-const LLM_CALL_TIMEOUT_MS = 120_000;
+// Per-call timeout for chat completions. Bumped from 120s → 300s to handle
+// long-context PRs (60+ file diffs) on reasoning models like qwen-plus.
+// 300s aligns with OpenRouter's own ceiling, so waiting longer than this
+// rarely helps — the upstream provider has already given up.
+//
+// Override per-deployment via env if you need longer (e.g. for very large
+// diffs or slower models): LLM_CALL_TIMEOUT_MS=600000 in .env.local.
+const LLM_CALL_TIMEOUT_MS = Number(process.env.LLM_CALL_TIMEOUT_MS) || 300_000;
 
 async function withTimeout<T>(promise: Promise<T>, label: string): Promise<T> {
   let timeout: ReturnType<typeof setTimeout> | undefined;
