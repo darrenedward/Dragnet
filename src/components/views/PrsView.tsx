@@ -119,6 +119,7 @@ export default function PrsView({
               rejectedCount={rejectedCount}
               rejectedFindings={rejectedFindings}
               stale={stale}
+              isScanning={isScanning}
               onCopySuggestion={onCopySuggestion}
               copyFeedback={copyFeedback}
             />

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import { AlertTriangle, CheckCircle2, Copy, Network, ShieldAlert } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Copy, Loader2, Network, ShieldAlert } from "lucide-react";
 import type { PullRequest, ReviewFinding } from "../../../lib/types";
 
 export interface ReviewRunMeta {
@@ -48,6 +48,7 @@ interface Props {
     verificationNote: string | null;
   }>;
   stale?: boolean;
+  isScanning?: boolean;
   onCopySuggestion: (text: string, id: string) => void;
   copyFeedback: string | null;
 }
@@ -114,7 +115,7 @@ function parseEvidence(chain: ReviewFinding["evidenceChain"]): Array<{ file: str
   }
 }
 
-export default function ReviewCard({ activePR, findings, reviewRun, rejectedCount, rejectedFindings, stale, onCopySuggestion, copyFeedback }: Props) {
+export default function ReviewCard({ activePR, findings, reviewRun, rejectedCount, rejectedFindings, stale, isScanning, onCopySuggestion, copyFeedback }: Props) {
   const [copiedAll, setCopiedAll] = useState(false);
   const [showRejected, setShowRejected] = useState(false);
   const handleCopyAll = useCallback(() => {
@@ -140,11 +141,15 @@ export default function ReviewCard({ activePR, findings, reviewRun, rejectedCoun
       {/* Header */}
       <div className="px-4 py-3 bg-slate-950/50 border-b border-white/10 flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-2">
-          <ShieldAlert size={14} className="text-rose-400" />
+          {isScanning ? (
+            <Loader2 size={14} className="text-cyan-400 animate-spin" />
+          ) : (
+            <ShieldAlert size={14} className="text-rose-400" />
+          )}
           <span className="text-xs uppercase font-mono tracking-wider font-extrabold text-slate-400">
-            AI Core Code Audit Findings ({findings.length})
+            {isScanning ? "AI Review In Progress" : `AI Core Code Audit Findings (${findings.length})`}
           </span>
-          {reviewRun && (
+          {reviewRun && !isScanning && (
             <span className="ml-2 text-[10px] font-mono text-slate-500 flex items-center gap-1.5">
               <span className="text-slate-400">Reviewed:</span>
               <code className="text-cyan-400 bg-cyan-400/5 px-1.5 py-0.5 rounded">
@@ -157,7 +162,7 @@ export default function ReviewCard({ activePR, findings, reviewRun, rejectedCoun
               )}
             </span>
           )}
-          {stale && (
+          {stale && !isScanning && (
             <span
               title="The saved review no longer matches the current PR diff. Run the scan again to refresh it."
               className="flex items-center gap-1 px-2 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/25 text-[9px] font-mono font-bold uppercase"
@@ -169,7 +174,7 @@ export default function ReviewCard({ activePR, findings, reviewRun, rejectedCoun
         </div>
 
         <div className="flex items-center gap-2">
-          {activePR?.rating !== undefined && activePR?.rating !== null && (
+          {activePR?.rating !== undefined && activePR?.rating !== null && !isScanning && (
             <span
               className={`px-2 py-0.5 rounded uppercase font-mono text-[9px] font-bold border ${
                 activePR.rating >= 9
@@ -180,7 +185,7 @@ export default function ReviewCard({ activePR, findings, reviewRun, rejectedCoun
               {activePR.rating}/10
             </span>
           )}
-          {findings.length > 0 && (
+          {findings.length > 0 && !isScanning && (
             <button
               onClick={handleCopyAll}
               className="px-2.5 py-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded text-[10px] font-mono font-bold text-slate-400 hover:text-white transition-all flex items-center gap-1.5 cursor-pointer"
@@ -192,8 +197,20 @@ export default function ReviewCard({ activePR, findings, reviewRun, rejectedCoun
         </div>
       </div>
 
-      {/* Empty state */}
-      {findings.length === 0 ? (
+      {/* Scanning state — previous findings have been moved to Scan History */}
+      {isScanning ? (
+        <div className="p-8 text-center text-slate-500 flex flex-col items-center justify-center">
+          <Loader2 size={24} className="text-cyan-400 animate-spin mb-2" />
+          <p className="text-xs font-bold text-cyan-300 font-mono">
+            AI review pipeline running
+          </p>
+          <p className="text-[10px] text-slate-500 font-mono mt-1 max-w-md">
+            {reviewRun
+              ? "Previous findings have moved to Scan History below — watch Review Progress for live iteration logs."
+              : "Watch Review Progress above for live iteration logs."}
+          </p>
+        </div>
+      ) : findings.length === 0 ? (
         <div className="p-8 text-center text-slate-500 flex flex-col items-center justify-center">
           {reviewRun && reviewRun.rating === null ? (
             <>
@@ -340,7 +357,7 @@ export default function ReviewCard({ activePR, findings, reviewRun, rejectedCoun
         </div>
       )}
 
-      {(rejectedCount ?? 0) > 0 && (
+      {(rejectedCount ?? 0) > 0 && !isScanning && (
         <div className="border-t border-white/5 bg-slate-950/30">
           <button
             onClick={() => setShowRejected((v) => !v)}

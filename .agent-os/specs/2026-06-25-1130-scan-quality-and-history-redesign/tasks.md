@@ -47,9 +47,18 @@ The Phase 3 ScanHistory only showed log lines when expanding a historical run. G
 - [x] 5.4 Typecheck passes clean (`npx tsc --noEmit`).
 - [ ] 5.5 Browser smoke test — expand a historical run, confirm findings list renders with severity colors + source chips + filename:line, then expand "Verifier rejected" section and confirm rejected rows show amber tint + verification note.
 
+## Phase 6 — Move Old Findings to History on Scan Start (P1)
+
+User feedback (2026-06-25, screenshot + correction): "when a user lcick pr review button and initiates a scan, the previous/old results should go into the hisstory". Previously ReviewCard kept showing the previous completed run's findings during a new scan (because `getLatestCompletedReview` filters to `status: "completed"`, and the in-progress run is excluded). User expectation: the moment a scan kicks off, ReviewCard should clear and the previous run becomes the top entry in Scan History (where its findings are already accessible via the expand arrow).
+
+- [x] 6.1 Pass `isScanning` prop from `PrsView` → `ReviewCard`. Already threaded through `useDashboardData` → `App` → `PrsView`; only the last hop into `ReviewCard` was missing. (`src/components/views/PrsView.tsx`)
+- [x] 6.2 Add scanning-state branch in `ReviewCard` body — when `isScanning === true`, render a "AI review pipeline running" placeholder with spinner + a one-line hint pointing at Review Progress + Scan History, instead of the old findings list. Suppress the "Verifier rejected" footer and the "Copy All" / rating chips in the header while scanning. Header title swaps to "AI Review In Progress" with a spinner icon. (`src/components/views/prs/ReviewCard.tsx`)
+- [x] 6.3 Typecheck clean (`npx tsc --noEmit`).
+- [ ] 6.4 Browser smoke test — with a completed scan's findings visible, click "Trigger AI Review Scan" and confirm: (a) ReviewCard body flips to the scanning placeholder, (b) header loses the rating chip + Copy All, (c) the previous run remains the top row of Scan History with its findings still expandable, (d) on completion ReviewCard refreshes with the new run's findings.
+
 ## Outstanding — user-driven UI smoke test
 
-One browser pass to close out Phases 3.9, 4.4, and 5.5 (rendering only — underlying API endpoints already verified):
+One browser pass to close out Phases 3.9, 4.4, 5.5, and 6.4 (rendering only — underlying API endpoints already verified):
 
 1. Click "Trigger AI Review Scan" → watch ReviewProgress stream iteration logs
 2. After completion → expand a ScanHistory row, confirm findings list renders (not just logs) with severity badges + source chips + filename:line
