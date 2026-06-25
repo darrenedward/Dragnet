@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { ChevronDown, ChevronRight, History, Loader2 } from "lucide-react";
+import HistoryFindingRow from "./HistoryFindingRow";
 
 interface ReviewRunSummary {
   id: string;
@@ -20,6 +21,34 @@ interface LogEntry {
   message: string;
   level: string;
   createdAt: string;
+}
+
+interface RunFindings {
+  findings: Array<{
+    id: string;
+    filename: string;
+    line: number | null;
+    severity: string;
+    category: string;
+    explanation: string;
+    diffSuggestion: string | null;
+    evidenceChain: string | null;
+    confidence: number | null;
+    verificationStatus: string | null;
+    verificationNote: string | null;
+    source: string | null;
+  }>;
+  rejectedFindings: Array<{
+    id: string;
+    filename: string;
+    line: number | null;
+    severity: string;
+    category: string;
+    explanation: string;
+    verificationNote: string | null;
+    source: string | null;
+  }>;
+  rejectedCount: number;
 }
 
 interface Props {
@@ -77,7 +106,9 @@ export default function ScanHistory({ prId, currentRunId }: Props) {
   const [runs, setRuns] = useState<ReviewRunSummary[]>([]);
   const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
   const [runLogs, setRunLogs] = useState<Record<string, LogEntry[]>>({});
+  const [runFindings, setRunFindings] = useState<Record<string, RunFindings>>({});
   const [loading, setLoading] = useState(false);
+  const [showRejected, setShowRejected] = useState<Record<string, boolean>>({});
   const [panelOpen, setPanelOpen] = useState(true);
 
   useEffect(() => {
@@ -103,22 +134,32 @@ export default function ScanHistory({ prId, currentRunId }: Props) {
     };
   }, [prId]);
 
-  const toggleRunLogs = async (runId: string) => {
+  // Hide in_progress runs — they're already shown live in ReviewProgress above.
+  // A run appearing here means it has finished (completed or failed).
+  const historicalRuns = runs.filter((r) => r.status !== "in_progress");
+
+  const toggleRun = async (runId: string) => {
     if (expandedRunId === runId) {
       setExpandedRunId(null);
       return;
     }
     setExpandedRunId(runId);
-    if (runLogs[runId]) return;
+    // Lazy-load both logs and findings on first expand.
+    const needLogs = !runLogs[runId];
+    const needFindings = !runFindings[runId];
+    if (!needLogs && !needFindings) return;
     setLoading(true);
     try {
-      const res = await fetch(`/api/reviews/log?reviewRunId=${runId}`);
-      if (res.ok) {
-        const logs: LogEntry[] = await res.json();
-        setRunLogs((prev) => ({ ...prev, [runId]: logs }));
+      const [logsRes, findingsRes] = await Promise.all([
+        needLogs ? fetch(`/api/reviews/log?reviewRunId=${runId}`).then((r) => r.ok ? r.json() : []).catch(() => []) : Promise.resolve(null),
+        needFindings ? fetch(`/api/reviews/run?reviewRunId=${runId}`).then((r) => r.ok ? r.json() : null).catch(() => null) : Promise.resolve(null),
+      ]);
+      if (logsRes) {
+        setRunLogs((prev) => ({ ...prev, [runId]: logsRes as LogEntry[] }));
       }
-    } catch {
-      // ignore
+      if (findingsRes) {
+        setRunFindings((prev) => ({ ...prev, [runId]: findingsRes as RunFindings }));
+      }
     } finally {
       setLoading(false);
     }
@@ -134,26 +175,29 @@ export default function ScanHistory({ prId, currentRunId }: Props) {
       >
         <span className="text-[10px] font-mono font-extrabold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
           <History size={11} className="text-slate-500" />
-          Scan History ({runs.length})
+          Scan History ({historicalRuns.length})
         </span>
         <span className="text-slate-600 text-xs">{panelOpen ? "▲" : "▼"}</span>
       </button>
 
       {panelOpen && (
-        <div className="px-2 pb-3 space-y-1 max-h-72 overflow-y-auto">
-          {runs.length === 0 ? (
+        <div className="px-2 pb-3 space-y-1 max-h-[28rem] overflow-y-auto">
+          {historicalRuns.length === 0 ? (
             <div className="text-[10px] text-slate-600 font-mono py-3 text-center italic">
               No prior scans on this PR.
             </div>
           ) : (
-            runs.map((run) => {
+            historicalRuns.map((run) => {
               const isCurrent = run.id === currentRunId;
               const isOpen = expandedRunId === run.id;
               const rating = ratingChip(run.rating);
+              const rf = runFindings[run.id];
+              const findingCount = rf?.findings.length ?? 0;
+              const rejectedCount = rf?.rejectedCount ?? 0;
               return (
                 <div key={run.id} className="border border-white/5 rounded-lg overflow-hidden">
                   <button
-                    onClick={() => toggleRunLogs(run.id)}
+                    onClick={() => toggleRun(run.id)}
                     className="w-full px-3 py-2 flex items-center gap-2 hover:bg-white/[0.02] transition-colors cursor-pointer text-left"
                   >
                     {isOpen ? (
@@ -177,6 +221,11 @@ export default function ScanHistory({ prId, currentRunId }: Props) {
                     >
                       {run.status}
                     </span>
+                    {rf && findingCount > 0 && (
+                      <span className="text-[9px] font-mono uppercase text-slate-500 shrink-0">
+                        · {findingCount} finding{findingCount === 1 ? "" : "s"}
+                      </span>
+                    )}
                     {run.triggerReason && (
                       <span className="text-[9px] font-mono uppercase text-slate-500 shrink-0">
                         · {run.triggerReason}
@@ -192,23 +241,78 @@ export default function ScanHistory({ prId, currentRunId }: Props) {
                     )}
                   </button>
                   {isOpen && (
-                    <div className="border-t border-white/5 bg-slate-950/40 p-2 max-h-48 overflow-y-auto">
+                    <div className="border-t border-white/5 bg-slate-950/40">
                       {loading ? (
-                        <div className="text-[10px] text-slate-600 font-mono py-2 flex items-center gap-1.5">
-                          <Loader2 size={10} className="animate-spin" /> loading logs…
+                        <div className="text-[10px] text-slate-600 font-mono py-3 flex items-center gap-1.5 justify-center">
+                          <Loader2 size={11} className="animate-spin" /> loading scan details…
                         </div>
-                      ) : (runLogs[run.id]?.length ?? 0) === 0 ? (
-                        <div className="text-[10px] text-slate-600 font-mono py-2 italic">No logs for this run.</div>
                       ) : (
-                        (runLogs[run.id] ?? []).map((log) => (
-                          <div
-                            key={log.id}
-                            className="text-[10px] font-mono leading-relaxed py-0.5 px-1 text-slate-400 hover:bg-white/[0.02] rounded"
-                          >
-                            <span className="text-slate-600">{new Date(log.createdAt).toLocaleTimeString()}</span>{" "}
-                            <span className="text-slate-500">·</span> {log.message}
+                        <>
+                          {/* Findings */}
+                          {rf && rf.findings.length > 0 ? (
+                            <div className="max-h-64 overflow-y-auto">
+                              {rf.findings.map((f) => (
+                                <HistoryFindingRow key={f.id} finding={f} />
+                              ))}
+                            </div>
+                          ) : rf ? (
+                            <div className="px-3 py-3 text-[10px] text-slate-600 font-mono italic text-center">
+                              Scan completed with no findings (clean review).
+                            </div>
+                          ) : null}
+
+                          {/* Rejected findings */}
+                          {rf && rejectedCount > 0 && (
+                            <div className="border-t border-amber-500/15">
+                              <button
+                                onClick={() =>
+                                  setShowRejected((prev) => ({ ...prev, [run.id]: !prev[run.id] }))
+                                }
+                                className="w-full px-3 py-1.5 flex items-center gap-1.5 hover:bg-amber-500/[0.04] transition-colors cursor-pointer"
+                              >
+                                {showRejected[run.id] ? (
+                                  <ChevronDown size={10} className="text-amber-400/70" />
+                                ) : (
+                                  <ChevronRight size={10} className="text-amber-400/70" />
+                                )}
+                                <span className="text-[9px] font-mono uppercase text-amber-400/80 font-bold tracking-wider">
+                                  Verifier rejected: {rejectedCount}
+                                </span>
+                              </button>
+                              {showRejected[run.id] && (
+                                <div className="max-h-40 overflow-y-auto">
+                                  {rf.rejectedFindings.map((f) => (
+                                    <HistoryFindingRow key={f.id} finding={f} rejected />
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          {/* Logs */}
+                          <div className="border-t border-white/5">
+                            <div className="px-3 py-1 text-[9px] font-mono uppercase tracking-wider text-slate-600 bg-white/[0.01]">
+                              logs ({runLogs[run.id]?.length ?? 0})
+                            </div>
+                            <div className="max-h-32 overflow-y-auto">
+                              {(runLogs[run.id]?.length ?? 0) === 0 ? (
+                                <div className="text-[10px] text-slate-600 font-mono py-2 italic text-center">
+                                  No logs for this run.
+                                </div>
+                              ) : (
+                                (runLogs[run.id] ?? []).map((log) => (
+                                  <div
+                                    key={log.id}
+                                    className="text-[10px] font-mono leading-relaxed py-0.5 px-3 text-slate-400 hover:bg-white/[0.02]"
+                                  >
+                                    <span className="text-slate-600">{new Date(log.createdAt).toLocaleTimeString()}</span>{" "}
+                                    <span className="text-slate-600">·</span> {log.message}
+                                  </div>
+                                ))
+                              )}
+                            </div>
                           </div>
-                        ))
+                        </>
                       )}
                     </div>
                   )}

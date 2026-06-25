@@ -35,11 +35,24 @@
 - [x] 4.3 No sidebar regression — background poller still uses refs (`repoIdRef`, `prIdRef`); new `isScanning` sync uses state-derived `prs.find()`, not closure capture
 - [ ] 4.4 Verification — **concurrency guard verified via probe**: synthetic `in_progress` row → `GET /api/prcheck/X` returned `409 SCAN_IN_PROGRESS` with correct `runId` + `startedAt` + override hint. **UI `isScanning` sync (Phase 4.2) needs a browser smoke test** to confirm the visual state actually flips when a curl-triggered scan starts.
 
+## Phase 5 — GitHub-style Scan History Expansion (P2)
+
+User feedback (2026-06-25): "when a new scan is initiated the old scan data should be push to history and the history at the bottom of the content should show the history if the user wants to view it, kind of like what happens on github where you can see pr comment history."
+
+The Phase 3 ScanHistory only showed log lines when expanding a historical run. GitHub PR comment history shows the actual review content. Phase 5 closes that gap — each historical run expands to its full findings list.
+
+- [x] 5.1 New endpoint: `GET /api/reviews/run?reviewRunId=X` — returns reviewRun metadata + findings + rejectedFindings + rejectedCount for any run (mirrors `/api/prs/[prId]/findings` shape but parameterized by runId, not "latest"). Validated against real run `run-76c68021` → 8 visible + 1 rejected finding returned with full field set (filename, line, severity, category, source, confidence, verificationStatus). (`src/app/api/reviews/run/route.ts`)
+- [x] 5.2 New component `HistoryFindingRow` — compact read-only rendering of a single finding (severity badge, source chip when not LLM, category, filename:line, explanation). Shared between visible + rejected lists; rejected rows get amber tint + verifier note. (`src/components/views/prs/HistoryFindingRow.tsx`)
+- [x] 5.3 ScanHistory refactor — hide `in_progress` runs from the list (they're already live in ReviewProgress above), lazy-fetch BOTH logs AND findings on first expand, render findings section + collapsible "Verifier rejected: N" section + logs section. Finding count chip appears in the row once loaded. (`src/components/views/prs/ScanHistory.tsx`)
+- [x] 5.4 Typecheck passes clean (`npx tsc --noEmit`).
+- [ ] 5.5 Browser smoke test — expand a historical run, confirm findings list renders with severity colors + source chips + filename:line, then expand "Verifier rejected" section and confirm rejected rows show amber tint + verification note.
+
 ## Outstanding — user-driven UI smoke test
 
-One browser pass to close out Phases 3.9 + 4.4 (rendering only — underlying API endpoints already verified):
+One browser pass to close out Phases 3.9, 4.4, and 5.5 (rendering only — underlying API endpoints already verified):
 
 1. Click "Trigger AI Review Scan" → watch ReviewProgress stream iteration logs
-2. After completion → expand a ScanHistory row, confirm inline logs render with `current` chip on active run
-3. Trigger a second scan → confirm old run moves to history, new run is highlighted
-4. Trigger a scan via `curl /api/prcheck/X?force=true` from terminal → confirm sidebar shows "In Progress" without clicking the UI button (verifies Phase 4.2 visual sync)
+2. After completion → expand a ScanHistory row, confirm findings list renders (not just logs) with severity badges + source chips + filename:line
+3. Expand the "Verifier rejected: N" sub-section — confirm rejected rows show amber tint + verifier note
+4. Trigger a second scan → confirm old run moves to history with its findings still viewable, new run is highlighted
+5. Trigger a scan via `curl /api/prcheck/X?force=true` from terminal → confirm sidebar shows "In Progress" without clicking the UI button (verifies Phase 4.2 visual sync)
