@@ -35,6 +35,16 @@ export type ReviewFreshness =
   | { ok: true; runId: string; rating: number | null }
   | { ok: false; kind: "NO_RUN" | "STALE_RUN"; message: string };
 
+export type ActiveScanCheck =
+  | { ok: true }
+  | {
+      ok: false;
+      runId: string;
+      startedAt: Date;
+      triggerReason: string | null;
+      model: string | null;
+    };
+
 export interface LatestReviewResult {
   reviewRun: {
     id: string;
@@ -222,13 +232,39 @@ export async function createReviewRun(opts: {
 }
 
 /**
- * Mark a ReviewRun as completed or failed. Called by runPrScan on
- * success, and by the scan route's catch block on failure.
+ * Concurrency guard — reject duplicate scans on the same PR.
  *
- * Never throws — if the update fails (e.g. row was already deleted by
- * a concurrent operation), log and move on. The scan result itself
- * is what matters.
+ * Returns the in-progress run if one exists and `force` is falsy, so the
+ * caller can respond 409 without racing the live scan. `force=true`
+ * overrides (used for re-scans after stuck runs).
+ *
+ * Note: this checks ReviewRun rows, not the in-memory `reviewLocks` map.
+ * The locks guard the immediate critical section (status update + run
+ * creation); this DB check catches races where two requests slip past the
+ * lock in quick succession, or where a scan was started by a different
+ * process entirely (separate Next.js worker, manual DB write, etc.).
  */
+export async function assertNoActiveScan(
+  prId: string,
+  force: boolean,
+): Promise<ActiveScanCheck> {
+  if (force) return { ok: true };
+  const inProgress = await prisma.reviewRun.findFirst({
+    where: { prId, status: "in_progress" },
+    orderBy: { startedAt: "desc" },
+    select: { id: true, startedAt: true, triggerReason: true, model: true },
+  });
+  if (!inProgress) return { ok: true };
+  return {
+    ok: false,
+    runId: inProgress.id,
+    startedAt: inProgress.startedAt,
+    triggerReason: inProgress.triggerReason,
+    model: inProgress.model,
+  };
+}
+
+
 export async function completeReviewRun(
   runId: string,
   outcome:

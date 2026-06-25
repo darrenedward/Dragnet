@@ -311,6 +311,18 @@ export function useDashboardData() {
     return () => clearInterval(poller);
   }, []);
 
+  // Sync isScanning with the selected PR's status — covers scans triggered
+  // from any source (UI button, /gloop skill, prepush hook, curl). The
+  // button-click path stays optimistic because handleTriggerPrScan
+  // immediately sets PR.status to "In Progress" in local state, so this
+  // effect agrees with the optimistic value rather than fighting it.
+  useEffect(() => {
+    if (!selectedPrId) return;
+    const activePR = prs.find((p) => p.id === selectedPrId);
+    if (!activePR) return;
+    setIsScanning(activePR.status === "In Progress");
+  }, [selectedPrId, prs]);
+
   // ===== DB actions =====
   const handleTestDbConnection = async () => {
     setIsTestingDb(true);

@@ -11,6 +11,7 @@ import {
   computeDiffHash,
   computeReviewConfigHash,
   shortHash,
+  assertNoActiveScan,
   createReviewRun,
 } from "@/src/lib/reviewFreshness";
 
@@ -70,6 +71,19 @@ export async function GET(req: Request, { params }: { params: Promise<{ prIdOrNu
     const configHash = chatChain.length > 0
       ? computeReviewConfigHash(chatChain, shortHash(SYSTEM_INSTRUCTION))
       : "";
+
+    const force = url.searchParams.get("force") === "true";
+    const activeScan = await assertNoActiveScan(pr.id, force);
+    if (activeScan.ok === false) {
+      console.log(`[prcheck] scan ${activeScan.runId} already in progress for ${pr.id} — 409`);
+      return NextResponse.json({
+        status: "Error",
+        error: "SCAN_IN_PROGRESS",
+        runId: activeScan.runId,
+        startedAt: activeScan.startedAt,
+        message: `A scan is already running for this PR (started ${activeScan.startedAt.toISOString()}). Use ?force=true to override.`,
+      }, { status: 409 });
+    }
 
     const reviewRunId = await createReviewRun({
       prId: pr.id,

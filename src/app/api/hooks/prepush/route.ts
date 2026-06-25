@@ -10,6 +10,7 @@ import {
   computeDiffHash,
   computeReviewConfigHash,
   shortHash,
+  assertNoActiveScan,
   createReviewRun,
 } from "@/src/lib/reviewFreshness";
 
@@ -83,6 +84,24 @@ export async function POST(req: Request) {
     const configHash = chatChain.length > 0
       ? computeReviewConfigHash(chatChain, shortHash(SYSTEM_INSTRUCTION))
       : "";
+
+    // Concurrency guard — a UI/skill-triggered scan may already be running.
+    // Pre-push has no ?force flag (it's invoked by the git hook); the user
+    // can re-push after the live scan finishes.
+    const activeScan = await assertNoActiveScan(pr.id, false);
+    if (activeScan.ok === false) {
+      console.log(`[prepush] scan ${activeScan.runId} already in progress for ${pr.id} — 409`);
+      return NextResponse.json(
+        {
+          passed: false,
+          error: "SCAN_IN_PROGRESS",
+          runId: activeScan.runId,
+          startedAt: activeScan.startedAt,
+          message: `A scan is already running for this PR (started ${activeScan.startedAt.toISOString()}). Re-push after it completes.`,
+        },
+        { status: 409 },
+      );
+    }
 
     const reviewRunId = await createReviewRun({
       prId: pr.id,

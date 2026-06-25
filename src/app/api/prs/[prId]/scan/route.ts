@@ -11,6 +11,7 @@ import {
   computeReviewConfigHash,
   shortHash,
   assertReviewFreshness,
+  assertNoActiveScan,
   createReviewRun,
 } from "@/src/lib/reviewFreshness";
 
@@ -123,14 +124,29 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
       console.log(`[scan] route: cache MISS — running scan`);
     }
 
-    // Concurrency guard — shared with the command/prcheck routes. Two scans of one PR
-    // would race deleteMany→createMany, double-increment reviewsCount, and
-    // duplicate reviewHistory. Reject the duplicate without touching the
-    // in-flight scan's lock.
+    // Concurrency guard — shared with the command/prcheck/prepush routes.
+    // The in-memory isReviewActive check catches same-process races; the
+    // DB-backed assertNoActiveScan catches cross-process races (another
+    // worker, or a scan started via the /gloop skill while a UI scan runs).
     if (isReviewActive(prId)) {
-      console.log(`[scan] route: review already in progress for ${prId} — 409`);
+      console.log(`[scan] route: in-memory lock says review already in progress for ${prId} — 409`);
       return NextResponse.json(
         { error: "A review is already in progress for this PR. Wait for it to finish before re-scanning." },
+        { status: 409 },
+      );
+    }
+    const activeScan = await assertNoActiveScan(prId, force);
+    if (activeScan.ok === false) {
+      console.log(`[scan] route: DB says scan ${activeScan.runId} already in progress for ${prId} — 409`);
+      return NextResponse.json(
+        {
+          error: "SCAN_IN_PROGRESS",
+          runId: activeScan.runId,
+          startedAt: activeScan.startedAt,
+          triggerReason: activeScan.triggerReason,
+          model: activeScan.model,
+          message: `Scan already running (started ${activeScan.startedAt.toISOString()}). Use ?force=true to override.`,
+        },
         { status: 409 },
       );
     }
@@ -138,8 +154,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
     acquired = true;
 
     await prisma.pullRequest.updateMany({ where: { id: prId }, data: { status: 'In Progress' } });
-    const deletedLogs = await prisma.reviewLog.deleteMany({ where: { prId } });
-    console.log(`[scan] route: status set to In Progress, deleted ${deletedLogs.count} stale review logs`);
+    console.log(`[scan] route: status set to In Progress`);
 
     const reviewRunId = await createReviewRun({
       prId,

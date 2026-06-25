@@ -7,16 +7,22 @@ export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
     const prId = searchParams.get("prId");
+    const reviewRunId = searchParams.get("reviewRunId");
 
-    if (!prId) {
-      return NextResponse.json({ error: "Missing prId query parameter" }, { status: 400 });
+    if (!prId && !reviewRunId) {
+      return NextResponse.json(
+        { error: "Missing prId or reviewRunId query parameter" },
+        { status: 400 }
+      );
     }
 
+    const where = reviewRunId ? { reviewRunId } : { prId };
+
     const logs = await prisma.reviewLog.findMany({
-      where: { prId },
+      where,
       orderBy: { createdAt: "asc" },
-      take: 100,
-      select: { id: true, message: true, level: true, createdAt: true },
+      take: 200,
+      select: { id: true, message: true, level: true, createdAt: true, reviewRunId: true },
     });
 
     return NextResponse.json(logs);

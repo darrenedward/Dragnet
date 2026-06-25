@@ -12,6 +12,7 @@ import {
   computeDiffHash,
   computeReviewConfigHash,
   shortHash,
+  assertNoActiveScan,
   createReviewRun,
   getLatestCompletedReview,
 } from "@/src/lib/reviewFreshness";
@@ -23,8 +24,13 @@ import {
  * for the triggerReason, file refresh, and run lifecycle.
  *
  * Returns the PR's sourceBranch so callers can format user-facing strings.
+ * Returns `conflict: true` if another scan is already running on the PR
+ * (caller surfaces a SCAN_IN_PROGRESS message instead of starting a race).
  */
-async function startTrackedReview(pr: any, repo: any): Promise<{ sourceBranch: string }> {
+async function startTrackedReview(pr: any, repo: any): Promise<
+  | { sourceBranch: string }
+  | { conflict: true; runId: string; startedAt: Date }
+> {
   const chatChain = getChatChain();
   let files: any[] = [];
   if (repo?.path && pr.sourceBranch) {
@@ -38,6 +44,17 @@ async function startTrackedReview(pr: any, repo: any): Promise<{ sourceBranch: s
   const configHash = chatChain.length > 0
     ? computeReviewConfigHash(chatChain, shortHash(SYSTEM_INSTRUCTION))
     : "";
+
+  // Concurrency guard — the /gloop skill may invoke prcheck while a
+  // UI-triggered scan is still running. Reject the duplicate scan.
+  const activeScan = await assertNoActiveScan(pr.id, false);
+  if (activeScan.ok === false) {
+    return {
+      conflict: true,
+      runId: activeScan.runId,
+      startedAt: activeScan.startedAt,
+    };
+  }
 
   const reviewRunId = await createReviewRun({
     prId: pr.id,
@@ -205,9 +222,12 @@ async function handlePrCheck(args: any): Promise<string> {
     }
   }
 
-  await startTrackedReview(pr, repo);
+  const started = await startTrackedReview(pr, repo);
+  if ("conflict" in started) {
+    return `> ⚠ **Scan already in progress** for PR \`${pr.sourceBranch}\` (started ${started.startedAt.toISOString()}). Re-run \`prcheck ${pr.sourceBranch}\` after it completes.`;
+  }
 
-  return `> **Review started** for PR \`${pr.sourceBranch}\`.\n>\n> This runs in the background. Check results with \`prcheckstatus ${pr.sourceBranch}\` or view in the GrepLoop dashboard.\n>\n> Alternatively, use \`prcomments ${pr.sourceBranch}\` for the latest persisted findings.`;
+  return `> **Review started** for PR \`${started.sourceBranch}\`.\n>\n> This runs in the background. Check results with \`prcheckstatus ${started.sourceBranch}\` or view in the GrepLoop dashboard.\n>\n> Alternatively, use \`prcomments ${started.sourceBranch}\` for the latest persisted findings.`;
 }
 
 async function handlePrCheckStatus(args: any): Promise<string> {
@@ -359,10 +379,16 @@ async function handleLegacyCommand(body: any, defRepo: string | null) {
           message: `> ⚠ **${freshness.kind === "INDEX_REQUIRED" ? "Index required" : "Stale index"}.** ${freshness.message}`,
         });
       }
-      await startTrackedReview(pr, repo);
+      const started = await startTrackedReview(pr, repo);
+      if ("conflict" in started) {
+        return NextResponse.json({
+          status: "Conflict",
+          message: `> ⚠ **Scan already in progress** for \`${pr.sourceBranch}\` (started ${started.startedAt.toISOString()}). Poll with \`prcheckstatus ${pr.sourceBranch}\`.`,
+        }, { status: 409 });
+      }
       return NextResponse.json({
         status: "Accepted",
-        message: `> **Review started** for \`${pr.sourceBranch}\`. Poll with \`prcheckstatus ${pr.sourceBranch}\`.`,
+        message: `> **Review started** for \`${started.sourceBranch}\`. Poll with \`prcheckstatus ${started.sourceBranch}\`.`,
       });
     }
     if (cmdName.endsWith("prcomments") || cmdName.endsWith("comments")) {

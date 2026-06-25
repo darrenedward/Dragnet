@@ -309,7 +309,6 @@ export default function App() {
                   repoIndexedAt={activeRepo?.indexedAt ?? null}
                   repoId={d.selectedRepoId}
                   onIndexComplete={d.handleTriggerReviewPass}
-                  logs={d.logs}
                 />
               )}
             </AnimatePresence>

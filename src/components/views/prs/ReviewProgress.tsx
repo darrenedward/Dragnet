@@ -8,11 +8,13 @@ interface LogEntry {
   message: string;
   level: string;
   createdAt: string;
+  reviewRunId?: string | null;
 }
 
 interface Props {
-  prId: string | undefined;
-  isScanning: boolean;
+  prId?: string;
+  reviewRunId?: string | null;
+  isScanning?: boolean;
 }
 
 const LEVEL_ICONS: Record<string, React.ReactNode> = {
@@ -29,7 +31,7 @@ const LEVEL_COLORS: Record<string, string> = {
   error: "text-rose-300",
 };
 
-export default function ReviewProgress({ prId, isScanning }: Props) {
+export default function ReviewProgress({ prId, reviewRunId, isScanning }: Props) {
   const [expanded, setExpanded] = useState(true);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -38,7 +40,7 @@ export default function ReviewProgress({ prId, isScanning }: Props) {
   const logCountRef = useRef(0);
 
   useEffect(() => {
-    if (!prId || !isScanning) {
+    if (!reviewRunId) {
       setLogs([]);
       logSignatureRef.current = "";
       logCountRef.current = 0;
@@ -46,13 +48,12 @@ export default function ReviewProgress({ prId, isScanning }: Props) {
     }
 
     let cancelled = false;
-    setLogs([]);
     logSignatureRef.current = "";
     logCountRef.current = 0;
 
     const poll = async () => {
       try {
-        const res = await fetch(`/api/reviews/log?prId=${prId}`);
+        const res = await fetch(`/api/reviews/log?reviewRunId=${reviewRunId}`);
         if (!cancelled && res.ok) {
           const nextLogs: LogEntry[] = await res.json();
           const signature = nextLogs.map((log) => `${log.id}:${log.level}`).join("|");
@@ -74,7 +75,7 @@ export default function ReviewProgress({ prId, isScanning }: Props) {
       cancelled = true;
       if (pollRef.current) clearTimeout(pollRef.current);
     };
-  }, [prId, isScanning]);
+  }, [reviewRunId]);
 
   useEffect(() => {
     if (expanded && logs.length > logCountRef.current) {
@@ -83,7 +84,7 @@ export default function ReviewProgress({ prId, isScanning }: Props) {
     logCountRef.current = logs.length;
   }, [logs.length, expanded]);
 
-  if (!isScanning || !prId) return null;
+  if (!reviewRunId || !prId) return null;
 
   return (
     <div className="mt-3 border border-white/10 rounded-lg overflow-hidden bg-slate-950/50">
@@ -92,8 +93,14 @@ export default function ReviewProgress({ prId, isScanning }: Props) {
         className="w-full px-3 py-2 bg-slate-900/60 flex items-center justify-between gap-2 text-xs font-mono cursor-pointer hover:bg-slate-900/80 transition-colors"
       >
         <div className="flex items-center gap-2">
-          <Loader2 size={12} className="text-cyan-400 animate-spin" />
-          <span className="text-cyan-400 font-bold uppercase tracking-wider text-[10px]">Review Progress</span>
+          {isScanning ? (
+            <Loader2 size={12} className="text-cyan-400 animate-spin" />
+          ) : (
+            <Cpu size={12} className="text-slate-400" />
+          )}
+          <span className="text-cyan-400 font-bold uppercase tracking-wider text-[10px]">
+            {isScanning ? "Review Progress" : "Last Scan Log"}
+          </span>
           <span className="text-slate-500 text-[10px]">({logs.length} events)</span>
         </div>
         {expanded ? <ChevronDown size={14} className="text-slate-400" /> : <ChevronRight size={14} className="text-slate-400" />}
