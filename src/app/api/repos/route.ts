@@ -1,10 +1,34 @@
 import crypto from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 import { NextResponse } from "next/server";
 import { prisma } from "@/src/lib/prisma";
 import { getRealLocalPrs } from "@/src/lib/getRealLocalPrs";
 import { encryptSecret, hasMasterKey } from "@/src/lib/crypto";
 import { enqueue } from "@/src/services/remoteFetchWorker";
 import { getProviderFromUrl } from "@/src/lib/webhookSetup";
+
+/**
+ * Writes `.greploop/repo-id` into the repo directory after registration so
+ * the /gloop skill (and CLI tools) can discover the repoId without an env
+ * var or a session-authenticated API call. Mode 0600 to match the existing
+ * `.greploop/{cred,llm-presets}.json` pattern.
+ *
+ * Failure is non-fatal — the repo still registers. The skill will surface
+ * a clear "set GREPLOOP_REPO_ID" message if it can't read this file.
+ */
+function writeRepoIdMarker(repoPath: string, repoId: string): void {
+  try {
+    const greploopDir = path.join(repoPath, ".greploop");
+    if (!fs.existsSync(greploopDir)) {
+      fs.mkdirSync(greploopDir, { recursive: true, mode: 0o700 });
+    }
+    const markerPath = path.join(greploopDir, "repo-id");
+    fs.writeFileSync(markerPath, repoId + "\n", { mode: 0o600 });
+  } catch (err: any) {
+    console.warn(`[repos] failed to write .greploop/repo-id marker for ${repoId}:`, err.message);
+  }
+}
 
 export async function GET() {
   try {
@@ -116,6 +140,7 @@ export async function POST(req: Request) {
       }
 
       await getRealLocalPrs(repoPath, cleanId);
+      writeRepoIdMarker(repoPath, cleanId);
       return NextResponse.json({ success: true, id: cleanId }, { status: 201 });
     }
 

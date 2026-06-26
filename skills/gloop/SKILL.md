@@ -28,9 +28,9 @@ Typical workflow: `/gloop` → pick a PR → `/gloop 1` → see rating → `/glo
 The skill needs the GrepLoop `repoId` for the current project. It's a string like `greploop-1782121720477` (slug + timestamp).
 
 Resolve in this order:
-1. `GREPLOOP_REPO_ID` env var (preferred — set it in shell rc or project `.env.local`).
-2. `cat .greploop/repo-id` if the file exists (write it once during onboarding).
-3. If neither is set, **stop and tell the user**: "Set `GREPLOOP_REPO_ID` to your repo's ID (find it in the GrepLoop dashboard URL: `/repos/<repoId>`), or run `/gloop help` for setup instructions." Do NOT try to call `/api/repos/resolve` — it requires a browser session cookie and will 401 against an API key.
+1. Read `.greploop/repo-id` in the current repo's root (written automatically when the repo was registered via the GrepLoop UI). Use `git rev-parse --show-toplevel` to find the repo root, then read `<root>/.greploop/repo-id`. Strip whitespace.
+2. Fall back to `GREPLOOP_REPO_ID` env var if the marker file is missing (e.g. repo was registered before this feature shipped, or the directory was copied without `.greploop/`).
+3. If neither yields a repoId, **stop and tell the user**: "No `.greploop/repo-id` marker found. Re-register the repo in the GrepLoop UI to write one, or set `GREPLOOP_REPO_ID` manually." Do NOT call `/api/repos/resolve` — it requires a browser session cookie and 401s against an API key.
 
 ## Auth
 
@@ -146,6 +146,6 @@ Full agentic scans take 5-25 min depending on PR size and model. Poll `prcheckst
 ## Preconditions
 
 - GrepLoop dev server running on port 3300 (`npm run dev` in the GrepLoop repo).
-- Current repo registered and indexed in GrepLoop.
-- `GREPLOOP_API_KEY` and `GREPLOOP_REPO_ID` env vars set (see "Resolving the repoId").
+- Current repo registered and indexed in GrepLoop (writes `.greploop/repo-id` automatically).
+- `GREPLOOP_API_KEY` env var set (generate from GrepLoop UI → Settings → API Keys).
 - A PR exists for the current branch (or pass `<n>` explicitly to pick from the list).
