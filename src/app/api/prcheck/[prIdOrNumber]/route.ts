@@ -7,11 +7,11 @@ import { IndexingService } from "@/src/services/indexingService";
 import { assertIndexFresh } from "@/src/lib/indexFreshness";
 import { refreshPrFiles, isBranchMerged } from "@/src/lib/getRealLocalPrs";
 import { getChatChain } from "@/src/lib/llmClient";
+import { acquireReviewLock, endReview } from "@/src/lib/reviewLocks";
 import {
   computeDiffHash,
   computeReviewConfigHash,
   shortHash,
-  assertNoActiveScan,
   createReviewRun,
   completeReviewRun,
 } from "@/src/lib/reviewFreshness";
@@ -27,6 +27,11 @@ export async function GET(req: Request, { params }: { params: Promise<{ prIdOrNu
   // between createReviewRun and the return) throws. Without this, the run
   // stays in_progress and the next call 409s with SCAN_IN_PROGRESS.
   let reviewRunId: string | null = null;
+  // Tracks whether THIS request acquired the in-memory lock, so a failure
+  // before acquisition never clears a concurrent scan's lock.
+  let acquired = false;
+  // Hoisted so the catch can call endReview() — `pr` is scoped inside try.
+  let prIdForCleanup: string | null = null;
   try {
     const url = new URL(req.url);
     const repoId = url.searchParams.get("repoId") || undefined;
@@ -37,6 +42,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ prIdOrNu
         message: `Pull request reference "${prIdOrNumber}" could not be matched in the database.`
       }, { status: 404 });
     }
+    prIdForCleanup = pr.id;
 
     const repo = await prisma.repository.findUnique({
       where: { id: pr.repoId },
@@ -96,17 +102,20 @@ export async function GET(req: Request, { params }: { params: Promise<{ prIdOrNu
       : "";
 
     const force = url.searchParams.get("force") === "true";
-    const activeScan = await assertNoActiveScan(pr.id, force);
-    if (activeScan.ok === false) {
-      console.log(`[prcheck] scan ${activeScan.runId} already in progress for ${pr.id} — 409`);
+    // Shared concurrency guard — same helper as scan/route.ts so a UI
+    // scan and a CLI prcheck on the same PR can't race.
+    const lock = await acquireReviewLock(pr.id, force);
+    if (lock.status === "busy") {
+      console.log(`[prcheck] lock acquisition failed for ${pr.id} — 409 (runId=${lock.runId})`);
       return NextResponse.json({
         status: "Error",
         error: "SCAN_IN_PROGRESS",
-        runId: activeScan.runId,
-        startedAt: activeScan.startedAt,
-        message: `A scan is already running for this PR (started ${activeScan.startedAt.toISOString()}). Use ?force=true to override.`,
+        runId: lock.runId,
+        startedAt: lock.startedAt,
+        message: lock.message + (force ? "" : " Use ?force=true to override."),
       }, { status: 409 });
     }
+    acquired = true;
 
     reviewRunId = await createReviewRun({
       prId: pr.id,
@@ -145,6 +154,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ prIdOrNu
     });
   } catch (err: any) {
     console.error("[prcheck error]:", err);
+    if (acquired && prIdForCleanup) endReview(prIdForCleanup);
     if (reviewRunId) {
       try {
         await completeReviewRun(reviewRunId, { status: "failed" });

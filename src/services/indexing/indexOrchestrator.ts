@@ -388,7 +388,26 @@ export class IndexingService {
           }
 
           const vectorStr = JSON.stringify(vector);
-          await prisma.$executeRaw`UPDATE "symbols" SET "summary" = ${summary}, "summaryAt" = ${now}, "embedding" = ${vectorStr}::vector WHERE "id" = ${sym.id}`;
+          try {
+            await prisma.$executeRaw`UPDATE "symbols" SET "summary" = ${summary}, "summaryAt" = ${now}, "embedding" = ${vectorStr}::vector WHERE "id" = ${sym.id}`;
+          } catch (castErr: any) {
+            // Vector dimension mismatch with the pgvector column (likely
+            // EMBEDDING_DIM is wrong for the active provider, or the model
+            // changed). Previously this threw out of the per-symbol loop,
+            // was caught by the outer try at line ~398, and enrichment was
+            // abandoned WITHOUT setting summaryAt — so the same symbol was
+            // retried on every future pass with the same broken cast.
+            //
+            // Fix: persist summaryAt as a sentinel so this symbol is not
+            // retried. The operator needs to fix EMBEDDING_DIM or switch
+            // the embedding provider, then re-index to backfill vectors.
+            console.error(
+              `[indexing] embedding cast failed for symbol ${sym.id} (dim=${vector.length}, expected column dim). ` +
+              `Marking summaryAt to prevent retry loop. Fix EMBEDDING_DIM or embedding provider config and re-index.`,
+              castErr.message,
+            );
+            await prisma.$executeRaw`UPDATE "symbols" SET "summary" = ${summary}, "summaryAt" = ${now} WHERE "id" = ${sym.id}`;
+          }
 
           await new Promise((r) => setTimeout(r, 2000));
         }

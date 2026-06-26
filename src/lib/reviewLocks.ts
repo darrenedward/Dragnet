@@ -17,6 +17,8 @@
  * the PR simply appears "not in progress" and the caller can re-trigger.
  * Acceptable for single-user dev; a persistent queue is the production fix.
  */
+import { assertNoActiveScan } from "./reviewFreshness";
+
 const activeReviews = new Map<string, number>();
 const REVIEW_TTL_MS = 5 * 60 * 1000;
 
@@ -39,4 +41,50 @@ export function beginReview(prId: string): void {
 /** Clear a PR's in-flight marker (call in finally / .catch). */
 export function endReview(prId: string): void {
   activeReviews.delete(prId);
+}
+
+/**
+ * Atomic-feel acquisition of the review lock: in-memory check + DB-backed
+ * active-scan check + beginReview, all from one call. All four scan entry
+ * points (scan/route.ts, prcheck/route.ts, prepush/route.ts, command/route.ts)
+ * MUST go through this helper — otherwise a UI scan and a concurrent CLI
+ * prcheck on the same PR can both pass their respective guards and race
+ * the persistence block.
+ *
+ * On success, caller MUST call `release()` in a finally block.
+ * On failure, caller returns the 409 SCAN_IN_PROGRESS response.
+ *
+ * The residual race window between this check returning ok and
+ * createReviewRun committing is microseconds; for a single-user dev tool
+ * this is acceptable. The production-strength fix is a partial unique index
+ * on ReviewRun(prId) WHERE status='in_progress' (catches duplicates via
+ * Prisma P2002) — out of scope for this PR.
+ */
+export type ReviewLockResult =
+  | { status: "acquired"; release: () => void }
+  | { status: "busy"; runId: string; startedAt: Date; message: string };
+
+export async function acquireReviewLock(
+  prId: string,
+  force: boolean,
+): Promise<ReviewLockResult> {
+  if (!force && isReviewActive(prId)) {
+    return {
+      status: "busy",
+      runId: "(in-memory)",
+      startedAt: new Date(),
+      message: "A review is already in progress for this PR (in-memory lock).",
+    };
+  }
+  const dbCheck = await assertNoActiveScan(prId, force);
+  if (dbCheck.ok === false) {
+    return {
+      status: "busy",
+      runId: dbCheck.runId,
+      startedAt: dbCheck.startedAt,
+      message: `Scan already running (started ${dbCheck.startedAt.toISOString()}).`,
+    };
+  }
+  beginReview(prId);
+  return { status: "acquired", release: () => endReview(prId) };
 }

@@ -40,7 +40,12 @@ export interface PresetView {
   id: string;
   name: string;
   endpoint: string;
-  apiKey: string;
+  /**
+   * Always empty in API responses — never populated by toView(). Kept
+   * optional on the type so legacy UI clients that read preset.apiKey
+   * don't crash (they get undefined, which falsy-checks the same way).
+   */
+  apiKey?: string;
   hasApiKey: boolean;
   chatModel: string;
   embeddingModel: string;
@@ -202,7 +207,11 @@ function toView(p: Preset): PresetView {
     id: p.id,
     name: p.name,
     endpoint: p.endpoint,
-    apiKey: p.apiKey,
+    // apiKey intentionally NOT returned — never expose provider keys to
+    // the browser. UI uses hasApiKey to indicate "key on file". The
+    // /api/llm/models route looks up the stored key by endpoint when
+    // the user clicks Fetch Models, so re-entering the key isn't needed.
+    // To replace a key, the user enters a new value in the input.
     hasApiKey: Boolean(p.apiKey),
     chatModel: p.chatModel,
     embeddingModel: p.embeddingModel,
@@ -210,11 +219,10 @@ function toView(p: Preset): PresetView {
 }
 
 /**
- * Returns the full state with apiKeys visible. The route is already
- * session-gated, and this is a single-user self-hosted app where the
- * operator already owns `.greploop/llm-presets.json` on disk — masking
- * the key in transit only added UX friction (no way to verify/copy the
- * stored value without opening the file).
+ * Returns the state WITHOUT apiKeys — UI uses hasApiKey to render
+ * placeholder text. Keys are written via the presets POST route (which
+ * preserves existing values when the client submits an empty string)
+ * and read server-side via readPresets() (which sees the full shape).
  *
  * For backward compat with older UI clients, also exposes the legacy
  * `activeChatPresetId`/`activeEmbeddingPresetId` keys mirroring the

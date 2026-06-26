@@ -5,13 +5,12 @@ import { refreshPrFiles, isBranchMerged } from "@/src/lib/getRealLocalPrs";
 import { assertIndexFresh } from "@/src/lib/indexFreshness";
 import { IndexingService } from "@/src/services/indexingService";
 import { getChatChain, getEmbeddingChain } from "@/src/lib/llmClient";
-import { isReviewActive, beginReview, endReview } from "@/src/lib/reviewLocks";
+import { acquireReviewLock, endReview } from "@/src/lib/reviewLocks";
 import {
   computeDiffHash,
   computeReviewConfigHash,
   shortHash,
   assertReviewFreshness,
-  assertNoActiveScan,
   createReviewRun,
   completeReviewRun,
 } from "@/src/lib/reviewFreshness";
@@ -152,30 +151,25 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
     // The in-memory isReviewActive check catches same-process races; the
     // DB-backed assertNoActiveScan catches cross-process races (another
     // worker, or a scan started via the /gloop skill while a UI scan runs).
-    if (isReviewActive(prId)) {
-      console.log(`[scan] route: in-memory lock says review already in progress for ${prId} — 409`);
-      return NextResponse.json(
-        { error: "A review is already in progress for this PR. Wait for it to finish before re-scanning." },
-        { status: 409 },
-      );
-    }
-    const activeScan = await assertNoActiveScan(prId, force);
-    if (activeScan.ok === false) {
-      console.log(`[scan] route: DB says scan ${activeScan.runId} already in progress for ${prId} — 409`);
+    // Concurrency guard via shared helper — wraps in-memory lock +
+    // DB-backed assertNoActiveScan + beginReview in one call. The other
+    // three scan entry points (prcheck, prepush, command) use the same
+    // helper so they all share identical guard semantics.
+    const lock = await acquireReviewLock(prId, force);
+    if (lock.status === "busy") {
+      console.log(`[scan] route: lock acquisition failed for ${prId} — 409 (runId=${lock.runId})`);
       return NextResponse.json(
         {
           error: "SCAN_IN_PROGRESS",
-          runId: activeScan.runId,
-          startedAt: activeScan.startedAt,
-          triggerReason: activeScan.triggerReason,
-          model: activeScan.model,
-          message: `Scan already running (started ${activeScan.startedAt.toISOString()}). Use ?force=true to override.`,
+          runId: lock.runId,
+          startedAt: lock.startedAt,
+          message: lock.message + (force ? "" : " Use ?force=true to override."),
         },
         { status: 409 },
       );
     }
-    beginReview(prId);
     acquired = true;
+    const releaseLock = lock.release;
 
     await prisma.pullRequest.updateMany({ where: { id: prId }, data: { status: 'In Progress' } });
     console.log(`[scan] route: status set to In Progress`);

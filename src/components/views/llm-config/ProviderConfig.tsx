@@ -49,7 +49,7 @@ export default function ProviderConfig({
               type={preset.showApiKey ? "text" : "password"}
               value={preset.apiKey}
               onChange={(e) => onUpdate({ apiKey: e.target.value })}
-              placeholder="Paste key (blank for local endpoints)"
+              placeholder={preset.hasApiKey ? "•••••••• (key on file — enter new to replace)" : "Paste key (blank for local endpoints)"}
               autoComplete="off"
               className="w-full bg-slate-900 border border-white/10 rounded-lg px-3 py-2 pr-10 text-xs text-slate-100 font-mono focus:border-cyan-500 outline-none"
             />

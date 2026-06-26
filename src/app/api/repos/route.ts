@@ -124,6 +124,23 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "cloneUrl is required for remote repos." }, { status: 400 });
     }
 
+    // Reject cloneUrl that isn't HTTPS or SSH user@host:path form.
+    // Without this, an attacker could submit "git@evil.com:foo/bar" and
+    // the server would attempt to clone it during remoteFetchWorker.enqueue,
+    // leaking the deployKey to a malicious SSH endpoint. Also reject
+    // null bytes / control chars anywhere in the path or URL.
+    const HTTPS_URL_RE = /^https:\/\/[a-zA-Z0-9.-]+\/.+$/;
+    const SSH_URL_RE = /^[a-zA-Z0-9._-]+@[a-zA-Z0-9.-]+:.+$/;
+    if (!HTTPS_URL_RE.test(cloneUrl) && !SSH_URL_RE.test(cloneUrl)) {
+      return NextResponse.json(
+        { error: "cloneUrl must be HTTPS (https://host/path) or SSH (user@host:path). Other schemes are rejected to prevent credential leakage." },
+        { status: 400 },
+      );
+    }
+    if (/[\0-\x1f]/.test(cloneUrl) || (typeof repoPath === "string" && /[\0-\x1f]/.test(repoPath))) {
+      return NextResponse.json({ error: "Invalid characters in cloneUrl or repoPath." }, { status: 400 });
+    }
+
     if (mode === "ssh" && (!deployKey || typeof deployKey !== "string")) {
       return NextResponse.json({ error: "deployKey is required for SSH mode." }, { status: 400 });
     }

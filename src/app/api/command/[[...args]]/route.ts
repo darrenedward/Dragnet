@@ -6,13 +6,12 @@ import { runPrScan, SYSTEM_INSTRUCTION } from "@/reviewService";
 import { authenticateApiRequest } from "@/src/lib/apiAuth";
 import { IndexingService } from "@/src/services/indexingService";
 import { assertIndexFresh } from "@/src/lib/indexFreshness";
-import { isReviewActive, beginReview, endReview } from "@/src/lib/reviewLocks";
+import { isReviewActive, acquireReviewLock } from "@/src/lib/reviewLocks";
 import { getChatChain } from "@/src/lib/llmClient";
 import {
   computeDiffHash,
   computeReviewConfigHash,
   shortHash,
-  assertNoActiveScan,
   createReviewRun,
   completeReviewRun,
   getLatestCompletedReview,
@@ -46,16 +45,19 @@ async function startTrackedReview(pr: any, repo: any): Promise<
     ? computeReviewConfigHash(chatChain, shortHash(SYSTEM_INSTRUCTION))
     : "";
 
-  // Concurrency guard — the /gloop skill may invoke prcheck while a
-  // UI-triggered scan is still running. Reject the duplicate scan.
-  const activeScan = await assertNoActiveScan(pr.id, false);
-  if (activeScan.ok === false) {
+  // Shared concurrency guard via acquireReviewLock — narrows the race
+  // window that the previous assertNoActiveScan→createReviewRun→beginReview
+  // sequence left open. Same helper as scan/prcheck/prepush so all four
+  // entry points share identical guard semantics.
+  const lock = await acquireReviewLock(pr.id, false);
+  if (lock.status === "busy") {
     return {
       conflict: true,
-      runId: activeScan.runId,
-      startedAt: activeScan.startedAt,
+      runId: lock.runId,
+      startedAt: lock.startedAt,
     };
   }
+  const releaseLock = lock.release;
 
   const reviewRunId = await createReviewRun({
     prId: pr.id,
@@ -67,13 +69,12 @@ async function startTrackedReview(pr: any, repo: any): Promise<
     triggerReason: "prcheck",
   });
 
-  beginReview(pr.id);
   runPrScan(pr.id, files, reviewRunId).then((sr) => {
-    endReview(pr.id);
+    releaseLock();
     prisma.pullRequest.updateMany({ where: { id: pr.id }, data: { rating: sr.rating } }).catch(() => {});
     console.log(`[api] review complete for ${pr.sourceBranch}: ${sr.rating}/10`);
   }).catch((err) => {
-    endReview(pr.id);
+    releaseLock();
     // Mark the run failed — without this, the run stays in_progress and
     // the next command invocation 409s with SCAN_IN_PROGRESS.
     completeReviewRun(reviewRunId, { status: "failed" }).catch((e) => {

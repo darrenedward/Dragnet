@@ -6,11 +6,11 @@ import { IndexingService } from "@/src/services/indexingService";
 import { assertIndexFresh } from "@/src/lib/indexFreshness";
 import { refreshPrFiles, isBranchMerged } from "@/src/lib/getRealLocalPrs";
 import { getChatChain } from "@/src/lib/llmClient";
+import { acquireReviewLock, endReview } from "@/src/lib/reviewLocks";
 import {
   computeDiffHash,
   computeReviewConfigHash,
   shortHash,
-  assertNoActiveScan,
   createReviewRun,
   completeReviewRun,
 } from "@/src/lib/reviewFreshness";
@@ -35,6 +35,11 @@ export async function POST(req: Request) {
   // scan/route.ts and prcheck/route.ts. Without this the run stays
   // in_progress and the next push 409s with SCAN_IN_PROGRESS.
   let reviewRunId: string | null = null;
+  // Tracks whether THIS request acquired the in-memory lock so the catch
+  // never releases a lock owned by a concurrent request.
+  let acquiredLock = false;
+  // Hoisted so the catch can call endReview() — `pr` is scoped inside try.
+  let prIdForCleanup: string | null = null;
   try {
     const repo = await prisma.repository.findFirst({
       where: { path: repoPath },
@@ -71,6 +76,7 @@ export async function POST(req: Request) {
         { status: 404 },
       );
     }
+    prIdForCleanup = pr.id;
 
     // Refresh files from the actual git state on disk and create an
     // in_progress ReviewRun. The pre-push hook doesn't short-circuit on
@@ -101,23 +107,24 @@ export async function POST(req: Request) {
       ? computeReviewConfigHash(chatChain, shortHash(SYSTEM_INSTRUCTION))
       : "";
 
-    // Concurrency guard — a UI/skill-triggered scan may already be running.
-    // Pre-push has no ?force flag (it's invoked by the git hook); the user
-    // can re-push after the live scan finishes.
-    const activeScan = await assertNoActiveScan(pr.id, false);
-    if (activeScan.ok === false) {
-      console.log(`[prepush] scan ${activeScan.runId} already in progress for ${pr.id} — 409`);
+    // Shared concurrency guard via reviewLocks helper — prepush has no
+    // ?force flag (it's invoked by the git hook); the user can re-push
+    // after the live scan finishes.
+    const lock = await acquireReviewLock(pr.id, false);
+    if (lock.status === "busy") {
+      console.log(`[prepush] lock acquisition failed for ${pr.id} — 409 (runId=${lock.runId})`);
       return NextResponse.json(
         {
           passed: false,
           error: "SCAN_IN_PROGRESS",
-          runId: activeScan.runId,
-          startedAt: activeScan.startedAt,
-          message: `A scan is already running for this PR (started ${activeScan.startedAt.toISOString()}). Re-push after it completes.`,
+          runId: lock.runId,
+          startedAt: lock.startedAt,
+          message: lock.message + " Re-push after it completes.",
         },
         { status: 409 },
       );
     }
+    acquiredLock = true;
 
     reviewRunId = await createReviewRun({
       prId: pr.id,
@@ -162,6 +169,7 @@ export async function POST(req: Request) {
     });
   } catch (err: any) {
     console.error("Pre-push hook error:", err);
+    if (acquiredLock && prIdForCleanup) endReview(prIdForCleanup);
     if (reviewRunId) {
       try {
         await completeReviewRun(reviewRunId, { status: "failed" });
