@@ -11,6 +11,15 @@ datasource db {
   extensions = [vector]
 }
 
+// v1 is single-tenant: one operator, all repos world-readable to that
+// operator. The Organization/Member/Invitation models below are scaffolding
+// for the multi-tenant v2 (tracked in CLAUDE.md under "Auth: Better Auth
+// (planned — multi-tenant via organization plugin)"). Per the user's
+// no-half-implementations rule, Repository/PullRequest/ReviewRun are NOT
+// given organizationId foreign keys until the full multi-tenancy flow
+// ships in one PR (backfill migration, auth binding to scope queries by
+// org, UI for org switcher, etc.). Adding just the column now would
+// suggest a tenant boundary that the rest of the stack does not enforce.
 model Repository {
   id              String          @id
   name            String
