@@ -13,8 +13,8 @@ Mark each `- [ ]` as `- [x]` when complete. Per user convention: update this fil
 - [x] Add `reviewRuns ReviewRun[]` relation to `PullRequest`.
 - [x] Create `scripts/db-push-direct.sh` (Supabase direct-connection workaround for PgBouncer prepared-statement limit).
 - [x] Create `scripts/synthesize-legacy-review-runs.mjs` (one legacy ReviewRun per distinct prId with existing findings, `triggerReason: 'legacy'`, empty diffHash/reviewConfigHash).
-- [ ] Run `bash scripts/db-push-direct.sh` + `node scripts/synthesize-legacy-review-runs.mjs` against production Supabase (deferred to user — never auto-push schema to remote DB).
-- [ ] Verify: `SELECT count(*) FROM review_runs WHERE trigger_reason = 'legacy'` matches distinct PRs with existing findings (after manual db push).
+- [x] Script deleted 2026-06-26 — legacy-* runs were procedural-fallback template data (model=null, diffHash="", rating=null) that polluted the UI with fake ratings. Purged via `scripts/_purge-legacy.mjs`. New scans always set model + diffHash + triggerReason, never produce legacy-shape rows.
+- [x] ~Run against prod Supabase~ — N/A, script deleted. Prod should run `scripts/_purge-legacy.mjs` instead if it has legacy rows.
 - [x] `npm run lint` clean.
 
 ## Phase 3 — Freshness helpers

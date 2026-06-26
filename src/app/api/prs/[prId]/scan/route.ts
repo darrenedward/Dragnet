@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/src/lib/prisma";
 import { runPrScan, SYSTEM_INSTRUCTION } from "@/reviewService";
-import { refreshPrFiles } from "@/src/lib/getRealLocalPrs";
+import { refreshPrFiles, isBranchMerged } from "@/src/lib/getRealLocalPrs";
 import { assertIndexFresh } from "@/src/lib/indexFreshness";
 import { IndexingService } from "@/src/services/indexingService";
 import { getChatChain, getEmbeddingChain } from "@/src/lib/llmClient";
@@ -91,6 +91,24 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
       console.log(`[scan] route: got ${files.length} files`);
     } else {
       console.log(`[scan] route: no repoPath or sourceBranch - skipping file refresh`);
+    }
+
+    // Merged-branch short-circuit. If the branch is fully merged into base,
+    // there is nothing to review — returning a clean merged state instead
+    // of letting runPrScan throw "No modified files". Also marks the PR
+    // row so the list view can render it as Merged.
+    if (repoPath && pr.sourceBranch && files.length === 0 && isBranchMerged(repoPath, baseBranch, pr.sourceBranch)) {
+      console.log(`[scan] route: branch ${pr.sourceBranch} fully merged into ${baseBranch} — returning merged state`);
+      await prisma.pullRequest.update({
+        where: { id: prId },
+        data: { status: "Merged" },
+      }).catch((e: unknown) => console.warn(`[scan] route: failed to mark PR Merged:`, e));
+      return NextResponse.json({
+        merged: true,
+        message: `Branch "${pr.sourceBranch}" is fully merged into "${baseBranch}". Nothing to review.`,
+        rating: null,
+        findings: [],
+      });
     }
 
     // Review freshness guard. If a completed ReviewRun exists for the same

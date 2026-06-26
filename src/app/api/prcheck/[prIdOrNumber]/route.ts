@@ -5,7 +5,7 @@ import { runPrScan, SYSTEM_INSTRUCTION } from "@/reviewService";
 import { authenticateApiRequest } from "@/src/lib/apiAuth";
 import { IndexingService } from "@/src/services/indexingService";
 import { assertIndexFresh } from "@/src/lib/indexFreshness";
-import { refreshPrFiles } from "@/src/lib/getRealLocalPrs";
+import { refreshPrFiles, isBranchMerged } from "@/src/lib/getRealLocalPrs";
 import { getChatChain } from "@/src/lib/llmClient";
 import {
   computeDiffHash,
@@ -71,6 +71,24 @@ export async function GET(req: Request, { params }: { params: Promise<{ prIdOrNu
       } catch (e) {
         console.warn("[prcheck] refreshPrFiles failed, using cached:", e);
       }
+    }
+
+    // Merged-branch short-circuit — same rationale as scan/route.ts.
+    if (repo.path && pr.sourceBranch && files.length === 0 && isBranchMerged(repo.path, repo.baseBranch || "main", pr.sourceBranch)) {
+      await prisma.pullRequest.update({
+        where: { id: pr.id },
+        data: { status: "Merged" },
+      }).catch((e: unknown) => console.warn("[prcheck] failed to mark PR Merged:", e));
+      return NextResponse.json({
+        status: "Merged",
+        prId: pr.id,
+        title: pr.title,
+        productionGrade: "N/A",
+        rating: "—",
+        assessment: `Branch "${pr.sourceBranch}" is fully merged into "${repo.baseBranch || "main"}". Nothing to review.`,
+        findingsCount: 0,
+        findings: [],
+      });
     }
     const diffHash = computeDiffHash(files);
     const configHash = chatChain.length > 0

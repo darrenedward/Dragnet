@@ -117,10 +117,34 @@ export async function getRealLocalPrs(repoPath: string, repoId: string) {
       // file, race with repo delete, transient pool timeout) doesn't
       // abort the entire scan — other branches still get processed.
       try {
+        const prId = `real-pr-${repoId}-${branch.name.replace(/\//g, "-")}`;
+
+        // Detect fully-merged branches before counting files. A merged
+        // branch produces zero diff against base — but the PR row may
+        // already exist from when the branch had pending changes. Mark
+        // it "Merged" so the list view can show it greyed-out instead
+        // of letting a later scan fail with "No modified files".
+        const merged = isBranchMerged(resolvedPath, baseBranch, branch.name);
+        if (merged) {
+          const existing = await prisma.pullRequest.findUnique({
+            where: { id: prId },
+            select: { id: true, status: true },
+          });
+          if (existing && existing.status !== "Merged") {
+            await prisma.pullRequest.update({
+              where: { id: prId },
+              data: {
+                status: "Merged",
+                commitHash: branch.hash,
+              },
+            });
+            console.log(`[scan] getRealLocalPrs: marked ${prId} as Merged (branch fully merged into ${baseBranch})`);
+          }
+          continue;
+        }
+
         const filesList = collectBranchFiles(resolvedPath, baseBranch, branch.name);
         if (filesList.length === 0) continue;
-
-        const prId = `real-pr-${repoId}-${branch.name.replace(/\//g, "-")}`;
 
         // Preserve existing status — the background poll must NOT reset a
         // PR that is currently "In Progress" (scanning) or "Completed" back
@@ -213,6 +237,21 @@ function detectBaseBranch(repoPath: string, configuredBase: string): string {
 }
 
 /**
+ * True if `branch` is reachable from `baseBranch` — i.e. fully merged.
+ * Uses `git merge-base --is-ancestor` which exits 0 when the first arg
+ * is an ancestor of the second. Any non-zero exit (not merged, bad ref,
+ * missing repo) returns false.
+ */
+export function isBranchMerged(repoPath: string, baseBranch: string, branch: string): boolean {
+  try {
+    git(["merge-base", "--is-ancestor", branch, baseBranch], repoPath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Returns all local branches sorted alphabetically by name. The
  * `--sort=refname` flag guarantees stable ordering across runs.
  */
@@ -221,7 +260,7 @@ function listBranches(repoPath: string): BranchInfo[] {
     [
       "for-each-ref",
       "refs/heads/",
-      "--format=%(refname:short)|%(objectname:short)|%(committerdate:iso-strict)|%(authorname)|%(subject)",
+      "--format=%(refname:short)|%(objectname)|%(committerdate:iso-strict)|%(authorname)|%(subject)",
       "--sort=refname",
     ],
     repoPath,

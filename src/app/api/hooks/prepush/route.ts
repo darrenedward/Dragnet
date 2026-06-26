@@ -4,7 +4,7 @@ import { runPrScan, SYSTEM_INSTRUCTION } from "@/reviewService";
 import { authenticateApiRequest } from "@/src/lib/apiAuth";
 import { IndexingService } from "@/src/services/indexingService";
 import { assertIndexFresh } from "@/src/lib/indexFreshness";
-import { refreshPrFiles } from "@/src/lib/getRealLocalPrs";
+import { refreshPrFiles, isBranchMerged } from "@/src/lib/getRealLocalPrs";
 import { getChatChain } from "@/src/lib/llmClient";
 import {
   computeDiffHash,
@@ -84,6 +84,17 @@ export async function POST(req: Request) {
       } catch (e) {
         console.warn("[prepush] refreshPrFiles failed, using cached PrFiles:", e);
       }
+    }
+
+    // Merged-branch short-circuit. Pre-push shouldn't fire for a merged
+    // branch in normal flow (you don't push to a branch that's already
+    // merged), but if it does, exit clean — no point gating an empty diff.
+    if (repo.path && pr.sourceBranch && files.length === 0 && isBranchMerged(repo.path, repo.baseBranch || "main", pr.sourceBranch)) {
+      return NextResponse.json({
+        passed: true,
+        merged: true,
+        message: `Branch "${pr.sourceBranch}" is fully merged into "${repo.baseBranch || "main"}". Nothing to review.`,
+      });
     }
     const diffHash = computeDiffHash(files);
     const configHash = chatChain.length > 0
