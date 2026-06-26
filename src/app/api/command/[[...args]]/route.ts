@@ -14,6 +14,7 @@ import {
   shortHash,
   assertNoActiveScan,
   createReviewRun,
+  completeReviewRun,
   getLatestCompletedReview,
 } from "@/src/lib/reviewFreshness";
 
@@ -73,6 +74,11 @@ async function startTrackedReview(pr: any, repo: any): Promise<
     console.log(`[api] review complete for ${pr.sourceBranch}: ${sr.rating}/10`);
   }).catch((err) => {
     endReview(pr.id);
+    // Mark the run failed — without this, the run stays in_progress and
+    // the next command invocation 409s with SCAN_IN_PROGRESS.
+    completeReviewRun(reviewRunId, { status: "failed" }).catch((e) => {
+      console.error(`[api] failed to mark ReviewRun ${reviewRunId} failed:`, e);
+    });
     console.error(`[api] review failed for ${pr.sourceBranch}:`, err);
   });
 

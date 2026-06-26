@@ -13,6 +13,7 @@ import {
   assertReviewFreshness,
   assertNoActiveScan,
   createReviewRun,
+  completeReviewRun,
 } from "@/src/lib/reviewFreshness";
 
 export async function POST(req: Request, { params }: { params: Promise<{ prId: string }> }) {
@@ -25,6 +26,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
   // Tracks whether THIS request acquired the review lock, so a failure
   // before acquisition never clears a concurrent scan's lock.
   let acquired = false;
+  // Hoisted so the catch block can mark the run failed if runPrScan (or
+  // anything between createReviewRun and the return) throws. Without this,
+  // the run row stays in_progress forever and the next scan 409s with
+  // SCAN_IN_PROGRESS — see reviewFreshness.ts:assertNoActiveScan.
+  let reviewRunId: string | null = null;
   try {
     const chatChain = getChatChain();
     if (chatChain.length === 0) {
@@ -156,7 +162,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
     await prisma.pullRequest.updateMany({ where: { id: prId }, data: { status: 'In Progress' } });
     console.log(`[scan] route: status set to In Progress`);
 
-    const reviewRunId = await createReviewRun({
+    reviewRunId = await createReviewRun({
       prId,
       repoId: pr.repoId,
       commitHash: pr.commitHash,
@@ -177,6 +183,18 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
   } catch (err: any) {
     console.error(`[scan] route: ERROR:`, err);
     if (acquired) endReview(prId);
+    // Mark the run failed so the next scan doesn't 409 on an orphaned
+    // in_progress row. reviewService handles failures inside runPrScan,
+    // but this backstops throws between createReviewRun and runPrScan
+    // (and any path where reviewService's own catch doesn't fire).
+    if (reviewRunId) {
+      try {
+        await completeReviewRun(reviewRunId, { status: "failed" });
+        console.log(`[scan] route: ReviewRun ${reviewRunId} marked failed`);
+      } catch (runErr) {
+        console.error(`[scan] route: failed to mark ReviewRun failed:`, runErr);
+      }
+    }
     try {
       await prisma.pullRequest.updateMany({ where: { id: prId }, data: { status: 'Failed' } });
       console.log(`[scan] route: PR status set to Failed`);

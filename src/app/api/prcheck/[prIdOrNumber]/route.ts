@@ -13,6 +13,7 @@ import {
   shortHash,
   assertNoActiveScan,
   createReviewRun,
+  completeReviewRun,
 } from "@/src/lib/reviewFreshness";
 
 export async function GET(req: Request, { params }: { params: Promise<{ prIdOrNumber: string }> }) {
@@ -22,6 +23,10 @@ export async function GET(req: Request, { params }: { params: Promise<{ prIdOrNu
   }
 
   const { prIdOrNumber } = await params;
+  // Hoisted so the catch can mark the run failed if runPrScan (or anything
+  // between createReviewRun and the return) throws. Without this, the run
+  // stays in_progress and the next call 409s with SCAN_IN_PROGRESS.
+  let reviewRunId: string | null = null;
   try {
     const url = new URL(req.url);
     const repoId = url.searchParams.get("repoId") || undefined;
@@ -85,7 +90,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ prIdOrNu
       }, { status: 409 });
     }
 
-    const reviewRunId = await createReviewRun({
+    reviewRunId = await createReviewRun({
       prId: pr.id,
       repoId: pr.repoId,
       commitHash: pr.commitHash,
@@ -122,6 +127,13 @@ export async function GET(req: Request, { params }: { params: Promise<{ prIdOrNu
     });
   } catch (err: any) {
     console.error("[prcheck error]:", err);
+    if (reviewRunId) {
+      try {
+        await completeReviewRun(reviewRunId, { status: "failed" });
+      } catch (runErr) {
+        console.error("[prcheck error]: failed to mark ReviewRun failed:", runErr);
+      }
+    }
     return NextResponse.json({ status: "Error", message: err.message }, { status: 500 });
   }
 }

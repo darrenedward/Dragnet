@@ -12,6 +12,7 @@ import {
   shortHash,
   assertNoActiveScan,
   createReviewRun,
+  completeReviewRun,
 } from "@/src/lib/reviewFreshness";
 
 export async function POST(req: Request) {
@@ -30,6 +31,10 @@ export async function POST(req: Request) {
     );
   }
 
+  // Hoisted so the catch can mark the run failed on throw — same fix as
+  // scan/route.ts and prcheck/route.ts. Without this the run stays
+  // in_progress and the next push 409s with SCAN_IN_PROGRESS.
+  let reviewRunId: string | null = null;
   try {
     const repo = await prisma.repository.findFirst({
       where: { path: repoPath },
@@ -103,7 +108,7 @@ export async function POST(req: Request) {
       );
     }
 
-    const reviewRunId = await createReviewRun({
+    reviewRunId = await createReviewRun({
       prId: pr.id,
       repoId: repo.id,
       commitHash: sha || pr.commitHash,
@@ -146,6 +151,13 @@ export async function POST(req: Request) {
     });
   } catch (err: any) {
     console.error("Pre-push hook error:", err);
+    if (reviewRunId) {
+      try {
+        await completeReviewRun(reviewRunId, { status: "failed" });
+      } catch (runErr) {
+        console.error("Pre-push hook: failed to mark ReviewRun failed:", runErr);
+      }
+    }
     return NextResponse.json(
       { error: err.message, passed: false },
       { status: 500 },
