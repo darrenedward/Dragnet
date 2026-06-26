@@ -324,6 +324,10 @@ Do not sugarcoat. Do not soften the blow. If the code is bad, say so. If it's cl
  */
 export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunId?: string): Promise<ScanResult> {
   console.log(`[scan] runPrScan: starting for prId=${prId}, preloadedFiles=${preloadedFiles?.length}`);
+  // Cumulative-char budget for readFile tool calls this scan. Caps context
+  // blow-up + cost DoS — see readFile tool implementation below.
+  let readfileCharsThisScan = 0;
+  const READFILE_BUDGET_CHARS = 200_000; // ~50k tokens, ~5×1000-line files
   // 1. Fetch Pull Request details
   const pr = await prisma.pullRequest.findUnique({ where: { id: prId } });
   if (!pr) {
@@ -366,15 +370,40 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
       where: { repoId: pr.repoId, filePath: { in: files.map((f) => f.filename) } },
     });
     if (symbolList && symbolList.length > 0) {
+      // Batch-fetch all caller edges + caller symbols in 2 round-trips,
+      // then group in memory. Previous code did N+M round-trips: per
+      // symbol a findMany(callers), then per-caller a findUnique for the
+      // caller's name. ~300 queries on a 50-file PR; now 3 total.
+      const symIds = symbolList.map(s => s.id);
+      const [allCallerEdges, allCallerSyms] = await Promise.all([
+        prisma.edge.findMany({ where: { repoId: pr.repoId, toId: { in: symIds } } }),
+        prisma.symbol.findMany({ where: { repoId: pr.repoId, id: { in: symIds } }, select: { id: true, name: true } }),
+      ]);
+      // Build a lookup of callerSymbol id → name for any fromId we see.
+      // Note: edges may originate from symbols outside the modified-file
+      // set, so we also fetch those names in one shot below if needed.
+      const callerIds = [...new Set(allCallerEdges.map(e => e.fromId))];
+      const externalCallerSyms = await prisma.symbol.findMany({
+        where: { id: { in: callerIds } },
+        select: { id: true, name: true },
+      });
+      const callerNameById = new Map<string, string>();
+      for (const s of [...allCallerSyms, ...externalCallerSyms]) callerNameById.set(s.id, s.name);
+      const edgesByCallee = new Map<string, typeof allCallerEdges>();
+      for (const e of allCallerEdges) {
+        const arr = edgesByCallee.get(e.toId!) || [];
+        arr.push(e);
+        edgesByCallee.set(e.toId!, arr);
+      }
       codebaseContext += "\n=== CODEBASE AST SYMBOLS DETECTED & MODIFIED IN PR ===\n";
       for (const sym of symbolList) {
         codebaseContext += `- Symbol: "${sym.name}" (${sym.kind}) defined at "${sym.filePath}" [lines ${sym.lineStart}-${sym.lineEnd}] in ${sym.language}\n`;
-        const callers = await prisma.edge.findMany({ where: { repoId: pr.repoId, toId: sym.id } });
-        if (callers && callers.length > 0) {
+        const callers = edgesByCallee.get(sym.id) || [];
+        if (callers.length > 0) {
           codebaseContext += "  Codebase call reference linkages (Call graph propagation):\n";
           for (const caller of callers) {
-            const callerSym = await prisma.symbol.findUnique({ where: { id: caller.fromId } });
-            codebaseContext += `    * Called by: "${callerSym ? callerSym.name : "Unknown code block"}" in file "${caller.filePath}" at line ${caller.line}\n`;
+            const callerName = callerNameById.get(caller.fromId) || "Unknown code block";
+            codebaseContext += `    * Called by: "${callerName}" in file "${caller.filePath}" at line ${caller.line}\n`;
           }
         }
       }
@@ -630,18 +659,56 @@ ${diffPayload}${deterministicPayload}`;
                   if (repo) {
                     const repoPath = repo.localPath || repo.path;
                     if (repoPath) {
-                      const absolutePath = path.resolve(repoPath, fnArgs.filePath);
                       const resolvedRepoPath = path.resolve(repoPath);
-                      if (!absolutePath.startsWith(resolvedRepoPath)) {
+                      const absolutePath = path.resolve(resolvedRepoPath, fnArgs.filePath);
+                      // Path-traversal defense: use path.relative + path.sep
+                      // boundary, NOT startsWith. startsWith("/home/u/myrepo")
+                      // also matches "/home/u/myrepo-secrets/..." — escapes
+                      // sandbox via a sibling directory sharing the prefix.
+                      // The codebase's own findingVerifier.ts uses this
+                      // exact pattern; mirror it here.
+                      const rel = path.relative(resolvedRepoPath, absolutePath);
+                      const escapes = rel.startsWith("..") || path.isAbsolute(rel);
+                      // Symlink defense: resolve the real path AFTER the
+                      // relative-check (which uses the lexical path). A
+                      // symlink inside the repo pointing outside would
+                      // pass the rel check but escape on realpath.
+                      let realPath: string | null = null;
+                      if (!escapes) {
+                        try {
+                          realPath = fs.realpathSync(absolutePath);
+                          const realRepo = fs.realpathSync(resolvedRepoPath);
+                          const realRel = path.relative(realRepo, realPath);
+                          if (realRel.startsWith("..") || path.isAbsolute(realRel)) {
+                            realPath = null;
+                          }
+                        } catch {
+                          realPath = null; // ENOENT etc — handled below
+                        }
+                      }
+                      if (escapes || realPath === null) {
                         toolResult = "Error: Path traversal detected. Access to paths outside the repository is strictly forbidden.";
-                      } else if (fs.existsSync(absolutePath)) {
-                        const content = fs.readFileSync(absolutePath, "utf-8");
-                        const addLineNumbers = (text: string) => text.split("\n").map((line, i) => `${i + 1}: ${line}`).join("\n");
-                        // Truncate to 1000 lines max for safety
-                        const lines = content.split("\n");
-                        const truncLines = lines.slice(0, 1000);
-                        toolResult = addLineNumbers(truncLines.join("\n")) + (lines.length > 1000 ? "\n...[TRUNCATED]" : "");
-                        resultSummary = `Read ${truncLines.length} lines from ${fnArgs.filePath}`;
+                      } else if (fs.existsSync(realPath)) {
+                        // Cumulative-context budget: refuse reads once the
+                        // session has already pushed READFILE_BUDGET_CHARS
+                        // into messages. Without this cap, an agentic loop
+                        // (or prompt-injected attacker) can repeatedly call
+                        // readFile to balloon the context — every subsequent
+                        // LLM call re-sends the accumulated bytes, blowing
+                        // cost and the context window.
+                        readfileCharsThisScan += fs.readFileSync(realPath, "utf-8").length;
+                        if (readfileCharsThisScan > READFILE_BUDGET_CHARS) {
+                          toolResult = `Error: Cumulative readFile budget (${READFILE_BUDGET_CHARS} chars) exceeded for this review. Use searchCodebase or grep for further exploration.`;
+                          resultSummary = `blocked: budget exceeded`;
+                        } else {
+                          const content = fs.readFileSync(realPath, "utf-8");
+                          const addLineNumbers = (text: string) => text.split("\n").map((line, i) => `${i + 1}: ${line}`).join("\n");
+                          // Truncate to 1000 lines max for safety
+                          const lines = content.split("\n");
+                          const truncLines = lines.slice(0, 1000);
+                          toolResult = addLineNumbers(truncLines.join("\n")) + (lines.length > 1000 ? "\n...[TRUNCATED]" : "");
+                          resultSummary = `Read ${truncLines.length} lines from ${fnArgs.filePath}`;
+                        }
                       } else {
                         toolResult = "Error: File not found.";
                       }
