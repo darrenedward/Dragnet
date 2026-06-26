@@ -23,37 +23,24 @@ export function verifyGitlabToken(token: string, secret: string): boolean {
   }
 }
 
-export function getRepoRemoteUrl(repoPath: string): string {
-  try {
-    return execFileSync("git", ["-C", repoPath, "remote", "get-url", "origin"], {
-      encoding: "utf8",
-      timeout: 5000,
-    }).trim();
-  } catch {
-    return "";
-  }
-}
-
 export async function findRepoByCloneUrl(cloneUrl: string): Promise<{ id: string; localPath: string | null; webhookSecret: string | null } | null> {
+  // DB-only match. Previously this function fell back to spawning a git
+  // subprocess per repo for any repo without a stored cloneUrl — that
+  // turned an unauthenticated webhook POST into N×5s of work BEFORE the
+  // signature check ran (DoS amplification). Local-only repos (no stored
+  // cloneUrl) don't receive webhooks anyway — they have no public endpoint
+  // to be reached from. Drop the subprocess fallback.
   const repos = await prisma.repository.findMany({
     select: { id: true, path: true, localPath: true, cloneUrl: true, webhookSecret: true },
+    where: { cloneUrl: { not: null } },
   });
   const normalizedClone = cloneUrl.replace(/\.git$/, "");
 
   for (const repo of repos) {
-    if (repo.cloneUrl) {
-      if (repo.cloneUrl === cloneUrl || repo.cloneUrl.replace(/\.git$/, "") === normalizedClone) {
-        return { id: repo.id, localPath: repo.localPath || repo.path, webhookSecret: repo.webhookSecret };
-      }
-      continue;
+    if (!repo.cloneUrl) continue;
+    if (repo.cloneUrl === cloneUrl || repo.cloneUrl.replace(/\.git$/, "") === normalizedClone) {
+      return { id: repo.id, localPath: repo.localPath || repo.path, webhookSecret: repo.webhookSecret };
     }
-    if (!repo.path) continue;
-    const remoteUrl = getRepoRemoteUrl(repo.path);
-    if (!remoteUrl) continue;
-    if (remoteUrl === cloneUrl) return { id: repo.id, localPath: repo.path, webhookSecret: repo.webhookSecret };
-    if (remoteUrl.replace(/\.git$/, "") === normalizedClone) return { id: repo.id, localPath: repo.path, webhookSecret: repo.webhookSecret };
-    const sshToHttps = remoteUrl.replace(/^git@[^:]+:/, "https://github.com/").replace(/\.git$/, "");
-    if (sshToHttps === normalizedClone) return { id: repo.id, localPath: repo.path, webhookSecret: repo.webhookSecret };
   }
   return null;
 }

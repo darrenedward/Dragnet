@@ -322,7 +322,14 @@ export class IndexingService {
     for (const item of items) {
       if (IGNORE_DIRS.includes(item)) continue;
       const fullPath = path.join(dir, item);
-      const stat = fs.statSync(fullPath);
+      // lstatSync (not statSync) so symlinks are NOT followed. A malicious
+      // repo containing `secrets -> /etc/` or `dump -> ~/.ssh/id_rsa` would
+      // otherwise have its target read, persisted as Symbol.summary, and
+      // forwarded to the configured chat LLM provider by the background
+      // enricher. Skip the entry entirely — breaking symlinks inside the
+      // repo are not indexed.
+      const stat = fs.lstatSync(fullPath);
+      if (stat.isSymbolicLink()) continue;
       if (stat.isDirectory()) {
         this.walkDirSync(fullPath, fileList);
       } else {
