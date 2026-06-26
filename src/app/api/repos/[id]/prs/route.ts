@@ -16,8 +16,12 @@ const refreshPromises = new Map<string, Promise<any>>();
  * scan runs at most once concurrently per repo — all callers during
  * the scan wait for the same result, so no one observes the partial
  * state inside getRealLocalPrs()'s delete-then-upsert update.
+ *
+ * Merged PRs are excluded by default — they cluttered the active
+ * review queue with already-shipped work. Pass ?include_merged=true
+ * for an archived view.
  */
-export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
     const repo = await prisma.repository.findUnique({ where: { id } });
@@ -34,8 +38,11 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       );
     }
 
+    const includeMerged = new URL(req.url).searchParams.get("include_merged") === "true";
     const prs = await prisma.pullRequest.findMany({
-      where: { repoId: id },
+      where: includeMerged
+        ? { repoId: id }
+        : { repoId: id, status: { not: "Merged" } },
       orderBy: { createdAt: 'desc' }
     });
     return NextResponse.json(prs);
@@ -49,7 +56,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
  * Force a rescan and wait for it. Used by the manual "refresh" button
  * when the user wants the freshest possible state.
  */
-export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
     const repo = await prisma.repository.findUnique({ where: { id } });
@@ -59,8 +66,11 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
 
     if (repo.path) await getRealLocalPrs(repo.path, id);
 
+    const includeMerged = new URL(req.url).searchParams.get("include_merged") === "true";
     const prs = await prisma.pullRequest.findMany({
-      where: { repoId: id },
+      where: includeMerged
+        ? { repoId: id }
+        : { repoId: id, status: { not: "Merged" } },
       orderBy: { createdAt: 'desc' }
     });
     return NextResponse.json(prs);
