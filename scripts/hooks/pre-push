@@ -21,7 +21,7 @@ fi
 
 if [ -z "$DRAGNET_API_KEY" ]; then
   echo "⚠ GrepLoop: DRAGNET_API_KEY not set. Generate a key from GrepLoop UI → LLM Settings → API Keys."
-  echo "  Then: export DRAGNET_API_KEY='gl_...'"
+  echo "  Then: export DRAGNET_API_KEY='dr_...'"
   echo "  Push blocked. Set the key or use --no-verify to bypass."
   exit 1
 fi

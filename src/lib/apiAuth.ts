@@ -2,8 +2,7 @@ import { prisma } from "./prisma";
 import crypto from "crypto";
 import { requireSession } from "./api-auth";
 
-const KEY_PREFIX = "gl_";
-const LEGACY_KEY_PREFIX = "gl_mcp_";
+const KEY_PREFIX = "dr_";
 
 export function generateApiKey(): { raw: string; prefix: string; hash: string } {
   const raw = KEY_PREFIX + crypto.randomBytes(32).toString("hex");
@@ -13,20 +12,20 @@ export function generateApiKey(): { raw: string; prefix: string; hash: string } 
 }
 
 function hashKey(raw: string): string | null {
-  if (!raw.startsWith(KEY_PREFIX) && !raw.startsWith(LEGACY_KEY_PREFIX)) return null;
+  if (!raw.startsWith(KEY_PREFIX)) return null;
   return crypto.createHash("sha256").update(raw).digest("hex");
 }
 
 export async function authenticateApiRequest(req: Request): Promise<{ ok: boolean; error?: string }> {
   const auth = req.headers.get("authorization");
   if (!auth || !auth.startsWith("Bearer ")) {
-    return { ok: false, error: "Missing or invalid Authorization header. Use: Authorization: Bearer gl_<key>" };
+    return { ok: false, error: "Missing or invalid Authorization header. Use: Authorization: Bearer dr_<key>" };
   }
 
   const raw = auth.slice("Bearer ".length).trim();
   const hash = hashKey(raw);
   if (!hash) {
-    return { ok: false, error: "Invalid API key format. Keys start with 'gl_'." };
+    return { ok: false, error: "Invalid API key format. Keys start with 'dr_'." };
   }
 
   const key = await prisma.apiKey.findUnique({ where: { hash } });
@@ -71,7 +70,7 @@ export async function authenticateSessionOrKey(req: Request): Promise<{ ok: bool
   } catch {
     return {
       ok: false,
-      error: "Authentication required. Send a Bearer API key (Authorization: Bearer gl_…) or a valid session cookie.",
+      error: "Authentication required. Send a Bearer API key (Authorization: Bearer dr_…) or a valid session cookie.",
     };
   }
 }

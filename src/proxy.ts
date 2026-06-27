@@ -21,7 +21,7 @@ import { getSessionCookie } from "better-auth/cookies";
  * means, so they must NOT be gated by a browser session cookie:
  *   - /api/auth/*       Better Auth's own handler (login/register/session)
  *   - /api/webhooks/*   HMAC-verified (verifyGithubSignature)
- *   - /api/hooks/*      API key (Authorization: Bearer gl_…) from the CLI/hook
+ *   - /api/hooks/*      API key (Authorization: Bearer dr_…) from the CLI/hook
  *   - /api/command, /api/prcheck, /api/prcomments  API-key endpoints (skill/CLI)
  *
  * Note: /api/keys is intentionally NOT excluded — key minting/listing
@@ -34,7 +34,7 @@ export async function proxy(req: NextRequest) {
       {
         error:
           "Unauthorized. Sign in to GrepLoop, or call API-key endpoints " +
-          "(/api/command, /api/prcheck, /api/prcomments, /api/hooks/*) with Authorization: Bearer gl_<key>.",
+          "(/api/command, /api/prcheck, /api/prcomments, /api/hooks/*) with Authorization: Bearer dr_<key>.",
       },
       { status: 401 },
     );
