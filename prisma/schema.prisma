@@ -54,6 +54,9 @@ model Repository {
   securitySensitivePaths String[] @default([])
   reviewHistory      ReviewHistory[]
   pullRequests       PullRequest[]
+  symbols            Symbol[]
+  edges              Edge[]
+  files              File[]
 
   @@map("repositories")
 }
@@ -214,6 +217,7 @@ model Symbol {
   summary    String?
   summaryAt  BigInt?
   embedding  Unsupported("vector(1024)")?
+  repository Repository @relation(fields: [repoId], references: [id], onDelete: Cascade)
 
   @@index([repoId, filePath])
   @@index([repoId, name])
@@ -230,6 +234,7 @@ model Edge {
   kind     String
   filePath String
   line     Int
+  repository Repository @relation(fields: [repoId], references: [id], onDelete: Cascade)
 
   @@index([repoId, toId, kind])
   @@index([repoId, toId])
@@ -244,6 +249,7 @@ model File {
   filePath String
   fileHash String
   parsedAt BigInt
+  repository Repository @relation(fields: [repoId], references: [id], onDelete: Cascade)
 
   @@id([repoId, filePath])
   @@map("files")

@@ -4,6 +4,7 @@ import { encryptSecret, hasMasterKey } from "@/src/lib/crypto";
 import { enqueue } from "@/src/services/remoteFetchWorker";
 import { getProviderFromUrl } from "@/src/lib/webhookSetup";
 import { authenticateSessionOrKey } from "@/src/lib/apiAuth";
+import { IndexingService } from "@/src/services/indexing";
 
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const auth = await authenticateSessionOrKey(req);
@@ -173,6 +174,7 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: 401 });
   try {
     const { id } = await params;
+    await IndexingService.clearIndex(id);
     await prisma.repository.deleteMany({ where: { id } });
     return NextResponse.json({ success: true });
   } catch (err: any) {
