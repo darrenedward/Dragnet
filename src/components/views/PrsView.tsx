@@ -50,6 +50,22 @@ interface Props {
     chunksSkipped?: number;
   } | null;
   chunks?: ReviewChunk[];
+  // Currently in-progress scan (null when no scan is active). Drives the
+  // live "Large PR Mode" chunk grid and the ReviewProgress log target
+  // while the agentic loop is still running.
+  activeScan?: {
+    id: string;
+    commitHash: string;
+    diffHash: string;
+    startedAt: string;
+    triggerReason: string | null;
+    model: string | null;
+    chunksTotal?: number;
+    chunksCompleted?: number;
+    chunksFailed?: number;
+    chunksSkipped?: number;
+  } | null;
+  activeChunks?: ReviewChunk[];
   isRetryingChunks?: boolean;
   onRetryFailedChunks?: () => void;
   rejectedCount?: number;
@@ -80,6 +96,8 @@ export default function PrsView({
   findings,
   reviewRun,
   chunks,
+  activeScan,
+  activeChunks,
   isRetryingChunks,
   onRetryFailedChunks,
   rejectedCount,
@@ -119,7 +137,11 @@ export default function PrsView({
         />
 
         <SectionLabel>Scan Logs</SectionLabel>
-        <ReviewProgress prId={activePR?.id} reviewRunId={reviewRun?.id} isScanning={isScanning} />
+        <ReviewProgress
+          prId={activePR?.id}
+          reviewRunId={isScanning && activeScan?.id ? activeScan.id : reviewRun?.id}
+          isScanning={isScanning}
+        />
 
         {activePR && (
           <>
@@ -129,6 +151,8 @@ export default function PrsView({
               findings={findings}
               reviewRun={reviewRun}
               chunks={chunks}
+              activeScan={activeScan}
+              activeChunks={activeChunks}
               isRetryingChunks={isRetryingChunks}
               onRetryFailedChunks={onRetryFailedChunks}
               rejectedCount={rejectedCount}

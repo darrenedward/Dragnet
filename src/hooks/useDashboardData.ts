@@ -65,6 +65,23 @@ export function useDashboardData() {
     chunksSkipped?: number;
   } | null>(null);
   const [reviewChunks, setReviewChunks] = useState<ReviewChunk[]>([]);
+  // Currently in-progress scan (null when no scan is active). The findings
+  // endpoint returns this in parallel with the latest COMPLETED reviewRun
+  // so the UI can render live chunk progress + poll iteration logs while
+  // the agentic loop is still running, instead of just a spinner.
+  const [activeScan, setActiveScan] = useState<{
+    id: string;
+    commitHash: string;
+    diffHash: string;
+    startedAt: string;
+    triggerReason: string | null;
+    model: string | null;
+    chunksTotal?: number;
+    chunksCompleted?: number;
+    chunksFailed?: number;
+    chunksSkipped?: number;
+  } | null>(null);
+  const [activeScanChunks, setActiveScanChunks] = useState<ReviewChunk[]>([]);
   const [rejectedCount, setRejectedCount] = useState(0);
   const [rejectedFindings, setRejectedFindings] = useState<Array<{
     id: string; filename: string; line: number | null;
@@ -156,6 +173,8 @@ export function useDashboardData() {
       setFindings([]);
       setReviewRun(null);
       setReviewChunks([]);
+      setActiveScan(null);
+      setActiveScanChunks([]);
       setRejectedCount(0);
       setRejectedFindings([]);
       setStale(false);
@@ -189,6 +208,8 @@ export function useDashboardData() {
           setFindings([]);
           setReviewRun(null);
           setReviewChunks([]);
+          setActiveScan(null);
+          setActiveScanChunks([]);
         }
       }
     } catch (e) {
@@ -217,6 +238,8 @@ export function useDashboardData() {
       setFindings([]);
       setReviewRun(null);
       setReviewChunks([]);
+      setActiveScan(null);
+      setActiveScanChunks([]);
       setRejectedCount(0);
       setRejectedFindings([]);
       setStale(false);
@@ -244,6 +267,8 @@ export function useDashboardData() {
         setFindings(findingsData.findings);
         setReviewRun(findingsData.reviewRun ?? null);
         setReviewChunks(findingsData.chunks ?? []);
+        setActiveScan(findingsData.activeScan ?? null);
+        setActiveScanChunks(findingsData.activeChunks ?? []);
         setRejectedCount(findingsData.rejectedCount ?? 0);
         setRejectedFindings(findingsData.rejectedFindings ?? []);
         setStale(Boolean(findingsData.stale));
@@ -257,6 +282,8 @@ export function useDashboardData() {
         setFindings(findingsData);
         setReviewRun(null);
         setReviewChunks([]);
+        setActiveScan(null);
+        setActiveScanChunks([]);
         setRejectedCount(0);
         setRejectedFindings([]);
         setStale(false);
@@ -652,6 +679,8 @@ export function useDashboardData() {
     findings,
     reviewRun,
     reviewChunks,
+    activeScan,
+    activeScanChunks,
     rejectedCount,
     rejectedFindings,
     stale,

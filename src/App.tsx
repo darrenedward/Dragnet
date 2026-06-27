@@ -298,6 +298,8 @@ export default function App() {
                   findings={d.findings}
                   reviewRun={d.reviewRun}
                   chunks={d.reviewChunks}
+                  activeScan={d.activeScan}
+                  activeChunks={d.activeScanChunks}
                   isRetryingChunks={d.isRetryingChunks}
                   onRetryFailedChunks={d.handleRetryFailedChunks}
                   rejectedCount={d.rejectedCount}

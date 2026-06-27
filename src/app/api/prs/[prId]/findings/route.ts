@@ -1,25 +1,41 @@
 import { NextResponse } from "next/server";
-import { getLatestCompletedReview } from "@/src/lib/reviewFreshness";
+import { getActiveScan, getLatestCompletedReview } from "@/src/lib/reviewFreshness";
 import { authenticateSessionOrKey } from "@/src/lib/apiAuth";
 import { prisma } from "@/src/lib/prisma";
 import { computePrSizeProfile } from "@/src/lib/prSizeProfile";
 import { readPrCommitCount } from "@/src/lib/prSizeProfile.server";
 
+const CHUNK_SELECT = {
+  id: true,
+  label: true,
+  filePaths: true,
+  status: true,
+  skipReason: true,
+  rating: true,
+  summary: true,
+  errorMessage: true,
+  lineCount: true,
+  touchesSecuritySensitive: true,
+  startedAt: true,
+  completedAt: true,
+} as const;
+
 /**
  * GET /api/prs/[prId]/findings
  *
- * Returns findings for the PR's latest completed ReviewRun (excluding
- * verifier-rejected findings) plus a freshness signal.
+ * Returns three views of the PR's review state:
  *
- * - `reviewRun`: metadata about the run (commitHash, diffHash, completedAt,
- *   rating) so the UI can show "Reviewed commit: abc1234".
- * - `stale`: true when the PR's current PrFile diff doesn't match the
- *   run's recorded diffHash (i.e. the diff has moved since the review).
- * - `rejectedCount`: how many findings the verifier rejected — surfaced as
- *   a collapsible "Verifier filtered: N findings" section in the UI.
+ * - `reviewRun` + `findings` + `chunks`: the latest COMPLETED run (the
+ *   "current report"). Findings are filtered to exclude verifier-rejected.
+ *   `chunks` are the per-chunk results for that completed run.
+ * - `activeScan` + `activeChunks`: the currently in-progress run, if any.
+ *   Lets the UI render live chunk progress and poll iteration logs while
+ *   the agentic loop is still running. Null when no scan is active.
+ * - `sizeProfile`: tier (normal/large/oversized) for the PR's current diff.
  *
- * If no completed run exists, returns an empty findings list with
- * `reviewRun: null` so the UI can render the "no review yet" state.
+ * `stale` is true when the PR's current PrFile diff doesn't match the
+ * completed run's recorded diffHash (i.e. the diff has moved since the
+ * review).
  */
 export async function GET(req: Request, { params }: { params: Promise<{ prId: string }> }) {
   // Route-level auth: findings expose review content for the PR. proxy.ts
@@ -29,7 +45,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ prId: st
   try {
     const { prId } = await params;
 
-    const [latest, pr, files] = await Promise.all([
+    const [latest, pr, files, activeScan] = await Promise.all([
       getLatestCompletedReview(prId),
       prisma.pullRequest.findUnique({
         where: { id: prId },
@@ -43,6 +59,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ prId: st
         where: { prId },
         select: { filename: true, additions: true, deletions: true },
       }),
+      getActiveScan(prId),
     ]);
     const commitCount = pr
       ? readPrCommitCount(
@@ -52,26 +69,23 @@ export async function GET(req: Request, { params }: { params: Promise<{ prId: st
         )
       : null;
     const sizeProfile = computePrSizeProfile(files, commitCount);
-    const chunks = latest.reviewRun
-      ? await prisma.reviewChunk.findMany({
-          where: { reviewRunId: latest.reviewRun.id },
-          orderBy: { id: "asc" },
-          select: {
-            id: true,
-            label: true,
-            filePaths: true,
-            status: true,
-            skipReason: true,
-            rating: true,
-            summary: true,
-            errorMessage: true,
-            lineCount: true,
-            touchesSecuritySensitive: true,
-            startedAt: true,
-            completedAt: true,
-          },
-        })
-      : [];
+
+    const [chunks, activeChunks] = await Promise.all([
+      latest.reviewRun
+        ? prisma.reviewChunk.findMany({
+            where: { reviewRunId: latest.reviewRun.id },
+            orderBy: { id: "asc" },
+            select: CHUNK_SELECT,
+          })
+        : Promise.resolve([]),
+      activeScan.reviewRun
+        ? prisma.reviewChunk.findMany({
+            where: { reviewRunId: activeScan.reviewRun.id },
+            orderBy: { id: "asc" },
+            select: CHUNK_SELECT,
+          })
+        : Promise.resolve([]),
+    ]);
 
     if (!latest.reviewRun) {
       return NextResponse.json({
@@ -82,6 +96,21 @@ export async function GET(req: Request, { params }: { params: Promise<{ prId: st
         stale: false,
         sizeProfile,
         chunks,
+        activeScan: activeScan.reviewRun
+          ? {
+              id: activeScan.reviewRun.id,
+              commitHash: activeScan.reviewRun.commitHash,
+              diffHash: activeScan.reviewRun.diffHash,
+              startedAt: activeScan.reviewRun.startedAt,
+              triggerReason: activeScan.reviewRun.triggerReason,
+              model: activeScan.reviewRun.model,
+              chunksTotal: activeScan.reviewRun.chunksTotal,
+              chunksCompleted: activeScan.reviewRun.chunksCompleted,
+              chunksFailed: activeScan.reviewRun.chunksFailed,
+              chunksSkipped: activeScan.reviewRun.chunksSkipped,
+            }
+          : null,
+        activeChunks,
         message: "No completed review yet. Run a scan.",
       });
     }
@@ -107,6 +136,21 @@ export async function GET(req: Request, { params }: { params: Promise<{ prId: st
       stale: latest.stale,
       sizeProfile,
       chunks,
+      activeScan: activeScan.reviewRun
+        ? {
+            id: activeScan.reviewRun.id,
+            commitHash: activeScan.reviewRun.commitHash,
+            diffHash: activeScan.reviewRun.diffHash,
+            startedAt: activeScan.reviewRun.startedAt,
+            triggerReason: activeScan.reviewRun.triggerReason,
+            model: activeScan.reviewRun.model,
+            chunksTotal: activeScan.reviewRun.chunksTotal,
+            chunksCompleted: activeScan.reviewRun.chunksCompleted,
+            chunksFailed: activeScan.reviewRun.chunksFailed,
+            chunksSkipped: activeScan.reviewRun.chunksSkipped,
+          }
+        : null,
+      activeChunks,
     });
   } catch (err: any) {
     console.error("Error fetching findings for PR:", err);

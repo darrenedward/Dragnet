@@ -21,6 +21,13 @@ export interface ReviewRunMeta {
   chunksSkipped?: number;
 }
 
+/**
+ * Subset of ReviewRunMeta used to drive LargePrModePanel during a live
+ * scan. Active in-progress runs don't have rating/completedAt/reliability
+ * yet, so we only require the chunk-count fields (and the run id).
+ */
+export type ActiveScanMeta = Pick<ReviewRunMeta, "id" | "chunksTotal" | "chunksCompleted" | "chunksFailed" | "chunksSkipped" | "reliability">;
+
 const severityOrder = ["blocker", "warning", "suggestion"] as const;
 
 const severityConfig = {
@@ -57,6 +64,12 @@ interface Props {
   stale?: boolean;
   isScanning?: boolean;
   chunks?: ReviewChunk[];
+  // Currently in-progress scan + its live chunks. When isScanning is true
+  // and activeScan has chunks, LargePrModePanel renders from this instead
+  // of the (possibly stale) completed reviewRun — so users see live chunk
+  // progress instead of just a spinner.
+  activeScan?: ActiveScanMeta | null;
+  activeChunks?: ReviewChunk[];
   isRetryingChunks?: boolean;
   onRetryFailedChunks?: () => void;
   onCopySuggestion: (text: string, id: string) => void;
@@ -125,7 +138,7 @@ function parseEvidence(chain: ReviewFinding["evidenceChain"]): Array<{ file: str
   }
 }
 
-export default function ReviewCard({ activePR, findings, reviewRun, rejectedCount, rejectedFindings, stale, isScanning, chunks = [], isRetryingChunks, onRetryFailedChunks, onCopySuggestion, copyFeedback }: Props) {
+export default function ReviewCard({ activePR, findings, reviewRun, rejectedCount, rejectedFindings, stale, isScanning, chunks = [], activeScan, activeChunks = [], isRetryingChunks, onRetryFailedChunks, onCopySuggestion, copyFeedback }: Props) {
   const [copiedAll, setCopiedAll] = useState(false);
   const [showRejected, setShowRejected] = useState(false);
   const handleCopyAll = useCallback(() => {
@@ -210,15 +223,40 @@ export default function ReviewCard({ activePR, findings, reviewRun, rejectedCoun
         </div>
       </div>
 
-      {reviewRun && (reviewRun.chunksTotal ?? 0) > 0 && (
-        <LargePrModePanel
-          reviewRun={reviewRun}
-          chunks={chunks}
-          sizeProfile={activePR?.sizeProfile}
-          isRetrying={isRetryingChunks}
-          onRetryFailedChunks={onRetryFailedChunks}
-        />
-      )}
+      {/* Large PR Mode chunk panel.
+          During a live scan, prefer the in-progress run (activeScan) over
+          the latest completed reviewRun — the completed run's chunks are
+          stale by definition (a new scan is running), and for first-time
+          oversized scans there's no completed run at all. Falling back to
+          activeScan here is what surfaces live chunk progress instead of
+          just the spinner. */}
+      {(() => {
+        const activeHasChunks = isScanning && activeScan && (activeScan.chunksTotal ?? 0) > 0;
+        const completedHasChunks = reviewRun && (reviewRun.chunksTotal ?? 0) > 0;
+        if (activeHasChunks) {
+          return (
+            <LargePrModePanel
+              reviewRun={activeScan}
+              chunks={activeChunks}
+              sizeProfile={activePR?.sizeProfile}
+              isRetrying={isRetryingChunks}
+              onRetryFailedChunks={onRetryFailedChunks}
+            />
+          );
+        }
+        if (completedHasChunks && !isScanning) {
+          return (
+            <LargePrModePanel
+              reviewRun={reviewRun}
+              chunks={chunks}
+              sizeProfile={activePR?.sizeProfile}
+              isRetrying={isRetryingChunks}
+              onRetryFailedChunks={onRetryFailedChunks}
+            />
+          );
+        }
+        return null;
+      })()}
 
       {/* Scanning state — previous findings have been moved to Scan History */}
       {isScanning ? (
@@ -228,9 +266,11 @@ export default function ReviewCard({ activePR, findings, reviewRun, rejectedCoun
             AI review pipeline running
           </p>
           <p className="text-[10px] text-slate-500 font-mono mt-1 max-w-md">
-            {reviewRun
-              ? "Previous findings have moved to Scan History below — watch Review Progress for live iteration logs."
-              : "Watch Review Progress above for live iteration logs."}
+            {activeScan && (activeScan.chunksTotal ?? 0) > 0
+              ? `Chunked scan in progress — ${activeScan.chunksCompleted ?? 0}/${activeScan.chunksTotal} complete. Watch chunk grid above for per-file status.`
+              : reviewRun
+                ? "Previous findings have moved to Scan History below — watch Review Progress for live iteration logs."
+                : "Watch Review Progress above for live iteration logs."}
           </p>
         </div>
       ) : findings.length === 0 ? (

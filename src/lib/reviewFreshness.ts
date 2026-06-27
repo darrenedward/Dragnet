@@ -414,3 +414,48 @@ export async function getLatestCompletedReview(
     stale,
   };
 }
+
+/**
+ * Load the currently in-progress ReviewRun for a PR, if any.
+ *
+ * Distinct from getLatestCompletedReview: that returns the most recent
+ * COMPLETED run (for displaying findings). This returns the in_progress
+ * run so the UI can render live chunk progress, poll iteration logs, and
+ * surface "scanning commit X" while the agentic loop is still running.
+ *
+ * Stale-run reaping is handled upstream by assertNoActiveScan on the next
+ * scan trigger (and by runReaper on cold start), so this just reads what
+ * the DB says — no age-based filtering here.
+ */
+export async function getActiveScan(prId: string): Promise<{
+  reviewRun: {
+    id: string;
+    commitHash: string;
+    diffHash: string;
+    startedAt: Date;
+    triggerReason: string | null;
+    model: string | null;
+    chunksTotal: number;
+    chunksCompleted: number;
+    chunksFailed: number;
+    chunksSkipped: number;
+  } | null;
+}> {
+  const reviewRun = await prisma.reviewRun.findFirst({
+    where: { prId, status: "in_progress" },
+    orderBy: { startedAt: "desc" },
+    select: {
+      id: true,
+      commitHash: true,
+      diffHash: true,
+      startedAt: true,
+      triggerReason: true,
+      model: true,
+      chunksTotal: true,
+      chunksCompleted: true,
+      chunksFailed: true,
+      chunksSkipped: true,
+    },
+  });
+  return { reviewRun };
+}
