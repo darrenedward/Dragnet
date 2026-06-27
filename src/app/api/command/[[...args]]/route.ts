@@ -431,16 +431,26 @@ async function handleLegacyCommand(body: any, defRepo: string | null) {
             message: `> ⚠ **Index required.** ${freshness.message}`,
           });
         }
-        // STALE_INDEX — kick off incremental index and ask the caller to retry.
-        // Starting the review immediately would run it against stale symbols
-        // (indexFolder is a background path; symbols/edges aren't refreshed
-        // by the time startTrackedReview reads them).
+        // STALE_INDEX — refresh symbols/edges before reviewing. indexFolder
+        // is awaited synchronously, so by the time we return this message
+        // the index is already updated; background enrichment (LLM summaries,
+        // embeddings) may still catch up but isn't required for review.
+        // Catch the "already in progress" case so concurrent prcheck calls
+        // don't 500 on each other.
         if (repo.path) {
-          await IndexingService.indexFolder(repo.id, repo.path);
+          try {
+            await IndexingService.indexFolder(repo.id, repo.path);
+          } catch (err: unknown) {
+            if (err instanceof Error && err.message.includes("already in progress")) {
+              // Another request is refreshing — let it finish, then retry.
+            } else {
+              throw err;
+            }
+          }
         }
         return NextResponse.json({
           status: "Accepted",
-          message: `> **Reindexing in progress** for \`${pr.sourceBranch}\`. Retry \`prcheck\` in a few seconds.`,
+          message: `> **Index refreshed** for \`${pr.sourceBranch}\`. Re-run \`prcheck\` to start the review.`,
         });
       }
       const started = await startTrackedReview(pr, repo);
