@@ -1,5 +1,5 @@
 #!/bin/sh
-# greploop uninstall-hooks
+# dragnet uninstall-hooks
 # Removes the pre-push hook from .git/hooks/ of the current repo.
 
 set -e
@@ -14,7 +14,7 @@ HOOK_DST="$REPO_ROOT/.git/hooks/pre-push"
 
 if [ -f "$HOOK_DST" ]; then
   rm "$HOOK_DST"
-  echo "✓ GrepLoop pre-push hook removed from $HOOK_DST"
+  echo "✓ Dragnet pre-push hook removed from $HOOK_DST"
 else
-  echo "No GrepLoop pre-push hook found at $HOOK_DST"
+  echo "No Dragnet pre-push hook found at $HOOK_DST"
 fi

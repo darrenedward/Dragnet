@@ -265,7 +265,7 @@ function PostgresFields({
       {field("Port", "port", dbConfig.dialect === "postgresql" ? "5432" : "6543")}
       {field("Username", "username", "e.g. postgres or root")}
       {passwordField()}
-      <div className="space-y-1.5 sm:col-span-2">{field("Database Name", "database", "e.g. greploop")}</div>
+      <div className="space-y-1.5 sm:col-span-2">{field("Database Name", "database", "e.g. dragnet")}</div>
     </div>
   );
 }
@@ -338,7 +338,7 @@ function ExplanatoryCard() {
           <span>Why Multi-Database?</span>
         </h4>
         <p className="text-[11px] leading-relaxed text-slate-400">
-          GrepLoop supports two Postgres deployment shapes for the same data model:
+          Dragnet supports two Postgres deployment shapes for the same data model:
         </p>
         <ul className="space-y-2 text-[10px] text-slate-500 pl-3 list-disc">
           <li>

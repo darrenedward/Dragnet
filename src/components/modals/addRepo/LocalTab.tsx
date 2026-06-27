@@ -50,7 +50,7 @@ export default function LocalTab({
           </button>
         </div>
         <p className="text-[9px] text-slate-600 mt-1">
-          * Pro tip: Input <strong className="text-slate-400">./</strong> to read branches from the current GrepLoop checkout.
+          * Pro tip: Input <strong className="text-slate-400">./</strong> to read branches from the current Dragnet checkout.
         </p>
       </Field>
 

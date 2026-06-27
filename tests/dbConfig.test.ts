@@ -74,9 +74,9 @@ describe("buildConnectionString", () => {
       port: "5432",
       username: "postgres",
       password: "secret",
-      database: "greploop",
+      database: "dragnet",
     });
-    expect(cs).toBe("postgresql://postgres:secret@localhost:5432/greploop");
+    expect(cs).toBe("postgresql://postgres:secret@localhost:5432/dragnet");
   });
 
   it("URL-encodes special characters in credentials", () => {

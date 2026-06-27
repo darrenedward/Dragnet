@@ -125,7 +125,7 @@ export function useDashboardData() {
       if (Array.isArray(data)) {
         setRepos(data);
         // Reset selection if it points at a repo that no longer exists
-        // (covers the "greploop-core" bootstrap default and deleted repos).
+        // (covers the "dragnet-core" bootstrap default and deleted repos).
         //
         // Read current selection from a ref, not the state closure. The
         // background poller (below) captures the FIRST render's fetchRepos,
@@ -331,7 +331,7 @@ export function useDashboardData() {
   }, []);
 
   // Sync isScanning with the selected PR's status — covers scans triggered
-  // from any source (UI button, /gloop skill, prepush hook, curl). The
+  // from any source (UI button, /dragnet skill, prepush hook, curl). The
   // button-click path stays optimistic because handleTriggerPrScan
   // immediately sets PR.status to "In Progress" in local state, so this
   // effect agrees with the optimistic value rather than fighting it.
@@ -565,7 +565,7 @@ export function useDashboardData() {
     const activePr = prs.find((p) => p.id === selectedPrId && p.repoId === selectedRepoId);
     if (!activePr || !activeRepo) return;
 
-    let mdContent = `# GrepLoop automated PR Code Review Summary Card\n\n`;
+    let mdContent = `# Dragnet automated PR Code Review Summary Card\n\n`;
     mdContent += `### System Details:\n`;
     mdContent += `- **Project:** \`${activeRepo.name}\`\n`;
     mdContent += `- **Pull Request:** \`${activePr.title}\`\n`;
@@ -573,7 +573,7 @@ export function useDashboardData() {
     mdContent += `- **Target/Base Branch:** \`${activePr.targetBranch}\`\n`;
     mdContent += `- **Author Name:** \`${activePr.author}\`\n`;
     mdContent += `- **Scanned On (UTC):** \`${new Date().toISOString()}\`\n`;
-    mdContent += `- **Core Policy Stack:** Compliance GrepLoop Guard v4\n\n`;
+    mdContent += `- **Core Policy Stack:** Compliance Dragnet Guard v4\n\n`;
     mdContent += `--- \n\n`;
 
     mdContent += `## Files Checked in Pull Request:\n`;
@@ -599,7 +599,7 @@ export function useDashboardData() {
       });
     }
 
-    mdContent += `\n\n_Auto compiled by GrepLoop daemon - Local-First PR review agent._`;
+    mdContent += `\n\n_Auto compiled by Dragnet daemon - Local-First PR review agent._`;
 
     const blob = new Blob([mdContent], { type: "text/markdown;charset=utf-8;" });
     const url = URL.createObjectURL(blob);

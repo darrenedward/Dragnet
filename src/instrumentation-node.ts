@@ -2,9 +2,9 @@ import { existsSync, chmodSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 export async function register() {
-  const g = globalThis as typeof globalThis & { __greploopAuditDone?: boolean };
-  if (g.__greploopAuditDone) return;
-  g.__greploopAuditDone = true;
+  const g = globalThis as typeof globalThis & { __dragnetAuditDone?: boolean };
+  if (g.__dragnetAuditDone) return;
+  g.__dragnetAuditDone = true;
 
   let root: string;
   try {
@@ -20,11 +20,11 @@ export async function register() {
     if (existsSync(p)) files.push(p);
   }
 
-  const greploopDir = join(root, ".greploop");
-  if (existsSync(greploopDir)) {
+  const dragnetDir = join(root, ".dragnet");
+  if (existsSync(dragnetDir)) {
     try {
-      for (const entry of readdirSync(greploopDir)) {
-        files.push(join(greploopDir, entry));
+      for (const entry of readdirSync(dragnetDir)) {
+        files.push(join(dragnetDir, entry));
       }
     } catch {}
   }

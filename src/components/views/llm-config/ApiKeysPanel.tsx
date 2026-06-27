@@ -62,8 +62,8 @@ function InstallModal({ tool, origin, apiKey, repoId, onClose }: { tool: ToolId;
       title: "Claude Code",
       steps: [
         {
-          label: "Install the GrepLoop /gloop skill (run from the GrepLoop repo root)",
-          command: `cp -r skills/gloop ~/.claude/skills/`,
+          label: "Install the Dragnet /dragnet skill (run from the Dragnet repo root)",
+          command: `cp -r skills/dragnet ~/.claude/skills/`,
         },
         {
           label: "Set your API key (used by the skill, CLI, and pre-push hook)",
@@ -75,7 +75,7 @@ function InstallModal({ tool, origin, apiKey, repoId, onClose }: { tool: ToolId;
       title: "Cursor",
       steps: [
         {
-          label: "Cursor has no agent-skill system \u2014 call the GrepLoop API directly",
+          label: "Cursor has no agent-skill system \u2014 call the Dragnet API directly",
           command: `curl -s ${baseUrl} -H "Authorization: Bearer ${key}" -H "Content-Type: application/json" -d '{"command":"prlist"}'`,
         },
       ],
@@ -84,8 +84,8 @@ function InstallModal({ tool, origin, apiKey, repoId, onClose }: { tool: ToolId;
       title: "OpenCode",
       steps: [
         {
-          label: "Install the GrepLoop /gloop skill (OpenCode reads ~/.claude/skills)",
-          command: `cp -r skills/gloop ~/.claude/skills/`,
+          label: "Install the Dragnet /dragnet skill (OpenCode reads ~/.claude/skills)",
+          command: `cp -r skills/dragnet ~/.claude/skills/`,
         },
         {
           label: "Set your API key (used by the skill, CLI, and pre-push hook)",
@@ -97,7 +97,7 @@ function InstallModal({ tool, origin, apiKey, repoId, onClose }: { tool: ToolId;
       title: "Codex",
       steps: [
         {
-          label: "Codex has no agent-skill system — call the GrepLoop API directly",
+          label: "Codex has no agent-skill system — call the Dragnet API directly",
           command: `curl -s ${baseUrl} -H "Authorization: Bearer ${key}" -H "Content-Type: application/json" -d '{"command":"prlist"}'`,
         },
       ],
@@ -199,7 +199,7 @@ export default function ApiKeysPanel() {
       const res = await fetch("/api/keys", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: newKeyName || "GrepLoop API Key" }),
+        body: JSON.stringify({ name: newKeyName || "Dragnet API Key" }),
       });
       const data = await res.json();
       if (res.ok) {
@@ -252,7 +252,7 @@ export default function ApiKeysPanel() {
               API Keys
             </h3>
             <p className="text-xs text-slate-400">
-              API keys for remote clients (Claude Code, Cursor, etc.). Set the <code className="text-cyan-400">Authorization: Bearer</code> header when calling GrepLoop's endpoints.
+              API keys for remote clients (Claude Code, Cursor, etc.). Set the <code className="text-cyan-400">Authorization: Bearer</code> header when calling Dragnet's endpoints.
             </p>
           </div>
         </div>
@@ -360,7 +360,7 @@ export default function ApiKeysPanel() {
             </select>
             {selectedRepo && (
               <p className="text-[9px] text-slate-500 font-mono mt-1">
-                Install commands will be scoped to this repo. <code className="text-cyan-400">/gloop 5</code> will use this repo automatically.
+                Install commands will be scoped to this repo. <code className="text-cyan-400">/dragnet 5</code> will use this repo automatically.
               </p>
             )}
           </div>
@@ -386,7 +386,7 @@ export default function ApiKeysPanel() {
                     const res = await fetch("/api/keys", {
                       method: "POST",
                       headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ name: "GrepLoop API Key" }),
+                      body: JSON.stringify({ name: "Dragnet API Key" }),
                     });
                     const data = await res.json();
                     if (res.ok) setNewKeyValue(data.key);

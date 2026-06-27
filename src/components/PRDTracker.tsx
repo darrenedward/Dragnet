@@ -45,7 +45,7 @@ export interface PrdPhase {
 }
 
 export default function PRDTracker() {
-  // Pre-load standard phases representing the full GrepLoop PRD specification
+  // Pre-load standard phases representing the full Dragnet PRD specification
   const initialPhases: PrdPhase[] = [
     {
       id: 'phase1',
@@ -77,7 +77,7 @@ export default function PRDTracker() {
     }
   ];
 
-  // Pre-load comprehensive tasks reflecting the exact functional scope of GrepLoop
+  // Pre-load comprehensive tasks reflecting the exact functional scope of Dragnet
   const initialTasks: PrdTask[] = [
     // Phase 1 tasks
     {
@@ -210,18 +210,18 @@ export default function PRDTracker() {
 
   // Try to load state from LocalStorage, fallback to constants
   const [phases] = useState<PrdPhase[]>(() => {
-    const saved = localStorage.getItem('greploop_prd_phases');
+    const saved = localStorage.getItem('dragnet_prd_phases');
     return saved ? JSON.parse(saved) : initialPhases;
   });
 
   const [tasks, setTasks] = useState<PrdTask[]>(() => {
-    const saved = localStorage.getItem('greploop_prd_tasks');
+    const saved = localStorage.getItem('dragnet_prd_tasks');
     return saved ? JSON.parse(saved) : initialTasks;
   });
 
   // Track state persistence
   useEffect(() => {
-    localStorage.setItem('greploop_prd_tasks', JSON.stringify(tasks));
+    localStorage.setItem('dragnet_prd_tasks', JSON.stringify(tasks));
   }, [tasks]);
 
   // Collapsed phases state
@@ -387,7 +387,7 @@ export default function PRDTracker() {
             </div>
           </div>
           <div className="text-right text-[10px] font-mono text-violet-400">
-            <span className="block font-bold">GrepLoop MVP</span>
+            <span className="block font-bold">Dragnet MVP</span>
             <span className="text-[9px] text-slate-500 uppercase">Interactive roadmap</span>
           </div>
         </div>
@@ -427,7 +427,7 @@ export default function PRDTracker() {
             <button 
               onClick={() => {
                 if (window.confirm("Restore implementation state back to default? All modified values will be soft reset.")) {
-                  localStorage.removeItem('greploop_prd_tasks');
+                  localStorage.removeItem('dragnet_prd_tasks');
                   setTasks(initialTasks);
                 }
               }}
@@ -712,7 +712,7 @@ export default function PRDTracker() {
               <span>Solo-First Strategy</span>
             </h5>
             <p className="text-[11px] text-slate-400 leading-relaxed font-sans">
-              GrepLoop starts with the core offline-first watcher and local reviewer. Check off completed items directly as you build the binary and daemon loops.
+              Dragnet starts with the core offline-first watcher and local reviewer. Check off completed items directly as you build the binary and daemon loops.
             </p>
             <div className="border-t border-white/5 mt-1 pt-2.5 flex items-center justify-between text-[10px] text-slate-500 font-mono">
               <span>Task List Draft: </span>

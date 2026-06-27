@@ -1,5 +1,5 @@
 {
-  "name": "greploop",
+  "name": "dragnet",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -11,7 +11,7 @@
     "test:watch": "vitest",
     "clean": "rm -rf .next",
     "lint": "tsc --noEmit",
-    "greploop": "node scripts/greploop.mjs",
+    "dragnet": "node scripts/dragnet.mjs",
     "install-hooks": "bash scripts/install-hooks.sh",
     "uninstall-hooks": "bash scripts/uninstall-hooks.sh",
     "copy-grammars": "node scripts/copy-grammars.mjs",

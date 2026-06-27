@@ -153,7 +153,7 @@ export default function WebhookPrompt({ repoName, repoId, hasPat, onClose }: Pro
             </p>
           )}
 
-          <p className="text-slate-400">Set up a webhook so GrepLoop is notified on every push:</p>
+          <p className="text-slate-400">Set up a webhook so Dragnet is notified on every push:</p>
 
           {result && (
             <div className={`p-2 rounded text-xs ${result.success ? "bg-emerald-950/30 border border-emerald-800/20 text-emerald-400" : "bg-rose-950/30 border border-rose-800/20 text-rose-400"}`}>

@@ -21,7 +21,7 @@ import {
 
 export async function POST(req: Request, { params }: { params: Promise<{ prId: string }> }) {
   // Route-level auth: this is the UI scan trigger (the API-key path is
-  // /api/command via the /gloop skill). proxy.ts is cookie-PRESENCE only.
+  // /api/command via the /dragnet skill). proxy.ts is cookie-PRESENCE only.
   const auth = await authenticateSessionOrKey(req);
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: 401 });
   const { prId } = await params;
@@ -166,7 +166,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
     // Concurrency guard — shared with the command/prcheck/prepush routes.
     // The in-memory isReviewActive check catches same-process races; the
     // DB-backed assertNoActiveScan catches cross-process races (another
-    // worker, or a scan started via the /gloop skill while a UI scan runs).
+    // worker, or a scan started via the /dragnet skill while a UI scan runs).
     // Concurrency guard via shared helper — wraps in-memory lock +
     // DB-backed assertNoActiveScan + beginReview in one call. The other
     // three scan entry points (prcheck, prepush, command) use the same

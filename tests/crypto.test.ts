@@ -8,7 +8,7 @@ beforeAll(() => {
 });
 
 beforeEach(() => {
-  delete (globalThis as any).__greploopCryptoKey;
+  delete (globalThis as any).__dragnetCryptoKey;
   process.env.DRAGNET_MASTER_KEY = masterKey;
 });
 

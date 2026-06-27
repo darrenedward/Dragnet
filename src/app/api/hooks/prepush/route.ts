@@ -49,7 +49,7 @@ export async function POST(req: Request) {
     });
     if (!repo) {
       return NextResponse.json(
-        { error: `Repository at "${repoPath}" is not registered in GrepLoop. Add it from the Projects sidebar first.` },
+        { error: `Repository at "${repoPath}" is not registered in Dragnet. Add it from the Projects sidebar first.` },
         { status: 404 },
       );
     }
@@ -75,7 +75,7 @@ export async function POST(req: Request) {
 
     if (!pr) {
       return NextResponse.json(
-        { error: `No Pull Request record found for branch "${branch}". Create one by opening GrepLoop and selecting the repo.` },
+        { error: `No Pull Request record found for branch "${branch}". Create one by opening Dragnet and selecting the repo.` },
         { status: 404 },
       );
     }
@@ -193,10 +193,10 @@ export async function POST(req: Request) {
       findingsCount: result.findings.length,
       findings: result.findings,
       message: passed
-        ? `✓ GrepLoop: PR approved (${result.rating}/10)`
+        ? `✓ Dragnet: PR approved (${result.rating}/10)`
         : reliability !== "complete"
-          ? `✗ GrepLoop: PR blocked — Large PR review is ${reliability}. Retry failed chunks or split the PR.`
-          : `✗ GrepLoop: PR blocked — rating ${result.rating}/10 (requires 8+). Fix findings or use --no-verify to bypass.`,
+          ? `✗ Dragnet: PR blocked — Large PR review is ${reliability}. Retry failed chunks or split the PR.`
+          : `✗ Dragnet: PR blocked — rating ${result.rating}/10 (requires 8+). Fix findings or use --no-verify to bypass.`,
       usedModel: result.usedModel,
       sizeProfile,
       largePrMode: "largePrMode" in result ? result.largePrMode : false,

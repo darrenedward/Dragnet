@@ -10,24 +10,24 @@ import { getProviderFromUrl } from "@/src/lib/webhookSetup";
 import { authenticateSessionOrKey } from "@/src/lib/apiAuth";
 
 /**
- * Writes `.greploop/repo-id` into the repo directory after registration so
- * the /gloop skill (and CLI tools) can discover the repoId without an env
+ * Writes `.dragnet/repo-id` into the repo directory after registration so
+ * the /dragnet skill (and CLI tools) can discover the repoId without an env
  * var or a session-authenticated API call. Mode 0600 to match the existing
- * `.greploop/{cred,llm-presets}.json` pattern.
+ * `.dragnet/{cred,llm-presets}.json` pattern.
  *
  * Failure is non-fatal — the repo still registers. The skill will surface
  * a clear "set DRAGNET_REPO_ID" message if it can't read this file.
  */
 function writeRepoIdMarker(repoPath: string, repoId: string): void {
   try {
-    const greploopDir = path.join(repoPath, ".greploop");
-    if (!fs.existsSync(greploopDir)) {
-      fs.mkdirSync(greploopDir, { recursive: true, mode: 0o700 });
+    const dragnetDir = path.join(repoPath, ".dragnet");
+    if (!fs.existsSync(dragnetDir)) {
+      fs.mkdirSync(dragnetDir, { recursive: true, mode: 0o700 });
     }
-    const markerPath = path.join(greploopDir, "repo-id");
+    const markerPath = path.join(dragnetDir, "repo-id");
     fs.writeFileSync(markerPath, repoId + "\n", { mode: 0o600 });
   } catch (err: any) {
-    console.warn(`[repos] failed to write .greploop/repo-id marker for ${repoId}:`, err.message);
+    console.warn(`[repos] failed to write .dragnet/repo-id marker for ${repoId}:`, err.message);
   }
 }
 

@@ -24,8 +24,9 @@ src/generated/prisma/
 *.db
 data.db
 
-# GrepLoop local state (LLM presets, etc.)
-.greploop/
+# Dragnet local state (LLM presets, etc.)
+.dragnet/
+.greploop/  # legacy dir name, kept ignored until physically removed
 .opencode/
 opencode.json
 

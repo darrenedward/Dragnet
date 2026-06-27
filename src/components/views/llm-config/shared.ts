@@ -16,7 +16,7 @@ export const DEFAULT_ENDPOINT = "https://openrouter.ai/api/v1";
  * after a save instead of waiting for the next poll tick. Dispatched on
  * window from index.tsx after a successful PUT.
  */
-export const LLM_PRESETS_CHANGED_EVENT = "greploop:llm-presets-changed";
+export const LLM_PRESETS_CHANGED_EVENT = "dragnet:llm-presets-changed";
 
 export type RoleAccent = "cyan" | "indigo";
 

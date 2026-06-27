@@ -71,12 +71,12 @@ export function buildSshEnv(
 ): { env: Record<string, string>; cleanup: () => void } {
   const baseTmp = process.env.XDG_RUNTIME_DIR || os.tmpdir();
   // mkdtempSync gives a private, unpredictable directory. Earlier versions
-  // used a fixed name `greploop-deploykey-${keyId}` directly in /tmp —
+  // used a fixed name `dragnet-deploykey-${keyId}` directly in /tmp —
   // predictable path + 0o600 file still left the key readable if an attacker
   // won the race between writeFileSync and chmod, or if the cleanup
   // unlinkSync was skipped (process crash). Private 0o700 dir + readonly
   // cleanup of both file and directory closes that.
-  const keyDir = mkdtempSync(path.join(baseTmp, "greploop-key-"));
+  const keyDir = mkdtempSync(path.join(baseTmp, "dragnet-key-"));
   try {
     chmodSync(keyDir, 0o700);
   } catch {

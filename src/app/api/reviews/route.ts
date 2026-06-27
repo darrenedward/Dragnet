@@ -62,7 +62,7 @@ export async function POST(req: Request) {
       // behavior (procedural fallback) fabricated CORS-style hallucinations
       // that looked like real LLM output. Now we leave the findings list
       // empty; if the user wants real findings they can trigger a scan via
-      // /gloop or the dashboard, which uses the live LLM chain.
+      // /dragnet or the dashboard, which uses the live LLM chain.
     }
 
     return NextResponse.json({ success: true, id: keyId }, { status: 201 });

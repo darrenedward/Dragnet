@@ -50,15 +50,15 @@ export default function DashboardSidebar({
     fetchLlmPresets();
     // Re-poll every 10s as a safety net so the sidebar eventually reflects
     // saves done elsewhere. The LlmConfigView also dispatches
-    // `greploop:llm-presets-changed` on save, which triggers an immediate
+    // `dragnet:llm-presets-changed` on save, which triggers an immediate
     // refresh via the handler below — that's the primary sync mechanism.
     const poller = setInterval(fetchLlmPresets, 10000);
     const onChanged = () => fetchLlmPresets();
-    window.addEventListener("greploop:llm-presets-changed", onChanged);
+    window.addEventListener("dragnet:llm-presets-changed", onChanged);
     return () => {
       cancelled = true;
       clearInterval(poller);
-      window.removeEventListener("greploop:llm-presets-changed", onChanged);
+      window.removeEventListener("dragnet:llm-presets-changed", onChanged);
     };
   }, []);
 

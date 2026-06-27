@@ -33,7 +33,7 @@ export async function proxy(req: NextRequest) {
     return NextResponse.json(
       {
         error:
-          "Unauthorized. Sign in to GrepLoop, or call API-key endpoints " +
+          "Unauthorized. Sign in to Dragnet, or call API-key endpoints " +
           "(/api/command, /api/prcheck, /api/prcomments, /api/hooks/*) with Authorization: Bearer dr_<key>.",
       },
       { status: 401 },

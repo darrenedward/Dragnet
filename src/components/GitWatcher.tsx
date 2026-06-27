@@ -110,7 +110,7 @@ export default function GitWatcher({ onTriggerReviewPass, activeRepoId, onRepoCh
   const [isDaemonActive, setIsDaemonActive] = useState(true);
   const [pollingIntervalMs, setPollingIntervalMs] = useState(2000);
   const [logs, setLogs] = useState<WatcherLog[]>([
-    { id: '1', timestamp: new Date().toLocaleTimeString(), type: 'info', message: 'GrepLoop Git Watcher Daemon initialized.' },
+    { id: '1', timestamp: new Date().toLocaleTimeString(), type: 'info', message: 'Dragnet Git Watcher Daemon initialized.' },
     { id: '2', timestamp: new Date().toLocaleTimeString(), type: 'info', message: 'Connected to local SQLite database: data.db' },
     { id: '3', timestamp: new Date().toLocaleTimeString(), type: 'success', message: 'Connection to local git service established.' }
   ]);
@@ -254,7 +254,7 @@ export default function GitWatcher({ onTriggerReviewPass, activeRepoId, onRepoCh
     if (!isMatched) {
       addLog('info', `ℹ Branch '${cleanBranch}' does NOT match configured filter pattern '${repo.branchPattern}'. Skipping auto-review scheduler.`, repo.name);
     } else if (repo.triggerMode === 'mention') {
-      addLog('info', `🤖 Mention-Trigger mode is active. Waiting for manual CLI call, '@PRBot' commit, or '.greploop-review' file...`, repo.name);
+      addLog('info', `🤖 Mention-Trigger mode is active. Waiting for manual CLI call, '@PRBot' commit, or '.dragnet-review' file...`, repo.name);
     } else {
       addLog('warn', `⏱ Branch '${cleanBranch}' matches pattern '${repo.branchPattern}'. Starting quiet period cooldown of ${repo.quietPeriodSeconds}s to ensure commit sequence has stabilized.`, repo.name);
       trackingStatus = 'stabilizing';
@@ -305,7 +305,7 @@ export default function GitWatcher({ onTriggerReviewPass, activeRepoId, onRepoCh
       nextStatus = 'stabilizing';
       nextTimer = repo.quietPeriodSeconds;
     } else if (isMarkerFileCreated) {
-      addLog('success', `✨ Detected '.greploop-review' hook marker in repository stage area!`, repo.name);
+      addLog('success', `✨ Detected '.dragnet-review' hook marker in repository stage area!`, repo.name);
       addLog('warn', `⏱ Triggering immediately! Starting quiet period stabilization (${repo.quietPeriodSeconds}s).`, repo.name);
       nextStatus = 'stabilizing';
       nextTimer = repo.quietPeriodSeconds;
@@ -342,7 +342,7 @@ export default function GitWatcher({ onTriggerReviewPass, activeRepoId, onRepoCh
             repoName: repo.name,
             branch: currentBranch,
             commitHash: newHash,
-            triggerReason: isCommitMention ? '@PRBot review keyword' : 'Stage .greploop-review file trigger'
+            triggerReason: isCommitMention ? '@PRBot review keyword' : 'Stage .dragnet-review file trigger'
           })
         }).then(() => {
           fetchReposFromDb();
@@ -640,7 +640,7 @@ export default function GitWatcher({ onTriggerReviewPass, activeRepoId, onRepoCh
                 <span>Interactive Git Playground Simulator</span>
               </h4>
               <p className="text-[11px] text-slate-400 mt-0.5">
-                Simulate standard developer command executions to watch how GrepLoop's quiet-period reacts.
+                Simulate standard developer command executions to watch how Dragnet's quiet-period reacts.
               </p>
             </div>
             <span className="text-[10px] font-mono text-pink-400 bg-pink-400/5 border border-pink-400/25 px-2 py-0.5 rounded uppercase">
@@ -737,7 +737,7 @@ export default function GitWatcher({ onTriggerReviewPass, activeRepoId, onRepoCh
                     <span className={`text-[10px] font-mono px-1 rounded ${commitPromptOption === 'keyword' ? 'text-amber-400 font-bold bg-amber-400/5':'text-slate-500'}`}>@PRBot review word</span>
                   </label>
 
-                  <label className="flex items-center gap-1 cursor-pointer text-xs select-none" title="Simulates creating a .greploop-review file in checkout tree">
+                  <label className="flex items-center gap-1 cursor-pointer text-xs select-none" title="Simulates creating a .dragnet-review file in checkout tree">
                     <input 
                       type="radio" 
                       name="commit_type" 
@@ -753,7 +753,7 @@ export default function GitWatcher({ onTriggerReviewPass, activeRepoId, onRepoCh
                   onClick={() => simulateNewCommit(selectedRepo.id, simulationCommitMsg, commitPromptOption)}
                   className="bg-amber-500 hover:bg-amber-400 text-black px-3 py-1.5 rounded text-xs font-semibold transition-colors mt-1 hover:shadow-[0_0_12px_rgba(245,158,11,0.2)] cursor-pointer"
                 >
-                  {commitPromptOption === 'normal' ? 'Append Normal Commit' : commitPromptOption === 'keyword' ? 'Append Commit with "@PRBot review" Token' : 'Touch .greploop-review Marker File'}
+                  {commitPromptOption === 'normal' ? 'Append Normal Commit' : commitPromptOption === 'keyword' ? 'Append Commit with "@PRBot review" Token' : 'Touch .dragnet-review Marker File'}
                 </button>
               </div>
             </div>
@@ -774,7 +774,7 @@ export default function GitWatcher({ onTriggerReviewPass, activeRepoId, onRepoCh
               <div className="w-2.5 h-2.5 rounded-full bg-emerald-500/80"></div>
             </div>
             <Terminal size={12} className="text-cyan-400" />
-            <span className="text-[11px] text-cyan-400/95 font-semibold font-mono">greploop-watcher --daemon</span>
+            <span className="text-[11px] text-cyan-400/95 font-semibold font-mono">dragnet-watcher --daemon</span>
           </div>
 
           <button 

@@ -275,7 +275,7 @@ async function handlePrCheck(args: any): Promise<string> {
     return `> ⚠ **Scan already in progress** for PR \`${pr.sourceBranch}\` (started ${started.startedAt.toISOString()}). Re-run \`prcheck ${pr.sourceBranch}\` after it completes.`;
   }
 
-  return `> **Review started** for PR \`${started.sourceBranch}\`.\n>\n> Size: ${formatSizeProfile(started.sizeProfile)}\n>\n> This runs in the background. Check results with \`prcheckstatus ${started.sourceBranch}\` or view in the GrepLoop dashboard.\n>\n> Alternatively, use \`prcomments ${started.sourceBranch}\` for the latest persisted findings.`;
+  return `> **Review started** for PR \`${started.sourceBranch}\`.\n>\n> Size: ${formatSizeProfile(started.sizeProfile)}\n>\n> This runs in the background. Check results with \`prcheckstatus ${started.sourceBranch}\` or view in the Dragnet dashboard.\n>\n> Alternatively, use \`prcomments ${started.sourceBranch}\` for the latest persisted findings.`;
 }
 
 async function handlePrCheckStatus(args: any): Promise<string> {
@@ -337,7 +337,7 @@ const toolHandlers: Record<string, Handler> = {
 };
 
 export function GET() {
-  return NextResponse.json({ ok: true, message: "GrepLoop API — use POST for JSON-RPC" });
+  return NextResponse.json({ ok: true, message: "Dragnet API — use POST for JSON-RPC" });
 }
 
 export async function POST(req: Request, { params }: { params: Promise<{ args?: string[] }> }) {

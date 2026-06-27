@@ -1,5 +1,5 @@
 {
-  "name": "GrepLoop",
+  "name": "Dragnet",
   "description": "Local-First Automated PR Review Bot - Spec and configuration mapping.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_OPENAI_COMPATIBLE"]

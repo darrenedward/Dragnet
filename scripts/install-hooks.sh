@@ -1,5 +1,5 @@
 #!/bin/sh
-# greploop install-hooks
+# dragnet install-hooks
 # Installs the pre-push hook into .git/hooks/ of the current repo.
 
 set -e
@@ -20,6 +20,6 @@ fi
 
 cp "$HOOK_SRC" "$HOOK_DST"
 chmod +x "$HOOK_DST"
-echo "✓ GrepLoop pre-push hook installed at $HOOK_DST"
-echo "  Pushes to non-default branches will now be reviewed by GrepLoop."
+echo "✓ Dragnet pre-push hook installed at $HOOK_DST"
+echo "  Pushes to non-default branches will now be reviewed by Dragnet."
 echo "  Bypass with: git push --no-verify"

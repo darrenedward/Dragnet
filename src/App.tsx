@@ -74,7 +74,7 @@ export default function App() {
 
           <div className="flex items-baseline gap-2">
             <h1 className="text-base sm:text-lg font-bold text-white tracking-tight" id="main-title-header">
-              GrepLoop
+              Dragnet
             </h1>
             <span className="text-[10px] font-mono text-cyan-500 bg-cyan-500/10 px-1.5 py-0.5 rounded border border-cyan-500/20 font-bold uppercase tracking-widest hidden sm:inline">
               automated PR agent
@@ -147,7 +147,7 @@ export default function App() {
                     : activeTab === "watcher"
                     ? `Git Watcher Daemon: Configured Workspace`
                     : activeTab === "roadmap"
-                    ? `GrepLoop Tracker: PRD Progress Roadmap`
+                    ? `Dragnet Tracker: PRD Progress Roadmap`
                     : activeTab === "codebase"
                     ? `Codebase AST Indexer & Call-Graph Tracer`
                     : activeTab === "llm_config"
@@ -321,14 +321,14 @@ export default function App() {
           <footer className="p-4 border-t border-white/5 bg-[#0F1219] flex flex-wrap items-center justify-between gap-4 shrink-0">
             <div className="flex gap-4 text-[10px] text-slate-500 uppercase font-mono">
               <span>ACTIVE PIPELINE: <strong className="text-[#10b981] animate-pulse">daemon.listener</strong></span>
-              <span>COMPLIANCE POLICY: <strong className="text-indigo-400">Sleek GrepLoop compliance v1.6.2</strong></span>
+              <span>COMPLIANCE POLICY: <strong className="text-indigo-400">Sleek Dragnet compliance v1.6.2</strong></span>
               <span>SQLite Cache Status: <strong className="text-cyan-400">Online</strong></span>
             </div>
 
             <div className="flex items-center gap-2">
               <button
                 onClick={() => {
-                  alert("Local Export: Reports synced under '~/.greploop/reports/...' data catalog.");
+                  alert("Local Export: Reports synced under '~/.dragnet/reports/...' data catalog.");
                 }}
                 className="px-3 py-1.5 text-xs font-semibold bg-white/5 border border-white/10 text-slate-300 rounded hover:bg-white/10 transition-colors cursor-pointer"
               >

@@ -1,5 +1,5 @@
 /**
- * Resolves GrepLoop's externally-reachable URL and whether it's a
+ * Resolves Dragnet's externally-reachable URL and whether it's a
  * localhost-only address. Drives the WebhookPrompt branch: when
  * `isLocal === true`, the prompt shows Cloudflare Tunnel setup steps
  * first (GitHub/GitLab can't deliver webhooks to localhost); when

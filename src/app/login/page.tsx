@@ -28,7 +28,7 @@ export default function LoginPage() {
     <div className="min-h-screen bg-[#0A0D14] flex flex-col items-center justify-center p-4">
       <div className="w-full max-w-sm space-y-6">
         <div className="text-center space-y-1">
-          <h1 className="text-lg font-bold text-white font-mono uppercase tracking-wider">GrepLoop</h1>
+          <h1 className="text-lg font-bold text-white font-mono uppercase tracking-wider">Dragnet</h1>
           <p className="text-xs text-slate-500 font-mono">Sign in to continue</p>
         </div>
 

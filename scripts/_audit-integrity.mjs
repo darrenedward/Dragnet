@@ -59,7 +59,7 @@ function isMergedIntoBase(repoPath, baseBranch, branch) {
   }
 }
 
-console.log("=== GrepLoop integrity audit ===\n");
+console.log("=== Dragnet integrity audit ===\n");
 
 const repos = await prisma.repository.findMany({ select: { id: true, name: true, path: true, baseBranch: true } });
 const prs = await prisma.pullRequest.findMany({

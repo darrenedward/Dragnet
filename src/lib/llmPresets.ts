@@ -6,7 +6,7 @@ import { createHash } from "node:crypto";
 /**
  * Multi-provider LLM preset storage.
  *
- * Source of truth is `.greploop/llm-presets.json` at the project root.
+ * Source of truth is `.dragnet/llm-presets.json` at the project root.
  * One chat preset and one embedding preset can be independently active,
  * so the user can run e.g. OpenRouter for chat + local Ollama for
  * embeddings against different endpoints/keys.
@@ -66,7 +66,7 @@ export interface PresetsFile {
   fallbackEmbeddingPresetId: string;
 }
 
-const PRESETS_DIR = join(/* turbopackIgnore: true */ process.cwd(), ".greploop");
+const PRESETS_DIR = join(/* turbopackIgnore: true */ process.cwd(), ".dragnet");
 const PRESETS_PATH = join(PRESETS_DIR, "llm-presets.json");
 const PRESETS_TMP = join(PRESETS_DIR, "llm-presets.json.tmp");
 const PRESETS_BAK = join(PRESETS_DIR, "llm-presets.json.bak");
@@ -333,7 +333,7 @@ export async function savePresets(state: PresetsFile): Promise<void> {
 
 /**
  * One-shot migration from .env.local LLM_* values to a single preset.
- * Idempotent — no-op once `.greploop/llm-presets.json` exists.
+ * Idempotent — no-op once `.dragnet/llm-presets.json` exists.
  *
  * Reads `.env.local` directly from disk (NOT process.env) because
  * process.env holds values from boot time and can be stale if the

@@ -1,9 +1,9 @@
 #! /usr/bin/env node
-// scripts/greploop.mjs — GrepLoop CLI companion
+// scripts/dragnet.mjs — Dragnet CLI companion
 // Usage:
-//   node scripts/greploop.mjs install-hooks         # install pre-push hook
-//   node scripts/greploop.mjs uninstall-hooks       # remove pre-push hook
-//   node scripts/greploop.mjs review <branch>       # run review, exit 0/1
+//   node scripts/dragnet.mjs install-hooks         # install pre-push hook
+//   node scripts/dragnet.mjs uninstall-hooks       # remove pre-push hook
+//   node scripts/dragnet.mjs review <branch>       # run review, exit 0/1
 
 const BASE = process.env.DRAGNET_URL || "http://localhost:3300";
 const API_KEY = process.env.DRAGNET_API_KEY || "";
@@ -18,7 +18,7 @@ async function main() {
       const dst = `${root}/.git/hooks/pre-push`;
       const src = new URL("../hooks/pre-push", import.meta.url).pathname;
       execSync(`cp "${src}" "${dst}" && chmod +x "${dst}"`, { stdio: "inherit" });
-      console.log(`✓ GrepLoop pre-push hook installed at ${dst}`);
+      console.log(`✓ Dragnet pre-push hook installed at ${dst}`);
       break;
     }
     case "uninstall-hooks": {
@@ -26,7 +26,7 @@ async function main() {
       const root = execSync("git rev-parse --show-toplevel", { encoding: "utf8" }).trim();
       const dst = `${root}/.git/hooks/pre-push`;
       execSync(`rm -f "${dst}"`, { stdio: "inherit" });
-      console.log(`✓ GrepLoop pre-push hook removed from ${dst}`);
+      console.log(`✓ Dragnet pre-push hook removed from ${dst}`);
       break;
     }
     case "review": {
@@ -42,10 +42,10 @@ async function main() {
 
       const data = await res.json();
       if (data.passed) {
-        console.log(`✓ GrepLoop: branch "${branch}" approved (${data.rating}/10)`);
+        console.log(`✓ Dragnet: branch "${branch}" approved (${data.rating}/10)`);
         process.exit(0);
       } else {
-        console.log(`✗ GrepLoop: branch "${branch}" blocked (${data.rating}/10)`);
+        console.log(`✗ Dragnet: branch "${branch}" blocked (${data.rating}/10)`);
         for (const f of data.findings || []) {
           console.log(`  [${f.severity}] ${f.filename}:${f.line} — ${f.explanation}`);
         }
@@ -54,7 +54,7 @@ async function main() {
       break;
     }
     default:
-      console.log("Usage: greploop <install-hooks|uninstall-hooks|review>");
+      console.log("Usage: dragnet <install-hooks|uninstall-hooks|review>");
       process.exit(1);
   }
 }

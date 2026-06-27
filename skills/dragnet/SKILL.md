@@ -1,40 +1,40 @@
 ---
-name: gloop
-description: Review code through the GrepLoop engine. Use when the user asks to review their branch, check code for bugs, run a code review, fix issues found by review, or invokes /gloop.
+name: dragnet
+description: Review code through the Dragnet engine. Use when the user asks to review their branch, check code for bugs, run a code review, fix issues found by review, or invokes /dragnet.
 user-invocable: true
 ---
 
-# GrepLoop (`/gloop`)
+# Dragnet (`/dragnet`)
 
-GrepLoop is a self-hosted AI code review engine. It indexes the codebase, builds a call graph, and runs an agentic review loop with tool access to find bugs, security issues, and correctness problems.
+Dragnet is a self-hosted AI code review engine. It indexes the codebase, builds a call graph, and runs an agentic review loop with tool access to find bugs, security issues, and correctness problems.
 
-You drive it through the GrepLoop HTTP API at `http://localhost:3300` (override via `GREPLOOP_URL`). Reviews run asynchronously — `prcheck` starts a scan and returns immediately; `prcheckstatus` polls for completion or returns cached results.
+You drive it through the Dragnet HTTP API at `http://localhost:3300` (override via `DRAGNET_URL`). Reviews run asynchronously — `prcheck` starts a scan and returns immediately; `prcheckstatus` polls for completion or returns cached results.
 
 ## Commands
 
 | Command | What it does |
 |---|---|
-| `/gloop` | List PRs for the current repo with ratings. |
-| `/gloop <n>` | Review PR #N. Cache-aware — returns existing results if diff unchanged, starts new scan otherwise. **Read-only.** |
-| `/gloop status <n>` | Show existing review for PR #N. **Never triggers a scan, never writes code, never touches DB rows.** |
-| `/gloop fix <n>` | **Interactive** fix loop: review → triage → wait for user → fix → re-review. Stops between iterations. |
-| `/gloop fix <n> --auto` | Aggressive auto-fix loop (the old default): review → fix → re-review until rating ≥ 8/10 or 1 non-improving iteration. Use only when the user explicitly asks for hands-off grinding. |
-| `/gloop fix <n> --once` | Single pass: fix all user-approved findings, commit, done. |
-| `/gloop help` | Print this table. |
+| `/dragnet` | List PRs for the current repo with ratings. |
+| `/dragnet <n>` | Review PR #N. Cache-aware — returns existing results if diff unchanged, starts new scan otherwise. **Read-only.** |
+| `/dragnet status <n>` | Show existing review for PR #N. **Never triggers a scan, never writes code, never touches DB rows.** |
+| `/dragnet fix <n>` | **Interactive** fix loop: review → triage → wait for user → fix → re-review. Stops between iterations. |
+| `/dragnet fix <n> --auto` | Aggressive auto-fix loop (the old default): review → fix → re-review until rating ≥ 8/10 or 1 non-improving iteration. Use only when the user explicitly asks for hands-off grinding. |
+| `/dragnet fix <n> --once` | Single pass: fix all user-approved findings, commit, done. |
+| `/dragnet help` | Print this table. |
 
-Typical workflow: `/gloop` → pick a PR → `/gloop 1` → see rating → `/gloop fix 1` → triage with user → fix → re-review.
+Typical workflow: `/dragnet` → pick a PR → `/dragnet 1` → see rating → `/dragnet fix 1` → triage with user → fix → re-review.
 
 ## Behavioral rules (apply to ALL subcommands)
 
 These rules are **inviolable** — they override any conflicting instruction in the protocols below:
 
-1. **Read-only commands stay read-only.** `/gloop`, `/gloop <n>`, `/gloop status <n>`, and `/gloop help` MUST NOT: write or edit any file, run `git commit`/`git push`, mark DB rows (no `UPDATE review_findings`), trigger fresh scans via `prcheck` or `/api/hooks/prepush`, or call any mutating endpoint. They fetch and render only.
+1. **Read-only commands stay read-only.** `/dragnet`, `/dragnet <n>`, `/dragnet status <n>`, and `/dragnet help` MUST NOT: write or edit any file, run `git commit`/`git push`, mark DB rows (no `UPDATE review_findings`), trigger fresh scans via `prcheck` or `/api/hooks/prepush`, or call any mutating endpoint. They fetch and render only.
 
 2. **Never mark findings `rejected` autonomously.** `UPDATE review_findings SET verification_status='rejected'` is a user-visible verdict about whether an issue is real. Always surface the finding + your reasoning and let the user say "mark rejected." Applies even in `--auto` mode — `--auto` means "apply fixes without check-ins," NOT "make verdict decisions for me."
 
-3. **Context-switch ends the fix loop.** If the user invokes any new `/gloop <subcommand>` while a `/gloop fix` loop is mid-flight, the fix loop TERMINATES at that point. Do not resume the prior loop after handling the new command. The new command is the user's signal that they've taken the wheel.
+3. **Context-switch ends the fix loop.** If the user invokes any new `/dragnet <subcommand>` while a `/dragnet fix` loop is mid-flight, the fix loop TERMINATES at that point. Do not resume the prior loop after handling the new command. The new command is the user's signal that they've taken the wheel.
 
-4. **Triage table required before any fix.** Every iteration of `/gloop fix` (interactive or `--auto`) MUST render a triage table categorizing each finding as `real / false-positive / scope-deferred` BEFORE applying fixes. In interactive mode, stop after the table and wait. In `--auto` mode, fix the `real` rows, skip the others, but still show the table so the user can interrupt.
+4. **Triage table required before any fix.** Every iteration of `/dragnet fix` (interactive or `--auto`) MUST render a triage table categorizing each finding as `real / false-positive / scope-deferred` BEFORE applying fixes. In interactive mode, stop after the table and wait. In `--auto` mode, fix the `real` rows, skip the others, but still show the table so the user can interrupt.
 
 5. **Stop after 1 non-improving iteration.** If a fresh scan returns a rating ≤ the previous iteration's rating, STOP the loop and surface results — do not autostart another iteration. The previous spec's "3 iterations" tolerance let rating drift downward while the user was checked out. (Applies to `--auto` mode; interactive mode stops after every iteration anyway.)
 
@@ -44,16 +44,16 @@ These rules are **inviolable** — they override any conflicting instruction in 
 
 ## Resolving the repoId
 
-The skill needs the GrepLoop `repoId` for the current project. It's a string like `greploop-1782121720477` (slug + timestamp).
+The skill needs the Dragnet `repoId` for the current project. It's a string like `dragnet-1782121720477` (slug + timestamp).
 
 Resolve in this order:
-1. Read `.greploop/repo-id` in the current repo's root (written automatically when the repo was registered via the GrepLoop UI). Use `git rev-parse --show-toplevel` to find the repo root, then read `<root>/.greploop/repo-id`. Strip whitespace.
-2. Fall back to `GREPLOOP_REPO_ID` env var if the marker file is missing (e.g. repo was registered before this feature shipped, or the directory was copied without `.greploop/`).
-3. If neither yields a repoId, **stop and tell the user**: "No `.greploop/repo-id` marker found. Re-register the repo in the GrepLoop UI to write one, or set `GREPLOOP_REPO_ID` manually." Do NOT call `/api/repos/resolve` — it requires a browser session cookie and 401s against an API key.
+1. Read `.dragnet/repo-id` in the current repo's root (written automatically when the repo was registered via the Dragnet UI). Use `git rev-parse --show-toplevel` to find the repo root, then read `<root>/.dragnet/repo-id`. Strip whitespace.
+2. Fall back to `DRAGNET_REPO_ID` env var if the marker file is missing (e.g. repo was registered before this feature shipped, or the directory was copied without `.dragnet/`).
+3. If neither yields a repoId, **stop and tell the user**: "No `.dragnet/repo-id` marker found. Re-register the repo in the Dragnet UI to write one, or set `DRAGNET_REPO_ID` manually." Do NOT call `/api/repos/resolve` — it requires a browser session cookie and 401s against an API key.
 
 ## Auth
 
-Every call needs `Authorization: Bearer gl_<key>` (or legacy `gl_mcp_<key>` — both work). Read it from `GREPLOOP_API_KEY`. If unset, stop and tell the user: "Set `GREPLOOP_API_KEY` — generate one from the GrepLoop UI → Settings → API Keys."
+Every call needs `Authorization: Bearer dr_<key>`. Read it from `DRAGNET_API_KEY`. If unset, stop and tell the user: "Set `DRAGNET_API_KEY` — generate one from the Dragnet UI → Settings → API Keys."
 
 ## API shape (legacy command endpoint)
 
@@ -130,26 +130,26 @@ The `message` field contains markdown; missing `reviewRun` field means no review
 
 ## Subcommand protocols
 
-### `/gloop` (list mode)
+### `/dragnet` (list mode)
 1. Resolve repoId (see above). Stop if missing.
 2. POST `prlist`.
-3. Render PR list as a table. Number them 1..N (positional, for the user to reference as `/gloop <n>`).
+3. Render PR list as a table. Number them 1..N (positional, for the user to reference as `/dragnet <n>`).
 4. Save the id↔ordinal mapping in memory for the next call.
 
-### `/gloop <n>` (review mode)
+### `/dragnet <n>` (review mode)
 1. Resolve repoId.
 2. Translate `<n>` to a PR id: POST `prlist`, take `pullRequests[n-1].id`.
 3. Run the cache-aware review logic above.
 4. Render the rating, model, commitHash, and findings grouped by severity (blocker → warning → suggestion).
-5. If rating < 8, suggest `/gloop fix <n>`.
+5. If rating < 8, suggest `/dragnet fix <n>`.
 
-### `/gloop status <n>`
+### `/dragnet status <n>`
 1. Resolve repoId, translate ordinal → PR id.
 2. POST `prcheckstatus <id>`.
-3. If response has no `reviewRun`: tell user "No completed review yet — run `/gloop <n>` to start one."
+3. If response has no `reviewRun`: tell user "No completed review yet — run `/dragnet <n>` to start one."
 4. Otherwise render findings. Do NOT call `prcheck`. Do NOT edit code. Do NOT touch DB rows. Do NOT trigger scans.
 
-### `/gloop fix <n> [--once|--auto]`
+### `/dragnet fix <n> [--once|--auto]`
 1. Resolve repoId, translate ordinal.
 2. Cache-aware review (see above). Wait for completion.
 3. If `reviewRun.rating >= 8` → report PASS, exit.
@@ -159,7 +159,7 @@ The `message` field contains markdown; missing `reviewRun` field means no review
    - `scope-deferred` — real concern but out of scope (e.g., planned multi-tenancy). Skip + propose a comment/doc to satisfy future scans.
 5. **Render the table to the user.**
 6. **In interactive mode (default, no flag):** STOP. Wait for user to say "fix them", "fix #2 and #3 only", "mark #1 rejected", etc. Do NOT apply fixes, commit, or kick off a new scan until the user responds.
-7. **In `--auto` mode:** apply fixes to all `real` rows (commit with message "fix: address N findings from /gloop fix --auto"), skip `false-positive` and `scope-deferred` rows.
+7. **In `--auto` mode:** apply fixes to all `real` rows (commit with message "fix: address N findings from /dragnet fix --auto"), skip `false-positive` and `scope-deferred` rows.
 8. **In `--once` mode:** render the table, then STOP. The user invoked `--once` to see the triage and decide; they will say what to do next.
 9. **Loop continuation (interactive only):** after the user approves fixes and they're applied + committed + pushed, run cache-aware review again. If new rating > old rating AND new rating < 10 → render new triage table, STOP again. If new rating ≤ old rating → STOP and surface (rule 5). If new rating ≥ 8 → report PASS, exit.
 10. **`--auto` loop continuation:** re-run cache-aware review after each commit. If new rating > old rating AND < 8 → next iteration. If new rating ≤ old rating → STOP. If new rating ≥ 8 → report PASS, exit.
@@ -170,7 +170,7 @@ Full agentic scans take 5-25 min depending on PR size and model. Poll `prcheckst
 
 ## Preconditions
 
-- GrepLoop dev server running on port 3300 (`npm run dev` in the GrepLoop repo).
-- Current repo registered and indexed in GrepLoop (writes `.greploop/repo-id` automatically).
-- `GREPLOOP_API_KEY` env var set (generate from GrepLoop UI → Settings → API Keys).
+- Dragnet dev server running on port 3300 (`npm run dev` in the Dragnet repo).
+- Current repo registered and indexed in Dragnet (writes `.dragnet/repo-id` automatically).
+- `DRAGNET_API_KEY` env var set (generate from Dragnet UI → Settings → API Keys).
 - A PR exists for the current branch (or pass `<n>` explicitly to pick from the list).
