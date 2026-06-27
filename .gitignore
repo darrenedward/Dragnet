@@ -37,3 +37,10 @@ public/grammars/
 .agent-os/
 agent-os/
 .claude/commands/
+
+# Local working docs (not part of the shipped app)
+CLAUDE.md
+prd.md
+opus.md
+roadmap.md
+namechange.md
