@@ -8,6 +8,9 @@ import { IndexingService } from "@/src/services/indexingService";
 import { assertIndexFresh } from "@/src/lib/indexFreshness";
 import { isReviewActive, acquireReviewLock } from "@/src/lib/reviewLocks";
 import { getChatChain } from "@/src/lib/llmClient";
+import { computePrSizeProfile, type PrSizeProfile } from "@/src/lib/prSizeProfile";
+import { readPrCommitCount } from "@/src/lib/prSizeProfile.server";
+import { assertTier, buildDiffManifest, runLargePrReview } from "@/src/services/largePrReview";
 import {
   computeDiffHash,
   computeReviewConfigHash,
@@ -28,7 +31,7 @@ import {
  * (caller surfaces a SCAN_IN_PROGRESS message instead of starting a race).
  */
 async function startTrackedReview(pr: any, repo: any): Promise<
-  | { sourceBranch: string }
+  | { sourceBranch: string; sizeProfile: PrSizeProfile }
   | { conflict: true; runId: string; startedAt: Date }
 > {
   const chatChain = getChatChain();
@@ -40,6 +43,9 @@ async function startTrackedReview(pr: any, repo: any): Promise<
       console.warn("[api] prfile refresh failed, using cached:", e);
     }
   }
+  const sizeProfile = await loadPrSizeProfile(pr, repo, files.length > 0 ? files : undefined);
+  const manifest = buildDiffManifest(files, sizeProfile.commitCount);
+  const tier = assertTier(manifest);
   const diffHash = computeDiffHash(files);
   const configHash = chatChain.length > 0
     ? computeReviewConfigHash(chatChain, shortHash(SYSTEM_INSTRUCTION))
@@ -69,7 +75,17 @@ async function startTrackedReview(pr: any, repo: any): Promise<
     triggerReason: "prcheck",
   });
 
-  runPrScan(pr.id, files, reviewRunId).then((sr) => {
+  const runPromise = tier.tier === "normal"
+    ? runPrScan(pr.id, files, reviewRunId)
+    : runLargePrReview({
+        reviewRunId,
+        prId: pr.id,
+        files,
+        tier: tier.tier,
+        warning: "message" in tier ? tier.message : null,
+      });
+
+  runPromise.then((sr) => {
     releaseLock();
     prisma.pullRequest.updateMany({ where: { id: pr.id }, data: { rating: sr.rating } }).catch(() => {});
     console.log(`[api] review complete for ${pr.sourceBranch}: ${sr.rating}/10`);
@@ -83,7 +99,28 @@ async function startTrackedReview(pr: any, repo: any): Promise<
     console.error(`[api] review failed for ${pr.sourceBranch}:`, err);
   });
 
-  return { sourceBranch: pr.sourceBranch };
+  return { sourceBranch: pr.sourceBranch, sizeProfile };
+}
+
+async function loadPrSizeProfile(pr: any, repo?: any, refreshedFiles?: any[]): Promise<PrSizeProfile> {
+  const profileRepo = repo ?? await prisma.repository.findUnique({
+    where: { id: pr.repoId },
+    select: { path: true, baseBranch: true },
+  });
+  const files = refreshedFiles ?? await prisma.prFile.findMany({
+    where: { prId: pr.id },
+    select: { filename: true, additions: true, deletions: true },
+  });
+  const commitCount = readPrCommitCount(
+    profileRepo?.path,
+    pr.targetBranch || profileRepo?.baseBranch || "main",
+    pr.sourceBranch,
+  );
+  return computePrSizeProfile(files, commitCount);
+}
+
+function formatSizeProfile(profile: PrSizeProfile): string {
+  return `${profile.label}${profile.message ? ` - ${profile.message}` : ""}`;
 }
 
 function defaultRepoId(url: string, args?: string[]): string | null {
@@ -172,9 +209,12 @@ async function resolvePrFromArgs(args: any): Promise<any | null> {
   return pr;
 }
 
-function formatFindings(pr: any, findings: any[]): string {
+function formatFindings(pr: any, findings: any[], sizeProfile?: PrSizeProfile): string {
   const pass = pr.rating != null && pr.rating >= 8;
   let out = `## PR ${pr.sourceBranch} — "${pr.title}"\n**Rating: ${pr.rating ?? "?"}/10** — ${pr.rating != null ? (pass ? "PASS" : "FAIL") : "Not yet"}\n\n`;
+  if (sizeProfile) {
+    out += `**Size:** ${formatSizeProfile(sizeProfile)}\n\n`;
+  }
   if (findings.length === 0) {
     out += "No findings.\n";
   } else {
@@ -195,7 +235,8 @@ async function formatLatestFindings(pr: any): Promise<string> {
     ...pr,
     rating: latest.reviewRun?.rating ?? pr.rating,
   };
-  let out = formatFindings(displayPr, latest.findings);
+  const sizeProfile = await loadPrSizeProfile(pr);
+  let out = formatFindings(displayPr, latest.findings, sizeProfile);
   if (!latest.reviewRun) {
     out += "\n_No completed ReviewRun yet._\n";
   } else {
@@ -234,7 +275,7 @@ async function handlePrCheck(args: any): Promise<string> {
     return `> ⚠ **Scan already in progress** for PR \`${pr.sourceBranch}\` (started ${started.startedAt.toISOString()}). Re-run \`prcheck ${pr.sourceBranch}\` after it completes.`;
   }
 
-  return `> **Review started** for PR \`${started.sourceBranch}\`.\n>\n> This runs in the background. Check results with \`prcheckstatus ${started.sourceBranch}\` or view in the GrepLoop dashboard.\n>\n> Alternatively, use \`prcomments ${started.sourceBranch}\` for the latest persisted findings.`;
+  return `> **Review started** for PR \`${started.sourceBranch}\`.\n>\n> Size: ${formatSizeProfile(started.sizeProfile)}\n>\n> This runs in the background. Check results with \`prcheckstatus ${started.sourceBranch}\` or view in the GrepLoop dashboard.\n>\n> Alternatively, use \`prcomments ${started.sourceBranch}\` for the latest persisted findings.`;
 }
 
 async function handlePrCheckStatus(args: any): Promise<string> {
@@ -258,10 +299,12 @@ async function handlePrComments(args: any): Promise<string> {
   if (!pr) return `> **No pull requests found** matching that criteria on this repository.`;
   const latest = await getLatestCompletedReview(pr.id);
   if (!latest.reviewRun) return "No completed review for this PR.";
+  const sizeProfile = await loadPrSizeProfile(pr);
   const findings = latest.findings;
-  if (findings.length === 0) return `No findings for this PR.${latest.rejectedCount > 0 ? ` Verifier filtered ${latest.rejectedCount}.` : ""}`;
+  if (findings.length === 0) return `No findings for this PR.\nSize: ${formatSizeProfile(sizeProfile)}${latest.rejectedCount > 0 ? `\nVerifier filtered ${latest.rejectedCount}.` : ""}`;
   let out = `## Findings for PR ${pr.sourceBranch}\n\n`;
   out += `_Reviewed commit ${latest.reviewRun.commitHash.slice(0, 7)}${latest.stale ? " (stale)" : ""}._\n\n`;
+  out += `**Size:** ${formatSizeProfile(sizeProfile)}\n\n`;
   for (const f of findings) {
     out += `- [${f.category}|${f.severity}] ${f.filename}:${f.line}\n  ${f.explanation}\n`;
   }
@@ -279,7 +322,8 @@ async function handlePrList(args: any): Promise<string> {
   if (prs.length === 0) return "> **No pull requests found** for this repo.";
   let out = `## Pull Requests\n\n`;
   for (const p of prs) {
-    out += `- **${p.sourceBranch}** — ${p.title} — ${p.rating != null ? `${p.rating}/10` : "Not scanned"}\n`;
+    const sizeProfile = await loadPrSizeProfile(p);
+    out += `- **${p.sourceBranch}** — ${p.title} — ${p.rating != null ? `${p.rating}/10` : "Not scanned"} — ${formatSizeProfile(sizeProfile)}\n`;
   }
   return out;
 }
@@ -395,29 +439,34 @@ async function handleLegacyCommand(body: any, defRepo: string | null) {
       }
       return NextResponse.json({
         status: "Accepted",
-        message: `> **Review started** for \`${started.sourceBranch}\`. Poll with \`prcheckstatus ${started.sourceBranch}\`.`,
+        message: `> **Review started** for \`${started.sourceBranch}\`.\n>\n> Size: ${formatSizeProfile(started.sizeProfile)}\n>\n> Poll with \`prcheckstatus ${started.sourceBranch}\`.`,
+        sizeProfile: started.sizeProfile,
       });
     }
     if (cmdName.endsWith("prcomments") || cmdName.endsWith("comments")) {
       const pr = await resolvePr({ ...body, repoId: body.repoId || defRepo }, argVal);
       if (!pr) return NextResponse.json({ status: "Error", message: "> No PR found on this repository." });
       const latest = await getLatestCompletedReview(pr.id);
+      const sizeProfile = await loadPrSizeProfile(pr);
       return NextResponse.json({
         status: "Success", type: "comments",
         productionScore: latest.reviewRun?.rating != null ? `${latest.reviewRun.rating}/10` : "Not Scanned Yet",
         reviewRun: latest.reviewRun,
         stale: latest.stale,
         rejectedCount: latest.rejectedCount,
+        sizeProfile,
         comments: latest.findings.map((f: any) => `[${f.category} | ${f.severity}] ${f.filename}:${f.line} - ${f.explanation}`),
       });
     }
     if (cmdName.endsWith("prcheckstatus") || cmdName.endsWith("status")) {
       const pr = await resolvePr({ ...body, repoId: body.repoId || defRepo }, argVal);
       if (!pr) return NextResponse.json({ status: "Error", message: "> No PR found on this repository." });
+      const sizeProfile = await loadPrSizeProfile(pr);
       if (isReviewActive(pr.id)) {
         return NextResponse.json({
           status: "Pending",
           message: `> Review still in progress for **${pr.sourceBranch}**...`,
+          sizeProfile,
         });
       }
       // Re-fetch so we pick up any rating update from the async runPrScan.
@@ -430,6 +479,7 @@ async function handleLegacyCommand(body: any, defRepo: string | null) {
         reviewRun: latest.reviewRun,
         stale: latest.stale,
         rejectedCount: latest.rejectedCount,
+        sizeProfile,
         findingsCount: latest.findings.length,
         findings: latest.findings.map((f: any) =>
           `[${f.category} | ${f.severity}] ${f.filename}:${f.line} - ${f.explanation}`,
@@ -442,12 +492,17 @@ async function handleLegacyCommand(body: any, defRepo: string | null) {
       const prs = await prisma.pullRequest.findMany({
         where: { repoId: rid }, orderBy: { createdAt: "desc" }, take: 20,
       });
-      return NextResponse.json({
-        status: "Success", type: "list", repoId: rid,
-        pullRequests: prs.map(p => ({
+      const pullRequests = await Promise.all(prs.map(async (p) => {
+        const sizeProfile = await loadPrSizeProfile(p);
+        return {
           number: p.sourceBranch, id: p.id, title: p.title,
           branch: p.sourceBranch, rating: p.rating != null ? `${p.rating}/10` : "Not scanned",
-        })),
+          sizeProfile,
+        };
+      }));
+      return NextResponse.json({
+        status: "Success", type: "list", repoId: rid,
+        pullRequests,
       });
     }
     return NextResponse.json({ status: "Error", message: `Unknown command: ${cmdName}` }, { status: 400 });

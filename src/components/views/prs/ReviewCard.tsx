@@ -2,7 +2,9 @@
 
 import { useCallback, useState } from "react";
 import { AlertTriangle, CheckCircle2, Copy, Loader2, Network, ShieldAlert } from "lucide-react";
-import type { PullRequest, ReviewFinding } from "../../../lib/types";
+import type { PullRequest, ReviewChunk, ReviewFinding } from "../../../lib/types";
+import PrSizeProfileChip from "../../PrSizeProfileChip";
+import LargePrModePanel from "./LargePrModePanel";
 
 export interface ReviewRunMeta {
   id: string;
@@ -12,6 +14,11 @@ export interface ReviewRunMeta {
   rating: number | null;
   model: string | null;
   triggerReason: string | null;
+  reliability?: string | null;
+  chunksTotal?: number;
+  chunksCompleted?: number;
+  chunksFailed?: number;
+  chunksSkipped?: number;
 }
 
 const severityOrder = ["blocker", "warning", "suggestion"] as const;
@@ -49,6 +56,9 @@ interface Props {
   }>;
   stale?: boolean;
   isScanning?: boolean;
+  chunks?: ReviewChunk[];
+  isRetryingChunks?: boolean;
+  onRetryFailedChunks?: () => void;
   onCopySuggestion: (text: string, id: string) => void;
   copyFeedback: string | null;
 }
@@ -115,7 +125,7 @@ function parseEvidence(chain: ReviewFinding["evidenceChain"]): Array<{ file: str
   }
 }
 
-export default function ReviewCard({ activePR, findings, reviewRun, rejectedCount, rejectedFindings, stale, isScanning, onCopySuggestion, copyFeedback }: Props) {
+export default function ReviewCard({ activePR, findings, reviewRun, rejectedCount, rejectedFindings, stale, isScanning, chunks = [], isRetryingChunks, onRetryFailedChunks, onCopySuggestion, copyFeedback }: Props) {
   const [copiedAll, setCopiedAll] = useState(false);
   const [showRejected, setShowRejected] = useState(false);
   const handleCopyAll = useCallback(() => {
@@ -185,6 +195,9 @@ export default function ReviewCard({ activePR, findings, reviewRun, rejectedCoun
               {activePR.rating}/10
             </span>
           )}
+          {activePR?.sizeProfile && !isScanning && (
+            <PrSizeProfileChip profile={activePR.sizeProfile} />
+          )}
           {findings.length > 0 && !isScanning && (
             <button
               onClick={handleCopyAll}
@@ -196,6 +209,16 @@ export default function ReviewCard({ activePR, findings, reviewRun, rejectedCoun
           )}
         </div>
       </div>
+
+      {reviewRun && (reviewRun.chunksTotal ?? 0) > 0 && (
+        <LargePrModePanel
+          reviewRun={reviewRun}
+          chunks={chunks}
+          sizeProfile={activePR?.sizeProfile}
+          isRetrying={isRetryingChunks}
+          onRetryFailedChunks={onRetryFailedChunks}
+        />
+      )}
 
       {/* Scanning state — previous findings have been moved to Scan History */}
       {isScanning ? (

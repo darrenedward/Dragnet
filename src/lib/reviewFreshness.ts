@@ -67,6 +67,11 @@ export interface LatestReviewResult {
     rating: number | null;
     model: string | null;
     triggerReason: string | null;
+    reliability: string | null;
+    chunksTotal: number;
+    chunksCompleted: number;
+    chunksFailed: number;
+    chunksSkipped: number;
   } | null;
   findings: Array<{
     id: string;
@@ -355,6 +360,11 @@ export async function getLatestCompletedReview(
       rating: true,
       model: true,
       triggerReason: true,
+      reliability: true,
+      chunksTotal: true,
+      chunksCompleted: true,
+      chunksFailed: true,
+      chunksSkipped: true,
     },
   });
 

@@ -45,11 +45,27 @@ while read local_ref local_sha remote_ref remote_sha; do
   passed=$(echo "$result" | grep -o '"passed":[^,}]*' | cut -d: -f2)
   rating=$(echo "$result" | grep -o '"rating":[^,}]*' | cut -d: -f2)
   error=$(echo "$result" | grep -o '"error":"[^"]*"' | head -1 | cut -d\" -f4)
+  message=$(echo "$result" | grep -o '"message":"[^"]*"' | head -1 | cut -d\" -f4)
+  size_label=$(printf '%s' "$result" | sed -n 's/.*"sizeProfile":{[^}]*"label":"\([^"]*\)".*/\1/p')
+  size_message=$(printf '%s' "$result" | sed -n 's/.*"sizeProfile":{[^}]*"message":"\([^"]*\)".*/\1/p')
+
+  if [ -n "$size_label" ]; then
+    if [ -n "$size_message" ]; then
+      echo "GrepLoop size: $size_label - $size_message"
+    else
+      echo "GrepLoop size: $size_label"
+    fi
+  fi
 
   if [ "$passed" = "true" ]; then
     echo "✓ GrepLoop: branch '$branch' approved ($rating/10)"
   elif [ -n "$error" ]; then
     echo "⚠ GrepLoop: $error"
+    exit 1
+  elif [ -n "$message" ]; then
+    echo "$message"
+    echo "  Review findings in the GrepLoop UI or run '/greploop fix' in your agent."
+    echo "  To bypass: git push --no-verify"
     exit 1
   else
     echo "✗ GrepLoop: branch '$branch' blocked ($rating/10 — needs 8+)"

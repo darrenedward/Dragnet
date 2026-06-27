@@ -27,7 +27,7 @@ export async function GET(req: Request) {
       where,
       orderBy: { createdAt: "asc" },
       take: 200,
-      select: { id: true, message: true, level: true, createdAt: true, reviewRunId: true },
+      select: { id: true, message: true, level: true, createdAt: true, reviewRunId: true, reviewChunkId: true },
     });
 
     return NextResponse.json(logs);

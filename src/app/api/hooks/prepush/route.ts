@@ -7,6 +7,9 @@ import { assertIndexFresh } from "@/src/lib/indexFreshness";
 import { refreshPrFiles, isBranchMerged } from "@/src/lib/getRealLocalPrs";
 import { getChatChain } from "@/src/lib/llmClient";
 import { acquireReviewLock, endReview } from "@/src/lib/reviewLocks";
+import { computePrSizeProfile } from "@/src/lib/prSizeProfile";
+import { readPrCommitCount } from "@/src/lib/prSizeProfile.server";
+import { assertTier, buildDiffManifest, runLargePrReview } from "@/src/services/largePrReview";
 import {
   computeDiffHash,
   computeReviewConfigHash,
@@ -91,15 +94,23 @@ export async function POST(req: Request) {
         console.warn("[prepush] refreshPrFiles failed, using cached PrFiles:", e);
       }
     }
+    const baseBranch = pr.targetBranch || repo.baseBranch || "main";
+    const sizeProfile = computePrSizeProfile(
+      files,
+      readPrCommitCount(repo.path, baseBranch, pr.sourceBranch),
+    );
+    const manifest = buildDiffManifest(files, sizeProfile.commitCount);
+    const tier = assertTier(manifest);
 
     // Merged-branch short-circuit. Pre-push shouldn't fire for a merged
     // branch in normal flow (you don't push to a branch that's already
     // merged), but if it does, exit clean — no point gating an empty diff.
-    if (repo.path && pr.sourceBranch && files.length === 0 && isBranchMerged(repo.path, repo.baseBranch || "main", pr.sourceBranch)) {
+    if (repo.path && pr.sourceBranch && files.length === 0 && isBranchMerged(repo.path, baseBranch, pr.sourceBranch)) {
       return NextResponse.json({
         passed: true,
         merged: true,
         message: `Branch "${pr.sourceBranch}" is fully merged into "${repo.baseBranch || "main"}". Nothing to review.`,
+        sizeProfile,
       });
     }
     const diffHash = computeDiffHash(files);
@@ -136,7 +147,15 @@ export async function POST(req: Request) {
       triggerReason: "prepush",
     });
 
-    const result = await runPrScan(pr.id, files, reviewRunId);
+    const result = tier.tier === "normal"
+      ? await runPrScan(pr.id, files, reviewRunId)
+      : await runLargePrReview({
+          reviewRunId,
+          prId: pr.id,
+          files,
+          tier: tier.tier,
+          warning: "message" in tier ? tier.message : null,
+        });
 
     // A null rating means the LLM chain couldn't produce a review (provider
     // outage / misconfig / model without tool-calling) — NOT a code-quality
@@ -152,10 +171,14 @@ export async function POST(req: Request) {
         error: `Review could not run — ${reason} (push not gated on code quality; fix LLM Settings or use --no-verify)`,
         systemWarn: result.systemWarn,
         usedModel: result.usedModel,
+        sizeProfile,
+        largePrMode: "largePrMode" in result ? result.largePrMode : false,
+        reliability: "reliability" in result ? result.reliability : null,
       }, { status: 503 });
     }
 
-    const passed = result.rating >= 8;
+    const reliability = "reliability" in result ? result.reliability : "complete";
+    const passed = result.rating >= 8 && reliability === "complete";
 
     // Release the in-memory lock on the success path. Previously this was
     // only released in the catch block — every successful pre-push scan
@@ -171,8 +194,13 @@ export async function POST(req: Request) {
       findings: result.findings,
       message: passed
         ? `✓ GrepLoop: PR approved (${result.rating}/10)`
-        : `✗ GrepLoop: PR blocked — rating ${result.rating}/10 (requires 8+). Fix findings or use --no-verify to bypass.`,
+        : reliability !== "complete"
+          ? `✗ GrepLoop: PR blocked — Large PR review is ${reliability}. Retry failed chunks or split the PR.`
+          : `✗ GrepLoop: PR blocked — rating ${result.rating}/10 (requires 8+). Fix findings or use --no-verify to bypass.`,
       usedModel: result.usedModel,
+      sizeProfile,
+      largePrMode: "largePrMode" in result ? result.largePrMode : false,
+      reliability,
     });
   } catch (err: any) {
     console.error("Pre-push hook error:", err);

@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/src/lib/prisma";
 import { getRealLocalPrs } from "@/src/lib/getRealLocalPrs";
 import { authenticateSessionOrKey } from "@/src/lib/apiAuth";
+import { computePrSizeProfile } from "@/src/lib/prSizeProfile";
+import { readPrCommitCount } from "@/src/lib/prSizeProfile.server";
 
 /**
  * Map of in-flight refresh promises keyed by repo ID. Prevents the
@@ -11,6 +13,30 @@ import { authenticateSessionOrKey } from "@/src/lib/apiAuth";
  * snapshot. Lives only in this dev server process.
  */
 const refreshPromises = new Map<string, Promise<any>>();
+
+async function attachSizeProfiles(prs: any[], repo: { path: string | null; baseBranch: string | null }) {
+  if (prs.length === 0) return prs;
+  const prIds = prs.map((p) => p.id);
+  const files = await prisma.prFile.findMany({
+    where: { prId: { in: prIds } },
+    select: { prId: true, filename: true, additions: true, deletions: true },
+  });
+  const filesByPr = new Map<string, typeof files>();
+  for (const file of files) {
+    const current = filesByPr.get(file.prId) || [];
+    current.push(file);
+    filesByPr.set(file.prId, current);
+  }
+
+  return prs.map((pr) => {
+    const baseBranch = pr.targetBranch || repo.baseBranch || "main";
+    const commitCount = readPrCommitCount(repo.path, baseBranch, pr.sourceBranch);
+    return {
+      ...pr,
+      sizeProfile: computePrSizeProfile(filesByPr.get(pr.id) || [], commitCount),
+    };
+  });
+}
 
 /**
  * Returns the current PR list for a repo. Ensures the git-based PR
@@ -50,7 +76,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
         : { repoId: id, status: { not: "Merged" } },
       orderBy: { createdAt: 'desc' }
     });
-    return NextResponse.json(prs);
+    return NextResponse.json(await attachSizeProfiles(prs, repo));
   } catch (err: any) {
     console.error("Error fetching repository PRs:", err);
     return NextResponse.json({ error: err.message }, { status: 500 });
@@ -82,7 +108,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         : { repoId: id, status: { not: "Merged" } },
       orderBy: { createdAt: 'desc' }
     });
-    return NextResponse.json(prs);
+    return NextResponse.json(await attachSizeProfiles(prs, repo));
   } catch (err: any) {
     console.error("Error refreshing repository PRs:", err);
     return NextResponse.json({ error: err.message }, { status: 500 });

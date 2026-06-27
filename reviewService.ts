@@ -16,10 +16,10 @@ export interface ScanResult {
   systemWarn?: string | null;
 }
 
-async function logReview(prId: string, message: string, level: string = "info", reviewRunId?: string) {
+async function logReview(prId: string, message: string, level: string = "info", reviewRunId?: string, reviewChunkId?: string) {
   try {
     await prisma.reviewLog.create({
-      data: { id: randomUUID(), prId, message, level, reviewRunId: reviewRunId ?? null },
+      data: { id: randomUUID(), prId, message, level, reviewRunId: reviewRunId ?? null, reviewChunkId: reviewChunkId ?? null },
     });
   } catch {
     // Best-effort — never break the review for a log write failure.
@@ -323,8 +323,8 @@ Do not sugarcoat. Do not soften the blow. If the code is bad, say so. If it's cl
  * findings + a null rating and surfaces the reason via systemWarn — it never
  * fabricates templated findings.
  */
-export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunId?: string): Promise<ScanResult> {
-  console.log(`[scan] runPrScan: starting for prId=${prId}, preloadedFiles=${preloadedFiles?.length}`);
+export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunId?: string, reviewChunkId?: string): Promise<ScanResult> {
+  console.log(`[scan] runPrScan: starting for prId=${prId}, preloadedFiles=${preloadedFiles?.length}, reviewChunkId=${reviewChunkId ?? "none"}`);
   // Cumulative-char budget for readFile tool calls this scan. Caps context
   // blow-up + cost DoS — see readFile tool implementation below.
   let readfileCharsThisScan = 0;
@@ -472,11 +472,11 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
       const summary = Object.keys(counts).length === 0
         ? "clean (no tsc/eslint findings)"
         : Object.entries(counts).map(([k, v]) => `${v} ${k}`).join(", ");
-      void logReview(prId, `Deterministic checks: ${summary}`, "info", reviewRunId);
+      void logReview(prId, `Deterministic checks: ${summary}`, "info", reviewRunId, reviewChunkId);
       console.log(`[scan] runPrScan: deterministic checks → ${deterministicFindings.length} finding(s)`);
     } catch (err: any) {
       console.warn(`[scan] runPrScan: deterministic checks crashed:`, err);
-      void logReview(prId, `Deterministic checks crashed: ${err.message}`, "warn", reviewRunId);
+      void logReview(prId, `Deterministic checks crashed: ${err.message}`, "warn", reviewRunId, reviewChunkId);
     }
   }
 
@@ -534,7 +534,7 @@ ${diffPayload}${deterministicPayload}`;
         while (loopCount < ITERATION_BUDGET && !finalReview) {
           loopCount++;
           console.log(`[review] iteration ${loopCount}/${ITERATION_BUDGET} provider=${name}`);
-          void logReview(prId, `Iteration ${loopCount}/${ITERATION_BUDGET} — ${name}`, "info", reviewRunId);
+          void logReview(prId, `Iteration ${loopCount}/${ITERATION_BUDGET} — ${name}`, "info", reviewRunId, reviewChunkId);
           const response = await withTimeout(
             client.chat.completions.create({
               model,
@@ -564,11 +564,11 @@ ${diffPayload}${deterministicPayload}`;
             consecutiveEmptyResponses++;
             if (consecutiveEmptyResponses > EMPTY_RESPONSE_RETRIES) {
               console.warn(`[review] ${EMPTY_RESPONSE_RETRIES + 1} consecutive empty responses from ${name} — giving up`);
-              void logReview(prId, `Aborted: ${EMPTY_RESPONSE_RETRIES + 1} empty responses in a row from ${name}`, "warn", reviewRunId);
+              void logReview(prId, `Aborted: ${EMPTY_RESPONSE_RETRIES + 1} empty responses in a row from ${name}`, "warn", reviewRunId, reviewChunkId);
               break;
             }
             console.warn(`[review] empty response from ${name} on iteration ${loopCount} (attempt ${consecutiveEmptyResponses}/${EMPTY_RESPONSE_RETRIES + 1}) — nudging and retrying`);
-            void logReview(prId, `Empty response from ${name}, retrying (${consecutiveEmptyResponses}/${EMPTY_RESPONSE_RETRIES + 1})`, "warn", reviewRunId);
+            void logReview(prId, `Empty response from ${name}, retrying (${consecutiveEmptyResponses}/${EMPTY_RESPONSE_RETRIES + 1})`, "warn", reviewRunId, reviewChunkId);
             messages.push({
               role: "user",
               content: "Your previous response contained no message body. Continue the review: call a tool (readFile, searchCodebase, getCallers, findSimilar) to investigate the diff, then end with submitReview.",
@@ -613,10 +613,10 @@ ${diffPayload}${deterministicPayload}`;
                 console.log(
                   `[review] submitReview received: rating=${normalized.rating} findings=${normalized.findings?.length ?? 0} provider=${name}`,
                 );
-                void logReview(prId, `submitReview: rating=${normalized.rating}, ${normalized.findings?.length ?? 0} findings`, "info", reviewRunId);
+                void logReview(prId, `submitReview: rating=${normalized.rating}, ${normalized.findings?.length ?? 0} findings`, "info", reviewRunId, reviewChunkId);
                 if (normalized.droppedFilenamelessCount > 0) {
                   console.log(`[review] dropped ${normalized.droppedFilenamelessCount} filename-less findings pre-verifier provider=${name}`);
-                  void logReview(prId, `Pre-verifier filter: dropped ${normalized.droppedFilenamelessCount} findings with no filename`, "warn", reviewRunId);
+                  void logReview(prId, `Pre-verifier filter: dropped ${normalized.droppedFilenamelessCount} findings with no filename`, "warn", reviewRunId, reviewChunkId);
                 }
                 finalReview = normalized;
                 break;
@@ -707,10 +707,10 @@ ${diffPayload}${deterministicPayload}`;
                 console.error(`Tool ${fnName} failed:`, e);
                 resultSummary = `error: ${(e as any)?.message || String(e)}`;
                 toolResult = `Tool error: ${(e as any)?.message || String(e)}`;
-                void logReview(prId, `Tool ${fnName} failed: ${(e as any)?.message || String(e)}`, "error", reviewRunId);
+                void logReview(prId, `Tool ${fnName} failed: ${(e as any)?.message || String(e)}`, "error", reviewRunId, reviewChunkId);
               }
               console.log(`[review] tool ${fnName} → ${resultSummary}`);
-              void logReview(prId, `Tool: ${fnName} → ${resultSummary}`, "tool_call", reviewRunId);
+              void logReview(prId, `Tool: ${fnName} → ${resultSummary}`, "tool_call", reviewRunId, reviewChunkId);
 
               messages.push({
                 role: "tool",
@@ -731,7 +731,7 @@ ${diffPayload}${deterministicPayload}`;
               );
               if (parsed.droppedFilenamelessCount > 0) {
                 console.log(`[review] dropped ${parsed.droppedFilenamelessCount} filename-less findings pre-verifier provider=${name}`);
-                void logReview(prId, `Pre-verifier filter: dropped ${parsed.droppedFilenamelessCount} findings with no filename`, "warn", reviewRunId);
+                void logReview(prId, `Pre-verifier filter: dropped ${parsed.droppedFilenamelessCount} findings with no filename`, "warn", reviewRunId, reviewChunkId);
               }
               finalReview = parsed;
             }
@@ -742,7 +742,7 @@ ${diffPayload}${deterministicPayload}`;
         if (!finalReview) {
           await assertReviewRunStillActive(reviewRunId);
           console.log(`[review] attempting JSON-only finalization provider=${name}`);
-          void logReview(prId, `Attempting JSON-only finalization — ${name}`, "info", reviewRunId);
+          void logReview(prId, `Attempting JSON-only finalization — ${name}`, "info", reviewRunId, reviewChunkId);
           const finalizerMessages = [
             ...messages,
             {
@@ -769,7 +769,7 @@ ${diffPayload}${deterministicPayload}`;
             );
           } catch (err: any) {
             console.warn(`[review] JSON response_format finalizer failed provider=${name}: ${err.message}`);
-            void logReview(prId, `JSON response_format finalizer failed: ${err.message}`, "warn", reviewRunId);
+            void logReview(prId, `JSON response_format finalizer failed: ${err.message}`, "warn", reviewRunId, reviewChunkId);
             finalizerResponse = await withTimeout(
               client.chat.completions.create({
                 model,
@@ -787,10 +787,10 @@ ${diffPayload}${deterministicPayload}`;
             console.log(
               `[review] JSON-only finalReview received: rating=${parsed.rating} findings=${parsed.findings.length} provider=${name}`,
             );
-            void logReview(prId, `JSON finalReview: rating=${parsed.rating}, ${parsed.findings.length} findings`, "info", reviewRunId);
+            void logReview(prId, `JSON finalReview: rating=${parsed.rating}, ${parsed.findings.length} findings`, "info", reviewRunId, reviewChunkId);
             if (parsed.droppedFilenamelessCount > 0) {
               console.log(`[review] dropped ${parsed.droppedFilenamelessCount} filename-less findings pre-verifier provider=${name}`);
-              void logReview(prId, `Pre-verifier filter: dropped ${parsed.droppedFilenamelessCount} findings with no filename`, "warn", reviewRunId);
+              void logReview(prId, `Pre-verifier filter: dropped ${parsed.droppedFilenamelessCount} findings with no filename`, "warn", reviewRunId, reviewChunkId);
             }
             finalReview = parsed;
           }
@@ -800,7 +800,7 @@ ${diffPayload}${deterministicPayload}`;
           console.log(
             `[review] loop exited without submitReview (iterations used: ${loopCount}, last message had tool_calls: ${lastHadToolCalls}) provider=${name}`,
           );
-          void logReview(prId, `Loop exhausted — no submitReview after ${loopCount} iterations (last had tool_calls: ${lastHadToolCalls})`, "warn", reviewRunId);
+          void logReview(prId, `Loop exhausted — no submitReview after ${loopCount} iterations (last had tool_calls: ${lastHadToolCalls})`, "warn", reviewRunId, reviewChunkId);
         }
 
         if (finalReview) {
@@ -811,7 +811,7 @@ ${diffPayload}${deterministicPayload}`;
         // Fall through to the next provider (if any).
       } catch (err: any) {
         console.warn(`[review] chat provider ${name} failed: ${err.message}`);
-        void logReview(prId, `Provider ${name} failed: ${err.message}`, "error", reviewRunId);
+        void logReview(prId, `Provider ${name} failed: ${err.message}`, "error", reviewRunId, reviewChunkId);
         agenticError = `${name}: ${err.message}`;
         // try next provider
       }
@@ -851,7 +851,11 @@ ${diffPayload}${deterministicPayload}`;
   // 6. Persist findings
   console.log(`[scan] runPrScan: persisting ${findings.length} findings`);
   await prisma.reviewFinding.deleteMany({
-    where: reviewRunId ? { reviewRunId } : { prId, reviewRunId: null },
+    where: reviewChunkId
+      ? { reviewChunkId }
+      : reviewRunId
+        ? { reviewRunId, reviewChunkId: null }
+        : { prId, reviewRunId: null, reviewChunkId: null },
   });
 
   // 6a. Run the verifier BEFORE persistence so verification status is
@@ -890,6 +894,7 @@ ${diffPayload}${deterministicPayload}`;
       id,
       prId: prId,
       reviewRunId: reviewRunId ?? null,
+      reviewChunkId: reviewChunkId ?? null,
       repoId: pr.repoId,
       category: finding.category || "Style",
       severity: finding.severity || "suggestion",
@@ -913,33 +918,37 @@ ${diffPayload}${deterministicPayload}`;
   // 6b. Mark the ReviewRun complete with the final rating. Best-effort —
   // completeReviewRun swallows errors. Await it so callers that immediately
   // refetch the latest completed run don't race the status write.
-  if (reviewRunId) {
+  if (reviewRunId && !reviewChunkId) {
     await completeReviewRun(reviewRunId, { status: "completed", rating });
   }
 
   // 7. Update PR rating + status
-  console.log(`[scan] runPrScan: setting PR status=Completed rating=${rating}`);
-  await prisma.pullRequest.updateMany({ where: { id: prId }, data: { status: "Completed", rating } });
+  if (!reviewChunkId) {
+    console.log(`[scan] runPrScan: setting PR status=Completed rating=${rating}`);
+    await prisma.pullRequest.updateMany({ where: { id: prId }, data: { status: "Completed", rating } });
+  }
 
   // 8. Audit trail
-  const revId = `rev-${Date.now()}`;
-  await prisma.reviewHistory.create({
-    data: {
-      id: revId,
-      repoId: pr.repoId,
-      repoName: pr.repoId,
-      branch: pr.sourceBranch,
-      commitHash: pr.commitHash,
-      triggerReason: `Dynamic AI scan via ${usedModel}`,
-      status: "done",
-      timestamp: new Date().toISOString(),
-    },
-  });
+  if (!reviewChunkId) {
+    const revId = `rev-${Date.now()}`;
+    await prisma.reviewHistory.create({
+      data: {
+        id: revId,
+        repoId: pr.repoId,
+        repoName: pr.repoId,
+        branch: pr.sourceBranch,
+        commitHash: pr.commitHash,
+        triggerReason: `Dynamic AI scan via ${usedModel}`,
+        status: "done",
+        timestamp: new Date().toISOString(),
+      },
+    });
 
-  await prisma.repository.updateMany({
-    where: { id: pr.repoId },
-    data: { reviewsCount: { increment: 1 }, status: "idle" },
-  });
+    await prisma.repository.updateMany({
+      where: { id: pr.repoId },
+      data: { reviewsCount: { increment: 1 }, status: "idle" },
+    });
+  }
 
   console.log(`[scan] runPrScan: returning success rating=${rating} findings=${findings.length} model=${usedModel}`);
   return {
@@ -951,8 +960,10 @@ ${diffPayload}${deterministicPayload}`;
   };
   } catch (err: any) {
     console.error(`[scan] runPrScan: fatal error`, err);
-    await prisma.pullRequest.updateMany({ where: { id: prId }, data: { status: "Failed" } });
-    if (reviewRunId) {
+    if (!reviewChunkId) {
+      await prisma.pullRequest.updateMany({ where: { id: prId }, data: { status: "Failed" } });
+    }
+    if (reviewRunId && !reviewChunkId) {
       await completeReviewRun(reviewRunId, { status: "failed" });
     }
     throw err;

@@ -51,6 +51,7 @@ model Repository {
   stabilizationTimer Int
   reviewsCount       Int
   indexedAt          String?
+  securitySensitivePaths String[] @default([])
   reviewHistory      ReviewHistory[]
   pullRequests       PullRequest[]
 
@@ -61,12 +62,14 @@ model ReviewLog {
   id            String   @id
   prId          String
   reviewRunId   String?  // nullable for backward compat — legacy rows have null
+  reviewChunkId String?
   message       String
   level         String   // "info" | "warn" | "error" | "tool_call"
   createdAt     DateTime @default(now())
 
   @@index([prId, createdAt])
   @@index([reviewRunId, createdAt])
+  @@index([reviewChunkId, createdAt])
   @@map("review_logs")
 }
 
@@ -96,14 +99,40 @@ model ReviewRun {
   completedAt      DateTime?
   model            String?
   rating           Int?
+  reliability      String?        // "complete" | "partial" | "incomplete_security_review"
+  chunksTotal      Int            @default(0)
+  chunksCompleted  Int            @default(0)
+  chunksFailed     Int            @default(0)
+  chunksSkipped    Int            @default(0)
   triggerReason    String?        // "manual" | "prepush" | "prcheck" | "webhook" | "legacy"
   forced           Boolean        @default(false)
   pullRequest      PullRequest    @relation(fields: [prId], references: [id], onDelete: Cascade)
   reviewFindings   ReviewFinding[]
+  reviewChunks     ReviewChunk[]
 
   @@index([prId, status, completedAt])
   @@index([repoId, status, completedAt])
   @@map("review_runs")
+}
+
+model ReviewChunk {
+  id                       String    @id
+  reviewRunId              String
+  label                    String
+  filePaths                String[]
+  status                   String    // "pending" | "running" | "completed" | "failed" | "skipped"
+  skipReason               String?
+  rating                   Int?
+  summary                  String?
+  errorMessage             String?
+  lineCount                Int       @default(0)
+  touchesSecuritySensitive Boolean   @default(false)
+  startedAt                DateTime?
+  completedAt              DateTime?
+  reviewRun                ReviewRun @relation(fields: [reviewRunId], references: [id], onDelete: Cascade)
+
+  @@index([reviewRunId, status])
+  @@map("review_chunks")
 }
 
 model PullRequest {
@@ -146,6 +175,7 @@ model ReviewFinding {
   id                 String      @id
   prId               String
   reviewRunId        String?
+  reviewChunkId      String?
   repoId             String
   category           String
   severity           String
@@ -163,6 +193,7 @@ model ReviewFinding {
   reviewRun          ReviewRun?  @relation(fields: [reviewRunId], references: [id], onDelete: Cascade)
 
   @@index([reviewRunId])
+  @@index([reviewChunkId])
   @@index([prId])
   @@index([repoId])
   @@index([prId, reviewRunId])

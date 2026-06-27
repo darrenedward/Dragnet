@@ -39,6 +39,11 @@ export async function GET(req: Request) {
         startedAt: true,
         completedAt: true,
         rating: true,
+        reliability: true,
+        chunksTotal: true,
+        chunksCompleted: true,
+        chunksFailed: true,
+        chunksSkipped: true,
         model: true,
         triggerReason: true,
         commitHash: true,
@@ -53,7 +58,7 @@ export async function GET(req: Request) {
       );
     }
 
-    const [findings, rejectedFindings] = await Promise.all([
+    const [findings, rejectedFindings, chunks] = await Promise.all([
       prisma.reviewFinding.findMany({
         where: {
           reviewRunId: run.id,
@@ -92,6 +97,24 @@ export async function GET(req: Request) {
           source: true,
         },
       }),
+      prisma.reviewChunk.findMany({
+        where: { reviewRunId: run.id },
+        orderBy: { id: "asc" },
+        select: {
+          id: true,
+          label: true,
+          filePaths: true,
+          status: true,
+          skipReason: true,
+          rating: true,
+          summary: true,
+          errorMessage: true,
+          lineCount: true,
+          touchesSecuritySensitive: true,
+          startedAt: true,
+          completedAt: true,
+        },
+      }),
     ]);
 
     return NextResponse.json({
@@ -99,6 +122,7 @@ export async function GET(req: Request) {
       findings,
       rejectedFindings,
       rejectedCount: rejectedFindings.length,
+      chunks,
     });
   } catch (err: any) {
     console.error("Failed to fetch review run:", err);

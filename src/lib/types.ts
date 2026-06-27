@@ -1,3 +1,5 @@
+import type { PrSizeProfile } from "./prSizeProfile";
+
 export interface Repository {
   id: string;
   name: string;
@@ -38,6 +40,7 @@ export interface PullRequest {
   createdAt: string;
   description: string;
   rating?: number | null;
+  sizeProfile?: PrSizeProfile;
 }
 
 export interface PRFile {
@@ -68,6 +71,21 @@ export interface ReviewFinding {
   verificationStatus?: "verified" | "downgraded" | "rejected" | "unverified" | null;
   verificationNote?: string | null;
   source?: string | null;
+}
+
+export interface ReviewChunk {
+  id: string;
+  label: string;
+  filePaths: string[];
+  status: "pending" | "running" | "completed" | "failed" | "skipped" | string;
+  skipReason?: string | null;
+  rating?: number | null;
+  summary?: string | null;
+  errorMessage?: string | null;
+  lineCount: number;
+  touchesSecuritySensitive: boolean;
+  startedAt?: string | null;
+  completedAt?: string | null;
 }
 
 export interface ActivityLog {

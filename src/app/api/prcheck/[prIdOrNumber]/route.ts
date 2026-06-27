@@ -8,6 +8,9 @@ import { assertIndexFresh } from "@/src/lib/indexFreshness";
 import { refreshPrFiles, isBranchMerged } from "@/src/lib/getRealLocalPrs";
 import { getChatChain } from "@/src/lib/llmClient";
 import { acquireReviewLock, endReview } from "@/src/lib/reviewLocks";
+import { computePrSizeProfile } from "@/src/lib/prSizeProfile";
+import { readPrCommitCount } from "@/src/lib/prSizeProfile.server";
+import { assertTier, buildDiffManifest, runLargePrReview } from "@/src/services/largePrReview";
 import {
   computeDiffHash,
   computeReviewConfigHash,
@@ -78,9 +81,16 @@ export async function GET(req: Request, { params }: { params: Promise<{ prIdOrNu
         console.warn("[prcheck] refreshPrFiles failed, using cached:", e);
       }
     }
+    const baseBranch = pr.targetBranch || repo.baseBranch || "main";
+    const sizeProfile = computePrSizeProfile(
+      files,
+      readPrCommitCount(repo.path, baseBranch, pr.sourceBranch),
+    );
+    const manifest = buildDiffManifest(files, sizeProfile.commitCount);
+    const tier = assertTier(manifest);
 
     // Merged-branch short-circuit — same rationale as scan/route.ts.
-    if (repo.path && pr.sourceBranch && files.length === 0 && isBranchMerged(repo.path, repo.baseBranch || "main", pr.sourceBranch)) {
+    if (repo.path && pr.sourceBranch && files.length === 0 && isBranchMerged(repo.path, baseBranch, pr.sourceBranch)) {
       await prisma.pullRequest.update({
         where: { id: pr.id },
         data: { status: "Merged" },
@@ -94,6 +104,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ prIdOrNu
         assessment: `Branch "${pr.sourceBranch}" is fully merged into "${repo.baseBranch || "main"}". Nothing to review.`,
         findingsCount: 0,
         findings: [],
+        sizeProfile,
       });
     }
     const diffHash = computeDiffHash(files);
@@ -127,8 +138,17 @@ export async function GET(req: Request, { params }: { params: Promise<{ prIdOrNu
       triggerReason: "prcheck",
     });
 
-    const scanResult = await runPrScan(pr.id, files, reviewRunId);
-    const isProductionReady = scanResult.rating !== null && scanResult.rating >= 8;
+    const scanResult = tier.tier === "normal"
+      ? await runPrScan(pr.id, files, reviewRunId)
+      : await runLargePrReview({
+          reviewRunId,
+          prId: pr.id,
+          files,
+          tier: tier.tier,
+          warning: "message" in tier ? tier.message : null,
+        });
+    const reliability = "reliability" in scanResult ? scanResult.reliability : "complete";
+    const isProductionReady = scanResult.rating !== null && scanResult.rating >= 8 && reliability === "complete";
 
     return NextResponse.json({
       status: "Success",
@@ -141,6 +161,13 @@ export async function GET(req: Request, { params }: { params: Promise<{ prIdOrNu
         : "NOT production grade. Please review the blocker/warning findings in comments and refactor.",
       usedModel: scanResult.usedModel,
       findingsCount: scanResult.findings.length,
+      sizeProfile,
+      largePrMode: "largePrMode" in scanResult ? scanResult.largePrMode : false,
+      reliability,
+      chunksTotal: "chunksTotal" in scanResult ? scanResult.chunksTotal : 0,
+      chunksCompleted: "chunksCompleted" in scanResult ? scanResult.chunksCompleted : 0,
+      chunksFailed: "chunksFailed" in scanResult ? scanResult.chunksFailed : 0,
+      chunksSkipped: "chunksSkipped" in scanResult ? scanResult.chunksSkipped : 0,
       findings: scanResult.findings.map((f: any) => ({
         category: f.category,
         severity: f.severity,

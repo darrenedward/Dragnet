@@ -13,12 +13,13 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import type { PRFile, PullRequest, ReviewFinding } from "../../lib/types";
+import type { PRFile, PullRequest, ReviewChunk, ReviewFinding } from "../../lib/types";
 import { getStatusBadgeStyle } from "../../lib/types";
 import IndexNowBanner from "./prs/IndexNowBanner";
 import ReviewProgress from "./prs/ReviewProgress";
 import ReviewCard from "./prs/ReviewCard";
 import ScanHistory from "./prs/ScanHistory";
+import PrSizeProfileChip from "../PrSizeProfileChip";
 
 interface ScanResult {
   count: number;
@@ -42,7 +43,15 @@ interface Props {
     rating: number | null;
     model: string | null;
     triggerReason: string | null;
+    reliability?: string | null;
+    chunksTotal?: number;
+    chunksCompleted?: number;
+    chunksFailed?: number;
+    chunksSkipped?: number;
   } | null;
+  chunks?: ReviewChunk[];
+  isRetryingChunks?: boolean;
+  onRetryFailedChunks?: () => void;
   rejectedCount?: number;
   rejectedFindings?: Array<{
     id: string; filename: string; line: number | null;
@@ -70,6 +79,9 @@ export default function PrsView({
   onDismissScanResult,
   findings,
   reviewRun,
+  chunks,
+  isRetryingChunks,
+  onRetryFailedChunks,
   rejectedCount,
   rejectedFindings,
   stale,
@@ -116,6 +128,9 @@ export default function PrsView({
               activePR={activePR}
               findings={findings}
               reviewRun={reviewRun}
+              chunks={chunks}
+              isRetryingChunks={isRetryingChunks}
+              onRetryFailedChunks={onRetryFailedChunks}
               rejectedCount={rejectedCount}
               rejectedFindings={rejectedFindings}
               stale={stale}
@@ -187,6 +202,9 @@ function PrHeader({
             <span className="text-[10px] font-mono uppercase bg-slate-800 text-slate-400 px-2 py-0.5 rounded font-bold border border-slate-750">
               Active Pull Request View
             </span>
+            {activePR.sizeProfile && (
+              <PrSizeProfileChip profile={activePR.sizeProfile} />
+            )}
             <span
               className={`px-2 py-0.5 rounded uppercase font-extrabold text-[9px] font-mono flex items-center gap-1.5 shrink-0 select-none ${getStatusBadgeStyle(activePR.status)}`}
             >
@@ -396,4 +414,3 @@ function DiffView({ file }: { file: PRFile }) {
     </div>
   );
 }
-

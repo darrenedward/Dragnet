@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Activity, BarChart3, CheckCircle2, Folder, GitBranch, Loader2, Plus, Settings, Sparkles, XCircle } from "lucide-react";
 import type { LlmPresetsState, PullRequest, Repository } from "../lib/types";
 import { getStatusBadgeStyle } from "../lib/types";
+import PrSizeProfileChip from "./PrSizeProfileChip";
 
 interface Props {
   isSidebarOpen: boolean;
@@ -347,6 +348,9 @@ function PrRow({ pr, isPrSelected, onSelect }: { pr: PullRequest; isPrSelected: 
         <div className="flex items-center justify-between mt-0.5 text-[9px] text-slate-500">
           <span className="truncate max-w-[90px] text-cyan-400 font-semibold">{pr.sourceBranch}</span>
           <div className="flex items-center gap-1 shrink-0">
+            {pr.sizeProfile && (
+              <PrSizeProfileChip profile={pr.sizeProfile} compact />
+            )}
             {pr.rating !== undefined && pr.rating !== null && (
               <span
                 className={`px-1 py-0.2 rounded font-extrabold text-[7.5px] border leading-none shrink-0 ${

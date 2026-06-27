@@ -7,6 +7,7 @@ import {
   type PRFile,
   type PullRequest,
   type Repository,
+  type ReviewChunk,
   type ReviewFinding,
 } from "../lib/types";
 
@@ -57,7 +58,13 @@ export function useDashboardData() {
     rating: number | null;
     model: string | null;
     triggerReason: string | null;
+    reliability?: string | null;
+    chunksTotal?: number;
+    chunksCompleted?: number;
+    chunksFailed?: number;
+    chunksSkipped?: number;
   } | null>(null);
+  const [reviewChunks, setReviewChunks] = useState<ReviewChunk[]>([]);
   const [rejectedCount, setRejectedCount] = useState(0);
   const [rejectedFindings, setRejectedFindings] = useState<Array<{
     id: string; filename: string; line: number | null;
@@ -69,6 +76,7 @@ export function useDashboardData() {
 
   // ===== Scan / UI feedback =====
   const [isScanning, setIsScanning] = useState(false);
+  const [isRetryingChunks, setIsRetryingChunks] = useState(false);
   const [scanResult, setScanResult] = useState<{ count: number; model: string; notice?: string | null } | null>(null);
   const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
 
@@ -147,6 +155,7 @@ export function useDashboardData() {
       setSelectedFilename("");
       setFindings([]);
       setReviewRun(null);
+      setReviewChunks([]);
       setRejectedCount(0);
       setRejectedFindings([]);
       setStale(false);
@@ -178,6 +187,8 @@ export function useDashboardData() {
           setSelectedPrId("");
           setPrFiles([]);
           setFindings([]);
+          setReviewRun(null);
+          setReviewChunks([]);
         }
       }
     } catch (e) {
@@ -205,6 +216,7 @@ export function useDashboardData() {
       setSelectedFilename("");
       setFindings([]);
       setReviewRun(null);
+      setReviewChunks([]);
       setRejectedCount(0);
       setRejectedFindings([]);
       setStale(false);
@@ -231,13 +243,20 @@ export function useDashboardData() {
       if (findingsData && typeof findingsData === "object" && "findings" in findingsData) {
         setFindings(findingsData.findings);
         setReviewRun(findingsData.reviewRun ?? null);
+        setReviewChunks(findingsData.chunks ?? []);
         setRejectedCount(findingsData.rejectedCount ?? 0);
         setRejectedFindings(findingsData.rejectedFindings ?? []);
         setStale(Boolean(findingsData.stale));
+        if (findingsData.sizeProfile) {
+          setPrs((prev) =>
+            prev.map((p) => (p.id === prId ? { ...p, sizeProfile: findingsData.sizeProfile } : p)),
+          );
+        }
       } else if (Array.isArray(findingsData)) {
         // Backward compat with older route shape.
         setFindings(findingsData);
         setReviewRun(null);
+        setReviewChunks([]);
         setRejectedCount(0);
         setRejectedFindings([]);
         setStale(false);
@@ -399,6 +418,11 @@ export function useDashboardData() {
       const result = await res.json();
       console.log(`[scan] handleTriggerPrScan: response status=${res.status}, findings=${result.findings?.length}, rating=${result.rating}, model=${result.usedModel}`);
       if (res.ok) {
+        if (result.sizeProfile) {
+          setPrs((prev) =>
+            prev.map((p) => (p.id === scanningPrId ? { ...p, sizeProfile: result.sizeProfile } : p)),
+          );
+        }
         setScanResult({
           count: result.findings?.length || 0,
           model: result.usedModel,
@@ -434,6 +458,34 @@ export function useDashboardData() {
       alert("Pipeline Dispatch Crashed: " + e.message);
     } finally {
       setIsScanning(false);
+    }
+  };
+
+  const handleRetryFailedChunks = async () => {
+    if (!selectedPrId || !reviewRun?.id) return;
+    setIsRetryingChunks(true);
+    try {
+      const res = await fetch(`/api/prs/${selectedPrId}/runs/${reviewRun.id}/retry-failed-chunks`, {
+        method: "POST",
+      });
+      const result = await res.json();
+      if (!res.ok) {
+        alert("Retry Failed Chunks Error: " + (result.error || "Execution timeout"));
+        return;
+      }
+      setScanResult({
+        count: result.findings?.length || 0,
+        model: result.usedModel || "large-pr-mode",
+        notice: result.systemWarn,
+      });
+      await fetchPrDetails(selectedPrId, false);
+      if (selectedRepoId) await fetchPrsForSelectedRepo(selectedRepoId, true);
+      await fetchRepos();
+      await fetchLogs();
+    } catch (err: any) {
+      alert("Retry Failed Chunks Crashed: " + err.message);
+    } finally {
+      setIsRetryingChunks(false);
     }
   };
 
@@ -599,6 +651,7 @@ export function useDashboardData() {
     setSelectedFilename,
     findings,
     reviewRun,
+    reviewChunks,
     rejectedCount,
     rejectedFindings,
     stale,
@@ -606,9 +659,11 @@ export function useDashboardData() {
     fetchPrsForSelectedRepo,
     // scan
     isScanning,
+    isRetryingChunks,
     scanResult,
     setScanResult,
     handleTriggerPrScan,
+    handleRetryFailedChunks,
     handleExportMarkdown,
     handleCopyCode,
     copyFeedback,

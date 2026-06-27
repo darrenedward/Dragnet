@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { getLatestCompletedReview } from "@/src/lib/reviewFreshness";
 import { authenticateSessionOrKey } from "@/src/lib/apiAuth";
+import { prisma } from "@/src/lib/prisma";
+import { computePrSizeProfile } from "@/src/lib/prSizeProfile";
+import { readPrCommitCount } from "@/src/lib/prSizeProfile.server";
 
 /**
  * GET /api/prs/[prId]/findings
@@ -26,7 +29,49 @@ export async function GET(req: Request, { params }: { params: Promise<{ prId: st
   try {
     const { prId } = await params;
 
-    const latest = await getLatestCompletedReview(prId);
+    const [latest, pr, files] = await Promise.all([
+      getLatestCompletedReview(prId),
+      prisma.pullRequest.findUnique({
+        where: { id: prId },
+        select: {
+          sourceBranch: true,
+          targetBranch: true,
+          repository: { select: { path: true, baseBranch: true } },
+        },
+      }),
+      prisma.prFile.findMany({
+        where: { prId },
+        select: { filename: true, additions: true, deletions: true },
+      }),
+    ]);
+    const commitCount = pr
+      ? readPrCommitCount(
+          pr.repository.path,
+          pr.targetBranch || pr.repository.baseBranch || "main",
+          pr.sourceBranch,
+        )
+      : null;
+    const sizeProfile = computePrSizeProfile(files, commitCount);
+    const chunks = latest.reviewRun
+      ? await prisma.reviewChunk.findMany({
+          where: { reviewRunId: latest.reviewRun.id },
+          orderBy: { id: "asc" },
+          select: {
+            id: true,
+            label: true,
+            filePaths: true,
+            status: true,
+            skipReason: true,
+            rating: true,
+            summary: true,
+            errorMessage: true,
+            lineCount: true,
+            touchesSecuritySensitive: true,
+            startedAt: true,
+            completedAt: true,
+          },
+        })
+      : [];
 
     if (!latest.reviewRun) {
       return NextResponse.json({
@@ -35,6 +80,8 @@ export async function GET(req: Request, { params }: { params: Promise<{ prId: st
         rejectedFindings: [],
         rejectedCount: 0,
         stale: false,
+        sizeProfile,
+        chunks,
         message: "No completed review yet. Run a scan.",
       });
     }
@@ -48,11 +95,18 @@ export async function GET(req: Request, { params }: { params: Promise<{ prId: st
         rating: latest.reviewRun.rating,
         model: latest.reviewRun.model,
         triggerReason: latest.reviewRun.triggerReason,
+        reliability: latest.reviewRun.reliability,
+        chunksTotal: latest.reviewRun.chunksTotal,
+        chunksCompleted: latest.reviewRun.chunksCompleted,
+        chunksFailed: latest.reviewRun.chunksFailed,
+        chunksSkipped: latest.reviewRun.chunksSkipped,
       },
       findings: latest.findings,
       rejectedFindings: latest.rejectedFindings,
       rejectedCount: latest.rejectedCount,
       stale: latest.stale,
+      sizeProfile,
+      chunks,
     });
   } catch (err: any) {
     console.error("Error fetching findings for PR:", err);

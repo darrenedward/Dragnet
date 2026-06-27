@@ -6,6 +6,9 @@ import { assertIndexFresh } from "@/src/lib/indexFreshness";
 import { IndexingService } from "@/src/services/indexingService";
 import { getChatChain, getEmbeddingChain } from "@/src/lib/llmClient";
 import { acquireReviewLock, endReview } from "@/src/lib/reviewLocks";
+import { computePrSizeProfile } from "@/src/lib/prSizeProfile";
+import { readPrCommitCount } from "@/src/lib/prSizeProfile.server";
+import { assertTier, buildDiffManifest, runLargePrReview } from "@/src/services/largePrReview";
 import { authenticateSessionOrKey } from "@/src/lib/apiAuth";
 import {
   computeDiffHash,
@@ -96,6 +99,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
     } else {
       console.log(`[scan] route: no repoPath or sourceBranch - skipping file refresh`);
     }
+    const sizeProfile = computePrSizeProfile(
+      files,
+      readPrCommitCount(repoPath, baseBranch, pr.sourceBranch),
+    );
+    const manifest = buildDiffManifest(files, sizeProfile.commitCount);
+    const tier = assertTier(manifest);
 
     // Merged-branch short-circuit. If the branch is fully merged into base,
     // there is nothing to review — returning a clean merged state instead
@@ -112,6 +121,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
         message: `Branch "${pr.sourceBranch}" is fully merged into "${baseBranch}". Nothing to review.`,
         rating: null,
         findings: [],
+        sizeProfile,
       });
     }
 
@@ -146,6 +156,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
           rating: fresh.rating,
           findings,
           usedModel: null,
+          sizeProfile,
         });
       }
       // fresh.ok === false → narrowed to STALE_RUN / NO_RUN
@@ -191,12 +202,20 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
     });
     console.log(`[scan] route: created in_progress ReviewRun ${reviewRunId}`);
 
-    console.log(`[scan] route: calling runPrScan with ${files.length} files`);
-    const result = await runPrScan(prId, files, reviewRunId);
+    console.log(`[scan] route: calling ${tier.tier === "normal" ? "runPrScan" : "runLargePrReview"} with ${files.length} files`);
+    const result = tier.tier === "normal"
+      ? await runPrScan(prId, files, reviewRunId)
+      : await runLargePrReview({
+          reviewRunId,
+          prId,
+          files,
+          tier: tier.tier,
+          warning: "message" in tier ? tier.message : null,
+        });
     console.log(`[scan] route: runPrScan complete - rating=${result.rating}, findings=${result.findings?.length}, model=${result.usedModel}`);
 
     if (acquired) endReview(prId);
-    return NextResponse.json(result);
+    return NextResponse.json({ ...result, sizeProfile });
   } catch (err: any) {
     console.error(`[scan] route: ERROR:`, err);
     if (acquired) endReview(prId);

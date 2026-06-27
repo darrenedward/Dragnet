@@ -297,6 +297,9 @@ export default function App() {
                   onDismissScanResult={() => d.setScanResult(null)}
                   findings={d.findings}
                   reviewRun={d.reviewRun}
+                  chunks={d.reviewChunks}
+                  isRetryingChunks={d.isRetryingChunks}
+                  onRetryFailedChunks={d.handleRetryFailedChunks}
                   rejectedCount={d.rejectedCount}
                   rejectedFindings={d.rejectedFindings}
                   stale={d.stale}
