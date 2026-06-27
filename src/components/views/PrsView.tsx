@@ -66,6 +66,8 @@ interface Props {
     chunksSkipped?: number;
   } | null;
   activeChunks?: ReviewChunk[];
+  activeFindings?: ReviewFinding[];
+  activeIterations?: Record<string, { current: number; max: number }>;
   isRetryingChunks?: boolean;
   onRetryFailedChunks?: () => void;
   rejectedCount?: number;
@@ -98,6 +100,8 @@ export default function PrsView({
   chunks,
   activeScan,
   activeChunks,
+  activeFindings,
+  activeIterations,
   isRetryingChunks,
   onRetryFailedChunks,
   rejectedCount,
@@ -153,6 +157,8 @@ export default function PrsView({
               chunks={chunks}
               activeScan={activeScan}
               activeChunks={activeChunks}
+              activeFindings={activeFindings}
+              activeIterations={activeIterations}
               isRetryingChunks={isRetryingChunks}
               onRetryFailedChunks={onRetryFailedChunks}
               rejectedCount={rejectedCount}

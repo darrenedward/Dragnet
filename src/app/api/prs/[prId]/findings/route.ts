@@ -28,9 +28,11 @@ const CHUNK_SELECT = {
  * - `reviewRun` + `findings` + `chunks`: the latest COMPLETED run (the
  *   "current report"). Findings are filtered to exclude verifier-rejected.
  *   `chunks` are the per-chunk results for that completed run.
- * - `activeScan` + `activeChunks`: the currently in-progress run, if any.
- *   Lets the UI render live chunk progress and poll iteration logs while
- *   the agentic loop is still running. Null when no scan is active.
+ * - `activeScan` + `activeChunks` + `activeFindings` + `activeIterations`:
+ *   the currently in-progress run, if any. Lets the UI render live chunk
+ *   progress, partial findings ("found so far"), and per-chunk iteration
+ *   counts ("we're on round N") while the agentic loop is still running.
+ *   Null/empty when no scan is active.
  * - `sizeProfile`: tier (normal/large/oversized) for the PR's current diff.
  *
  * `stale` is true when the PR's current PrFile diff doesn't match the
@@ -70,22 +72,42 @@ export async function GET(req: Request, { params }: { params: Promise<{ prId: st
       : null;
     const sizeProfile = computePrSizeProfile(files, commitCount);
 
-    const [chunks, activeChunks] = await Promise.all([
-      latest.reviewRun
-        ? prisma.reviewChunk.findMany({
-            where: { reviewRunId: latest.reviewRun.id },
-            orderBy: { id: "asc" },
-            select: CHUNK_SELECT,
-          })
-        : Promise.resolve([]),
-      activeScan.reviewRun
-        ? prisma.reviewChunk.findMany({
-            where: { reviewRunId: activeScan.reviewRun.id },
-            orderBy: { id: "asc" },
-            select: CHUNK_SELECT,
-          })
-        : Promise.resolve([]),
-    ]);
+    const chunks = latest.reviewRun
+      ? await prisma.reviewChunk.findMany({
+          where: { reviewRunId: latest.reviewRun.id },
+          orderBy: { id: "asc" },
+          select: CHUNK_SELECT,
+        })
+      : [];
+
+    const activeChunks = activeScan.reviewRun
+      ? await prisma.reviewChunk.findMany({
+          where: { reviewRunId: activeScan.reviewRun.id },
+          orderBy: { id: "asc" },
+          select: CHUNK_SELECT,
+        })
+      : [];
+
+    const activeScanView = activeScan.reviewRun
+      ? {
+          id: activeScan.reviewRun.id,
+          commitHash: activeScan.reviewRun.commitHash,
+          diffHash: activeScan.reviewRun.diffHash,
+          startedAt: activeScan.reviewRun.startedAt,
+          triggerReason: activeScan.reviewRun.triggerReason,
+          model: activeScan.reviewRun.model,
+          chunksTotal: activeScan.reviewRun.chunksTotal,
+          chunksCompleted: activeScan.reviewRun.chunksCompleted,
+          chunksFailed: activeScan.reviewRun.chunksFailed,
+          chunksSkipped: activeScan.reviewRun.chunksSkipped,
+        }
+      : null;
+
+    // Active partial findings + iteration map. Empty when no scan active.
+    // Returned alongside the completed-run findings so the UI can render
+    // "found so far" while scanning, then swap to the final list on done.
+    const activeFindings = activeScan.findings;
+    const activeIterations = activeScan.iterationsByChunk;
 
     if (!latest.reviewRun) {
       return NextResponse.json({
@@ -96,21 +118,10 @@ export async function GET(req: Request, { params }: { params: Promise<{ prId: st
         stale: false,
         sizeProfile,
         chunks,
-        activeScan: activeScan.reviewRun
-          ? {
-              id: activeScan.reviewRun.id,
-              commitHash: activeScan.reviewRun.commitHash,
-              diffHash: activeScan.reviewRun.diffHash,
-              startedAt: activeScan.reviewRun.startedAt,
-              triggerReason: activeScan.reviewRun.triggerReason,
-              model: activeScan.reviewRun.model,
-              chunksTotal: activeScan.reviewRun.chunksTotal,
-              chunksCompleted: activeScan.reviewRun.chunksCompleted,
-              chunksFailed: activeScan.reviewRun.chunksFailed,
-              chunksSkipped: activeScan.reviewRun.chunksSkipped,
-            }
-          : null,
+        activeScan: activeScanView,
         activeChunks,
+        activeFindings,
+        activeIterations,
         message: "No completed review yet. Run a scan.",
       });
     }
@@ -136,21 +147,10 @@ export async function GET(req: Request, { params }: { params: Promise<{ prId: st
       stale: latest.stale,
       sizeProfile,
       chunks,
-      activeScan: activeScan.reviewRun
-        ? {
-            id: activeScan.reviewRun.id,
-            commitHash: activeScan.reviewRun.commitHash,
-            diffHash: activeScan.reviewRun.diffHash,
-            startedAt: activeScan.reviewRun.startedAt,
-            triggerReason: activeScan.reviewRun.triggerReason,
-            model: activeScan.reviewRun.model,
-            chunksTotal: activeScan.reviewRun.chunksTotal,
-            chunksCompleted: activeScan.reviewRun.chunksCompleted,
-            chunksFailed: activeScan.reviewRun.chunksFailed,
-            chunksSkipped: activeScan.reviewRun.chunksSkipped,
-          }
-        : null,
+      activeScan: activeScanView,
       activeChunks,
+      activeFindings,
+      activeIterations,
     });
   } catch (err: any) {
     console.error("Error fetching findings for PR:", err);

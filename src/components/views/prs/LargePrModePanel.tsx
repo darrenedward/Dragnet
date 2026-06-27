@@ -18,6 +18,13 @@ interface Props {
   sizeProfile?: PrSizeProfile;
   isRetrying?: boolean;
   onRetryFailedChunks?: () => void;
+  /**
+   * Per-chunk agentic-loop progress: {current, max} keyed by chunkId.
+   * Only populated for active scans — completed runs don't need this
+   * because every chunk is done. Lets the grid show "iter N/M" next to
+   * running chunks so users can see the loop making progress.
+   */
+  iterationsByChunk?: Record<string, { current: number; max: number }>;
 }
 
 export default function LargePrModePanel({
@@ -26,6 +33,7 @@ export default function LargePrModePanel({
   sizeProfile,
   isRetrying,
   onRetryFailedChunks,
+  iterationsByChunk,
 }: Props) {
   const failedCount = reviewRun.chunksFailed ?? chunks.filter((chunk) => chunk.status === "failed").length;
   const reliability = reviewRun.reliability || "pending";
@@ -74,6 +82,8 @@ export default function LargePrModePanel({
           {chunks.map((chunk) => {
             const status = statusConfig(chunk.status);
             const StatusIcon = status.Icon;
+            const iter = iterationsByChunk?.[chunk.id];
+            const showIter = chunk.status === "running" || chunk.status === "pending";
             return (
               <div key={chunk.id} className="border border-white/5 rounded bg-slate-950/50 px-2 py-1.5 min-w-0">
                 <div className="flex items-center justify-between gap-2">
@@ -92,9 +102,16 @@ export default function LargePrModePanel({
                 </div>
                 <div className="mt-1 flex items-center justify-between text-[9px] font-mono text-slate-600">
                   <span>{chunk.lineCount.toLocaleString()} lines · {chunk.filePaths.length} files</span>
-                  {chunk.rating !== null && chunk.rating !== undefined && (
-                    <span className="text-slate-400">{chunk.rating}/10</span>
-                  )}
+                  <div className="flex items-center gap-2">
+                    {showIter && iter && (
+                      <span className="text-cyan-400" title="Agentic loop iteration">
+                        iter {iter.current}/{iter.max}
+                      </span>
+                    )}
+                    {chunk.rating !== null && chunk.rating !== undefined && (
+                      <span className="text-slate-400">{chunk.rating}/10</span>
+                    )}
+                  </div>
                 </div>
                 {(chunk.errorMessage || chunk.skipReason) && (
                   <div className="mt-1 text-[9px] font-mono text-rose-300/80 truncate" title={chunk.errorMessage || chunk.skipReason || ""}>

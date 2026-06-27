@@ -107,7 +107,7 @@ export default function ReviewProgress({ prId, reviewRunId, isScanning }: Props)
       </button>
 
       {expanded && (
-        <div className="max-h-48 overflow-y-auto p-2 space-y-0.5">
+        <div className="max-h-72 overflow-y-auto p-2 space-y-0.5">
           {logs.length === 0 ? (
             <div className="text-[10px] text-slate-600 font-mono text-center py-4 italic">
               Waiting for AI review loop to start...

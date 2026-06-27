@@ -1,9 +1,10 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import { AlertTriangle, CheckCircle2, Copy, Loader2, Network, ShieldAlert } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Copy, Loader2, ShieldAlert } from "lucide-react";
 import type { PullRequest, ReviewChunk, ReviewFinding } from "../../../lib/types";
 import PrSizeProfileChip from "../../PrSizeProfileChip";
+import FindingsList from "./FindingsList";
 import LargePrModePanel from "./LargePrModePanel";
 
 export interface ReviewRunMeta {
@@ -30,27 +31,6 @@ export type ActiveScanMeta = Pick<ReviewRunMeta, "id" | "chunksTotal" | "chunksC
 
 const severityOrder = ["blocker", "warning", "suggestion"] as const;
 
-const severityConfig = {
-  blocker: {
-    label: "Blockers",
-    border: "border-rose-500/20",
-    badge: "bg-rose-500/15 text-rose-400 border-rose-500/25",
-    dot: "bg-rose-500",
-  },
-  warning: {
-    label: "Warnings",
-    border: "border-amber-500/20",
-    badge: "bg-amber-500/15 text-amber-400 border-amber-500/25",
-    dot: "bg-amber-500",
-  },
-  suggestion: {
-    label: "Suggestions",
-    border: "border-white/10",
-    badge: "bg-slate-800 text-slate-400 border-slate-750",
-    dot: "bg-slate-500",
-  },
-};
-
 interface Props {
   activePR: PullRequest | undefined;
   findings: ReviewFinding[];
@@ -70,6 +50,15 @@ interface Props {
   // progress instead of just a spinner.
   activeScan?: ActiveScanMeta | null;
   activeChunks?: ReviewChunk[];
+  // Partial findings already persisted from completed chunks of the
+  // active scan. Rendered in the same severity-grouped list as completed
+  // findings, labeled "Found so far" — gives the user something to act
+  // on while the rest of the scan finishes.
+  activeFindings?: ReviewFinding[];
+  // Per-chunk agentic-loop progress, keyed by chunkId. Lets the chunk
+  // grid show "iter N/M" next to running chunks. Non-chunked scans use
+  // the "__run" sentinel key.
+  activeIterations?: Record<string, { current: number; max: number }>;
   isRetryingChunks?: boolean;
   onRetryFailedChunks?: () => void;
   onCopySuggestion: (text: string, id: string) => void;
@@ -128,17 +117,24 @@ function formatFindings(activePR: PullRequest | undefined, findings: ReviewFindi
   return lines.join("\n");
 }
 
-function parseEvidence(chain: ReviewFinding["evidenceChain"]): Array<{ file: string; line: number; text: string }> {
-  if (!chain) return [];
-  try {
-    const parsed = typeof chain === "string" ? JSON.parse(chain) : chain;
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-export default function ReviewCard({ activePR, findings, reviewRun, rejectedCount, rejectedFindings, stale, isScanning, chunks = [], activeScan, activeChunks = [], isRetryingChunks, onRetryFailedChunks, onCopySuggestion, copyFeedback }: Props) {
+export default function ReviewCard({
+  activePR,
+  findings,
+  reviewRun,
+  rejectedCount,
+  rejectedFindings,
+  stale,
+  isScanning,
+  chunks = [],
+  activeScan,
+  activeChunks = [],
+  activeFindings = [],
+  activeIterations,
+  isRetryingChunks,
+  onRetryFailedChunks,
+  onCopySuggestion,
+  copyFeedback,
+}: Props) {
   const [copiedAll, setCopiedAll] = useState(false);
   const [showRejected, setShowRejected] = useState(false);
   const handleCopyAll = useCallback(() => {
@@ -241,6 +237,7 @@ export default function ReviewCard({ activePR, findings, reviewRun, rejectedCoun
               sizeProfile={activePR?.sizeProfile}
               isRetrying={isRetryingChunks}
               onRetryFailedChunks={onRetryFailedChunks}
+              iterationsByChunk={activeIterations}
             />
           );
         }
@@ -258,21 +255,29 @@ export default function ReviewCard({ activePR, findings, reviewRun, rejectedCoun
         return null;
       })()}
 
-      {/* Scanning state — previous findings have been moved to Scan History */}
+      {/* Scanning state — compact banner + partial findings from completed chunks. */}
       {isScanning ? (
-        <div className="p-8 text-center text-slate-500 flex flex-col items-center justify-center">
-          <Loader2 size={24} className="text-cyan-400 animate-spin mb-2" />
-          <p className="text-xs font-bold text-cyan-300 font-mono">
-            AI review pipeline running
-          </p>
-          <p className="text-[10px] text-slate-500 font-mono mt-1 max-w-md">
-            {activeScan && (activeScan.chunksTotal ?? 0) > 0
-              ? `Chunked scan in progress — ${activeScan.chunksCompleted ?? 0}/${activeScan.chunksTotal} complete. Watch chunk grid above for per-file status.`
-              : reviewRun
-                ? "Previous findings have moved to Scan History below — watch Review Progress for live iteration logs."
-                : "Watch Review Progress above for live iteration logs."}
-          </p>
-        </div>
+        <>
+          <ScanningBanner
+            activeScan={activeScan ?? null}
+            activeIterations={activeIterations}
+            partialCount={activeFindings.length}
+          />
+          {activeFindings.length > 0 && (
+            <FindingsList
+              findings={activeFindings}
+              variant="partial"
+              onCopySuggestion={onCopySuggestion}
+              copyFeedback={copyFeedback}
+              headerChip={
+                <span className="text-[10px] font-mono uppercase tracking-wider text-cyan-300 font-bold flex items-center gap-1.5">
+                  <Loader2 size={11} className="animate-spin" />
+                  Found so far — {activeFindings.length} finding{activeFindings.length === 1 ? "" : "s"} (scan still running)
+                </span>
+              }
+            />
+          )}
+        </>
       ) : findings.length === 0 ? (
         <div className="p-8 text-center text-slate-500 flex flex-col items-center justify-center">
           {reviewRun && reviewRun.rating === null ? (
@@ -300,124 +305,11 @@ export default function ReviewCard({ activePR, findings, reviewRun, rejectedCoun
           )}
         </div>
       ) : (
-        <div className="divide-y divide-white/5 max-h-[70vh] overflow-y-auto">
-          {severityOrder.map((sev) => {
-            const group = findings.filter((f) => f.severity === sev);
-            if (group.length === 0) return null;
-            const cfg = severityConfig[sev];
-
-            return (
-              <div key={sev} className={`border-l-2 ${cfg.border}`}>
-                {/* Severity group header */}
-                <div className="px-4 py-2 bg-white/[0.02] flex items-center gap-2 border-b border-white/5">
-                  <span className={`w-2 h-2 rounded-full ${cfg.dot}`} />
-                  <span className="text-[10px] font-mono font-extrabold uppercase tracking-wider text-slate-400">
-                    {cfg.label}
-                  </span>
-                  <span className="text-[10px] font-mono text-slate-600">({group.length})</span>
-                </div>
-
-                {/* Findings in this group */}
-                <div className="divide-y divide-white/5">
-                  {group.map((finding) => {
-                    const evidencePoints = parseEvidence(finding.evidenceChain);
-                    return (
-                      <div key={finding.id} className="px-4 py-3 hover:bg-white/[0.01] transition-colors">
-                        <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
-                          <div className="flex items-center gap-2">
-                            <span className={`px-2 py-0.5 rounded text-[9px] font-extrabold uppercase font-mono border ${cfg.badge}`}>
-                              {finding.severity}
-                            </span>
-                            <span className="text-[10px] font-mono text-cyan-400 bg-cyan-400/5 px-1.5 rounded font-bold uppercase tracking-wider">
-                              {finding.category}
-                            </span>
-                            {finding.source && finding.source !== "llm" && (
-                              <span
-                                title={`Found by ${finding.source} (deterministic check) — not the LLM`}
-                                className={`text-[9px] font-mono uppercase px-1.5 py-0.5 rounded font-bold border ${
-                                  finding.source === "tsc"
-                                    ? "bg-blue-500/10 text-blue-400 border-blue-500/25"
-                                    : "bg-purple-500/10 text-purple-400 border-purple-500/25"
-                                }`}
-                              >
-                                {finding.source}
-                              </span>
-                            )}
-                            <span className="text-xs font-semibold text-white tracking-tight">{finding.filename}</span>
-                            {finding.verificationStatus === "downgraded" && (
-                              <span
-                                title={finding.verificationNote || "Real issue but overstated"}
-                                className="text-[9px] font-mono uppercase px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/25 font-bold"
-                              >
-                                ↓ Downgraded
-                              </span>
-                            )}
-                            {finding.verificationStatus === "unverified" && (
-                              <span
-                                title={finding.verificationNote || "Verifier couldn't reach a verdict"}
-                                className="text-[9px] font-mono uppercase px-1.5 py-0.5 rounded bg-slate-700/40 text-slate-400 border border-white/10 font-bold"
-                              >
-                                ? Unverified
-                              </span>
-                            )}
-                          </div>
-                          <div className="flex items-center gap-2">
-                            {finding.confidence !== undefined && finding.confidence !== null && (
-                              <span className="text-[9px] font-mono text-slate-500 bg-slate-950 px-1.5 py-0.5 rounded border border-white/5">
-                                {(finding.confidence * 100).toFixed(0)}%
-                              </span>
-                            )}
-                            <span className="text-[10px] font-mono text-slate-500 bg-slate-950 px-1.5 py-0.5 rounded border border-white/5">
-                              Line {finding.line}
-                            </span>
-                          </div>
-                        </div>
-
-                        <p className="text-xs text-slate-300 leading-relaxed font-sans break-words whitespace-pre-wrap">{finding.explanation}</p>
-
-                        {evidencePoints.length > 0 && (
-                          <div className="mt-2 text-xs font-mono bg-slate-950/50 p-2.5 rounded-lg border border-white/5 space-y-1.5">
-                            <div className="text-[10px] text-cyan-400 uppercase font-bold flex items-center gap-1.5 border-b border-white/5 pb-1 select-none">
-                              <Network size={11} className="text-cyan-400" />
-                              <span>Evidence Chain</span>
-                            </div>
-                            <div className="space-y-1 pl-1 border-l border-cyan-500/20 ml-1">
-                              {evidencePoints.map((point, pIdx) => (
-                                <div key={pIdx} className="text-[11px] leading-relaxed flex items-start gap-1.5">
-                                  <span className="text-cyan-500 font-extrabold select-none shrink-0">[{pIdx + 1}]</span>
-                                  <span className="text-slate-400 break-words">
-                                    <strong className="text-slate-300 break-all">{point.file}</strong> (Line {point.line}): {point.text}
-                                  </span>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-
-                        {finding.diffSuggestion && (
-                          <div className="mt-2 relative">
-                            <div className="bg-black/50 rounded-lg p-3 font-mono text-xs text-slate-300 border border-white/5 overflow-y-auto max-h-40 whitespace-pre-wrap break-words">
-                              <div className="text-slate-600 text-[10px] font-semibold border-b border-white/5 pb-1 mb-2 uppercase tracking-wide flex items-center justify-between">
-                                <span>Suggested Fix</span>
-                                <button
-                                  onClick={() => onCopySuggestion(finding.diffSuggestion, finding.id)}
-                                  className="hover:text-white transition-colors cursor-pointer"
-                                >
-                                  {copyFeedback === finding.id ? "Copied!" : "Copy"}
-                                </button>
-                              </div>
-                              <div className="text-[11px] font-mono leading-relaxed text-slate-300">{finding.diffSuggestion}</div>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            );
-          })}
-        </div>
+        <FindingsList
+          findings={findings}
+          onCopySuggestion={onCopySuggestion}
+          copyFeedback={copyFeedback}
+        />
       )}
 
       {(rejectedCount ?? 0) > 0 && !isScanning && (
@@ -478,4 +370,73 @@ function formatRelativeTime(iso: string): string {
   } catch {
     return "";
   }
+}
+
+/**
+ * Summarize iteration progress across an active scan.
+ *
+ * Chunked scans: take the max iteration across all per-chunk entries —
+ * represents "the deepest round any chunk has reached". For non-chunked
+ * scans (or when only the run-level sentinel exists), use that entry
+ * directly.
+ */
+function pickIteration(
+  activeScan: ActiveScanMeta | null,
+  iterations: Record<string, { current: number; max: number }> | undefined,
+): { current: number; max: number } | null {
+  if (!iterations) return null;
+  const chunked = activeScan && (activeScan.chunksTotal ?? 0) > 0;
+  if (!chunked) {
+    const run = iterations["__run"];
+    return run ?? null;
+  }
+  let best: { current: number; max: number } | null = null;
+  for (const key of Object.keys(iterations)) {
+    if (key === "__run") continue;
+    const v = iterations[key];
+    if (!v) continue;
+    if (!best || v.current > best.current) best = v;
+  }
+  return best;
+}
+
+/**
+ * Compact banner shown above partial findings during a live scan. Tells
+ * the user what's happening (chunks done, iteration N/M, partial count)
+ * without forcing them to scroll the log panel.
+ */
+function ScanningBanner({
+  activeScan,
+  activeIterations,
+  partialCount,
+}: {
+  activeScan: ActiveScanMeta | null;
+  activeIterations?: Record<string, { current: number; max: number }>;
+  partialCount: number;
+}) {
+  const iter = pickIteration(activeScan, activeIterations);
+  const chunked = activeScan && (activeScan.chunksTotal ?? 0) > 0;
+  const chunksText = chunked
+    ? `${activeScan?.chunksCompleted ?? 0}/${activeScan?.chunksTotal ?? 0} chunks done`
+    : null;
+  const iterText = iter ? `iteration ${iter.current}/${iter.max}` : null;
+  const partialText = partialCount > 0 ? `${partialCount} found so far` : null;
+  const detail = [chunksText, iterText, partialText].filter(Boolean).join(" · ");
+
+  return (
+    <div className="p-3 bg-cyan-950/20 border-b border-cyan-500/15 flex items-center gap-2 flex-wrap">
+      <Loader2 size={14} className="text-cyan-400 animate-spin shrink-0" />
+      <span className="text-[11px] font-bold text-cyan-300 font-mono uppercase tracking-wider">
+        AI review pipeline running
+      </span>
+      {detail && (
+        <span className="text-[10px] font-mono text-slate-400">
+          {detail}
+        </span>
+      )}
+      <span className="ml-auto text-[10px] font-mono text-slate-500">
+        Watch Review Progress for live iteration logs
+      </span>
+    </div>
+  );
 }

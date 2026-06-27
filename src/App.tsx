@@ -127,7 +127,7 @@ export default function App() {
         {/* Content Body Viewport */}
         <section className="flex-1 flex flex-col bg-[#0B0E14] overflow-hidden min-h-0">
           {/* Main Title Metadata Row */}
-          <div className="p-4 sm:p-5 border-b border-white/5 flex flex-col sm:flex-row sm:items-end justify-between gap-4 bg-[#0F1219]/30">
+          <div className="p-4 sm:p-5 border-b border-white/5 flex flex-col sm:flex-row sm:items-end justify-between gap-4 bg-[#0F1219]/30 shrink-0">
             <div>
               <div className="flex items-center gap-2 mb-1">
                 <span className="text-[10px] font-mono text-slate-500 uppercase tracking-wider">Active Workspace Target:</span>
@@ -300,6 +300,8 @@ export default function App() {
                   chunks={d.reviewChunks}
                   activeScan={d.activeScan}
                   activeChunks={d.activeScanChunks}
+                  activeFindings={d.activeFindings}
+                  activeIterations={d.activeIterations}
                   isRetryingChunks={d.isRetryingChunks}
                   onRetryFailedChunks={d.handleRetryFailedChunks}
                   rejectedCount={d.rejectedCount}

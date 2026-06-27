@@ -426,6 +426,11 @@ export async function getLatestCompletedReview(
  * Stale-run reaping is handled upstream by assertNoActiveScan on the next
  * scan trigger (and by runReaper on cold start), so this just reads what
  * the DB says — no age-based filtering here.
+ *
+ * Also loads partial findings (already persisted from completed chunks)
+ * and per-chunk iteration counts parsed from ReviewLog. Both let the UI
+ * tell the user "here's what we've found so far" and "we're on round N"
+ * while the scan is still running — instead of just a spinner.
  */
 export async function getActiveScan(prId: string): Promise<{
   reviewRun: {
@@ -440,6 +445,33 @@ export async function getActiveScan(prId: string): Promise<{
     chunksFailed: number;
     chunksSkipped: number;
   } | null;
+  findings: Array<{
+    id: string;
+    prId: string;
+    reviewRunId: string | null;
+    repoId: string;
+    category: string;
+    severity: string;
+    filename: string;
+    line: number | null;
+    explanation: string;
+    diffSuggestion: string | null;
+    evidenceChain: string | null;
+    confidence: number | null;
+    verificationStatus: string | null;
+    verificationNote: string | null;
+    source: string | null;
+    timestamp: string;
+    reviewChunkId: string | null;
+  }>;
+  /**
+   * Max iteration number seen per chunkId. Chunked scans key this by the
+   * chunk's DB id; non-chunked scans key it under "__run" (the sentinel
+   * used when ReviewLog.reviewChunkId is null). Value shape:
+   * { current: N, max: M } where M comes from the "Iteration N/M" log
+   * format written by reviewService.ts.
+   */
+  iterationsByChunk: Record<string, { current: number; max: number }>;
 }> {
   const reviewRun = await prisma.reviewRun.findFirst({
     where: { prId, status: "in_progress" },
@@ -457,5 +489,77 @@ export async function getActiveScan(prId: string): Promise<{
       chunksSkipped: true,
     },
   });
-  return { reviewRun };
+
+  if (!reviewRun) {
+    return { reviewRun: null, findings: [], iterationsByChunk: {} };
+  }
+
+  const [findings, logs] = await Promise.all([
+    prisma.reviewFinding.findMany({
+      where: {
+        reviewRunId: reviewRun.id,
+        OR: [
+          { verificationStatus: null },
+          { verificationStatus: { not: "rejected" } },
+        ],
+      },
+      orderBy: { line: "asc" },
+      select: {
+        id: true,
+        prId: true,
+        reviewRunId: true,
+        reviewChunkId: true,
+        repoId: true,
+        category: true,
+        severity: true,
+        filename: true,
+        line: true,
+        explanation: true,
+        diffSuggestion: true,
+        evidenceChain: true,
+        confidence: true,
+        verificationStatus: true,
+        verificationNote: true,
+        source: true,
+        timestamp: true,
+      },
+    }),
+    prisma.reviewLog.findMany({
+      where: { reviewRunId: reviewRun.id },
+      select: { message: true, reviewChunkId: true },
+    }),
+  ]);
+
+  return {
+    reviewRun,
+    findings,
+    iterationsByChunk: parseIterationLogs(logs),
+  };
+}
+
+/**
+ * Parse "Iteration N/M — …" log messages into a per-chunk map of the
+ * highest iteration number seen. ReviewService writes one such line per
+ * agentic-loop iteration, so the max N is the current round for that
+ * chunk. Logs without a chunkId fall under the "__run" sentinel key
+ * (used by non-chunked scans).
+ */
+function parseIterationLogs(
+  logs: Array<{ message: string; reviewChunkId: string | null }>,
+): Record<string, { current: number; max: number }> {
+  const ITER_RE = /^Iteration (\d+)\/(\d+)\b/;
+  const out: Record<string, { current: number; max: number }> = {};
+  for (const log of logs) {
+    const match = log.message.match(ITER_RE);
+    if (!match || !match[1] || !match[2]) continue;
+    const current = Number.parseInt(match[1], 10);
+    const max = Number.parseInt(match[2], 10);
+    if (!Number.isFinite(current) || !Number.isFinite(max)) continue;
+    const key = log.reviewChunkId ?? "__run";
+    const prev = out[key];
+    if (!prev || current > prev.current) {
+      out[key] = { current, max };
+    }
+  }
+  return out;
 }
