@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { buildDiffManifest, chunkDiff } from "../../src/services/largePrReview";
+import { buildDiffManifest, chunkDiff, verifyChunkPlan } from "../../src/services/largePrReview";
 
 describe("largePrReview chunker", () => {
-  it("splits by package and file type deterministically", () => {
+  it("chunks deterministically and conserves every file", () => {
     const manifest = buildDiffManifest([
       { filename: "packages/api/src/a.ts", additions: 300, deletions: 0 },
       { filename: "packages/web/src/a.tsx", additions: 300, deletions: 0 },
@@ -13,12 +13,17 @@ describe("largePrReview chunker", () => {
     const first = chunkDiff(manifest);
     const second = chunkDiff(buildDiffManifest([...manifest.files].reverse()));
 
+    // Determinism: input order must not change the plan.
     expect(first.map((chunk) => chunk.filePaths)).toEqual(second.map((chunk) => chunk.filePaths));
-    expect(first.map((chunk) => chunk.label)).toEqual([
-      "packages/api/src/c.css",
-      "packages/api/ts-js",
-      "packages/web/src/a.tsx",
-    ]);
+    expect(first.map((chunk) => chunk.label)).toEqual(second.map((chunk) => chunk.label));
+
+    // Conservation: every code file appears in exactly one chunk.
+    const expected = manifest.files.filter((f) => f.fileClass === "code").map((f) => f.filename).sort();
+    const actual = first.flatMap((chunk) => chunk.filePaths).sort();
+    expect(actual).toEqual(expected);
+
+    // Invariants: cap enforced, no waste.
+    expect(verifyChunkPlan(first, manifest.files.filter((f) => f.fileClass === "code"))).toEqual([]);
   });
 
   it("keeps chunks under 600 lines unless a single file is larger", () => {
