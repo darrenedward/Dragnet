@@ -124,9 +124,9 @@ export default function PrsView({
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
       transition={{ duration: 0.1 }}
-      className="flex-1 flex flex-col xl:flex-row gap-5 overflow-y-auto overflow-x-hidden min-h-0"
+      className="flex-1 flex flex-col xl:flex-row gap-5 overflow-hidden min-h-0"
     >
-      <div className="flex flex-col space-y-4 min-w-0 pr-1 flex-1 min-h-0">
+      <div className="flex flex-col min-w-0 flex-1 min-h-0">
         <PrHeader
           activePR={activePR}
           isScanning={isScanning}
@@ -140,39 +140,41 @@ export default function PrsView({
           onIndexComplete={onIndexComplete}
         />
 
-        <SectionLabel>Scan Logs</SectionLabel>
-        <ReviewProgress
-          prId={activePR?.id}
-          reviewRunId={isScanning && activeScan?.id ? activeScan.id : reviewRun?.id}
-          isScanning={isScanning}
-        />
+        <div className="flex flex-col space-y-4 min-w-0 mt-4 flex-1 overflow-y-auto overflow-x-hidden min-h-0 pr-1">
+          <SectionLabel>Scan Logs</SectionLabel>
+          <ReviewProgress
+            prId={activePR?.id}
+            reviewRunId={isScanning && activeScan?.id ? activeScan.id : reviewRun?.id}
+            isScanning={isScanning}
+          />
 
-        {activePR && (
-          <>
-            <SectionLabel>Scan Results</SectionLabel>
-            <ReviewCard
-              activePR={activePR}
-              findings={findings}
-              reviewRun={reviewRun}
-              chunks={chunks}
-              activeScan={activeScan}
-              activeChunks={activeChunks}
-              activeFindings={activeFindings}
-              activeIterations={activeIterations}
-              isRetryingChunks={isRetryingChunks}
-              onRetryFailedChunks={onRetryFailedChunks}
-              rejectedCount={rejectedCount}
-              rejectedFindings={rejectedFindings}
-              stale={stale}
-              isScanning={isScanning}
-              onCopySuggestion={onCopySuggestion}
-              copyFeedback={copyFeedback}
-            />
-          </>
-        )}
+          {activePR && (
+            <>
+              <SectionLabel>Scan Results</SectionLabel>
+              <ReviewCard
+                activePR={activePR}
+                findings={findings}
+                reviewRun={reviewRun}
+                chunks={chunks}
+                activeScan={activeScan}
+                activeChunks={activeChunks}
+                activeFindings={activeFindings}
+                activeIterations={activeIterations}
+                isRetryingChunks={isRetryingChunks}
+                onRetryFailedChunks={onRetryFailedChunks}
+                rejectedCount={rejectedCount}
+                rejectedFindings={rejectedFindings}
+                stale={stale}
+                isScanning={isScanning}
+                onCopySuggestion={onCopySuggestion}
+                copyFeedback={copyFeedback}
+              />
+            </>
+          )}
 
-        <SectionLabel>Scan History</SectionLabel>
-        <ScanHistory prId={activePR?.id} currentRunId={reviewRun?.id} />
+          <SectionLabel>Scan History</SectionLabel>
+          <ScanHistory prId={activePR?.id} currentRunId={reviewRun?.id} />
+        </div>
       </div>
 
       <FilesPanel
@@ -359,7 +361,7 @@ function FilesPanel({
   activeFile: PRFile | undefined;
 }) {
   return (
-    <div className="w-full xl:w-96 xl:self-start xl:sticky xl:top-0 shrink-0 flex flex-col gap-4 bg-slate-950/20 border border-white/10 rounded-xl p-4">
+    <div className="w-full xl:w-96 shrink-0 flex flex-col gap-4 overflow-hidden min-h-0 bg-slate-950/20 border border-white/10 rounded-xl p-4">
       <div>
         <h4 className="text-[10px] font-mono font-extrabold text-slate-500 uppercase tracking-[0.2em] mb-2.5">
           Files Involved in PR
