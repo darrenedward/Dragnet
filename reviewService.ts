@@ -216,8 +216,25 @@ function normalizeFinalReview(candidate: any): {
   };
 }
 
+/**
+ * Strip `<think>…</think>` reasoning traces from model output before JSON
+ * parsing. Reasoning models (MiniMax-M3, DeepSeek-R1, GLM thinker variants,
+ * Qwen-QwQ, etc.) emit these as exposed chain-of-thought. The thinking has
+ * already happened by the time we see the response — removing it here only
+ * prevents the tags from breaking JSON.parse; it does NOT change findings,
+ * rating, or any other persisted output.
+ *
+ * Handles both closed (`<think>…</think>`) and unclosed (`<think>…` to end
+ * of string, which MiniMax sometimes produces) forms.
+ */
+function stripThinkBlocks(s: string): string {
+  return s
+    .replace(/<think[^>]*>[\s\S]*?<\/think>/gi, "")
+    .replace(/<think[^>]*>[\s\S]*$/gi, "");
+}
+
 function parseFinalReviewJson(rawText: string): any | null {
-  const trimmed = rawText.trim();
+  const trimmed = stripThinkBlocks(rawText).trim();
   if (!trimmed) return null;
   const candidates = [trimmed];
   const match = trimmed.match(/\{[\s\S]*\}/);
@@ -629,7 +646,7 @@ ${diffPayload}${deterministicPayload}`;
               const fnName = call.function?.name;
               let fnArgs: any = {};
               try {
-                fnArgs = call.function?.arguments ? JSON.parse(call.function.arguments) : {};
+                fnArgs = call.function?.arguments ? JSON.parse(stripThinkBlocks(call.function.arguments)) : {};
               } catch (e) {
                 console.warn(`[review] Invalid JSON in tool call arguments for ${fnName}`);
                 messages.push({
@@ -903,7 +920,7 @@ ${diffPayload}${deterministicPayload}`;
               max_tokens: 500,
             });
             const raw = refusalRes.choices?.[0]?.message?.content ?? "";
-            const parsed = JSON.parse(raw);
+            const parsed = JSON.parse(stripThinkBlocks(raw));
             if (parsed?.refused === true) {
               refused = true;
               const topics = Array.isArray(parsed.topics) ? parsed.topics.filter(Boolean) : [];
