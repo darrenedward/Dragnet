@@ -444,6 +444,24 @@ export function useDashboardData() {
     setScanResult(null);
     setStale(false);
 
+    // Optimistic clear of the prior completed run so the UI instantly
+    // flips to "scanning" instead of showing the stale rating + findings
+    // for the ~1-10s window between click and the scan endpoint actually
+    // returning (and the subsequent /findings poll picking up the new
+    // in-progress run). Without this, users briefly see the old results
+    // and assume the new scan was instant — wastes 10+ min before they
+    // realise the AI is re-reporting identical findings. Mirrors the
+    // reset block in fetchPrDetails(clearBeforeLoad=true) below.
+    setFindings([]);
+    setReviewRun(null);
+    setReviewChunks([]);
+    setActiveScan(null);
+    setActiveScanChunks([]);
+    setActiveFindings([]);
+    setActiveIterations({});
+    setRejectedCount(0);
+    setRejectedFindings([]);
+
     setPrs((prev) =>
       prev.map((p) => (p.id === scanningPrId ? { ...p, status: "In Progress" } : p)),
     );
