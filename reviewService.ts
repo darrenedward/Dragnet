@@ -38,6 +38,32 @@ async function assertReviewRunStillActive(reviewRunId?: string): Promise<void> {
 }
 
 /**
+ * Build provider-specific request options for chat.completions.create.
+ *
+ * GPT-5 family (gpt-5, gpt-5.1, gpt-5.2, gpt-5.4, gpt-5-pro) is OpenAI's
+ * reasoning line. Per OpenAI's migration guide, reasoning models require
+ * `max_completion_tokens` instead of `max_tokens` and accept a top-level
+ * `reasoning_effort` (NOT the nested `reasoning: {effort}` form — that's
+ * Responses API only). Non-OpenAI providers (OpenRouter, MiniMax, Z.ai,
+ * Ollama) stay on the universal `max_tokens` form and would 400 on
+ * `reasoning_effort`.
+ *
+ * "xhigh" is the deepest tier. gpt-5.2 supports none/low/medium/high/xhigh;
+ * gpt-5-pro only supports "high" and silently coerces; gpt-5.1 defaults to
+ * "none" so MUST be set explicitly. Tradeoff: ~2x latency + cost vs deeper
+ * chain-of-thought — for a code reviewer that's the right default.
+ */
+function gpt5ChatOptions(model: string, maxTokens: number): Record<string, unknown> {
+  if (/^gpt-5/i.test(model)) {
+    return {
+      reasoning_effort: "xhigh" as const,
+      max_completion_tokens: maxTokens,
+    };
+  }
+  return { max_tokens: maxTokens };
+}
+
+/**
  * The responseSchema is reused as the parameters for the submitReview tool
  * (model returns its final review by calling the tool with the full
  * finding/rating shape). Plain JSON Schema — no `strict: true`, since the
@@ -610,13 +636,8 @@ ${diffPayload}${deterministicPayload}`;
               // introduces ~5% drift) but this is the difference between
               // "occasionally differs" and "always differs."
               temperature: 0,
-              // Reasoning models (MiniMax-M3, qwen-plus, etc.) spend a large
-              // fraction of their output budget on <think> blocks before they
-              // emit tool_calls. 4096 was too small — M3 on a 146-file diff
-              // exhausted the budget mid-reasoning and broke out of the loop
-              // with tool_calls=false.
-              max_tokens: 16_384,
-            }),
+              ...gpt5ChatOptions(model, 16_384),
+            } as any),
             `${name} chat completion`,
           );
           await assertReviewRunStillActive(reviewRunId);
@@ -830,8 +851,8 @@ ${diffPayload}${deterministicPayload}`;
                 model,
                 messages: finalizerMessages,
                 temperature: 0.1,
-                max_tokens: 16_384,
                 response_format: { type: "json_object" },
+                ...gpt5ChatOptions(model, 16_384),
               } as any),
               `${name} JSON finalizer`,
             );
@@ -843,8 +864,8 @@ ${diffPayload}${deterministicPayload}`;
                 model,
                 messages: finalizerMessages,
                 temperature: 0.1,
-                max_tokens: 16_384,
-              }),
+                ...gpt5ChatOptions(model, 16_384),
+              } as any),
               `${name} fallback finalizer`,
             );
           }
@@ -927,8 +948,8 @@ ${diffPayload}${deterministicPayload}`;
               ],
               response_format: { type: "json_object" },
               temperature: 0,
-              max_tokens: 500,
-            });
+              ...gpt5ChatOptions(usedModel, 500),
+            } as any);
             const raw = refusalRes.choices?.[0]?.message?.content ?? "";
             const parsed = JSON.parse(stripThinkBlocks(raw));
             if (parsed?.refused === true) {
