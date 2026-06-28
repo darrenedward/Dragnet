@@ -27,6 +27,16 @@ export function useDashboardData() {
   const pollInFlight = useRef(false);
   const latestPrsRequest = useRef(0);
   const latestDetailsRequest = useRef(0);
+  // True between handleTriggerPrScan's first await and its finally block.
+  // The isScanning-sync useEffect below reads this — when a scan request
+  // is in flight, the 15s poller can return server data where PR.status
+  // is still "Pending" (backend hasn't reached the status update yet —
+  // refreshPrFiles + indexFolder run first), which would otherwise flip
+  // isScanning back to false mid-scan. That makes the UI show old findings
+  // and re-enable the button, so the user clicks again → 409
+  // SCAN_IN_PROGRESS from the still-running first request. Holding the
+  // optimistic state until the request settles closes that window.
+  const scanInFlightRef = useRef(false);
   // ===== Database configuration =====
   const [dbConfig, setDbConfig] = useState<DbConfig>({
     dialect: "postgresql",
@@ -380,12 +390,26 @@ export function useDashboardData() {
   // button-click path stays optimistic because handleTriggerPrScan
   // immediately sets PR.status to "In Progress" in local state, so this
   // effect agrees with the optimistic value rather than fighting it.
+  //
+  // The activeScan check closes a second gap: between the user click and
+  // the scan route's prisma.pullRequest.updateMany({status: 'In Progress'})
+  // (which runs AFTER refreshPrFiles + indexFolder + cache check), the
+  // PR row in the DB still says "Pending". The findings endpoint returns
+  // activeScan as soon as the ReviewRun row exists, so checking both
+  // catches scans that the PR.status alone would miss.
+  //
+  // scanInFlightRef: while the user's own POST /scan is pending, ignore
+  // stale server state. Without this, the 15s poller races the request
+  // and flips isScanning=false mid-prep, the UI flips back to "ready"
+  // with the previous findings, the user re-clicks, and the second
+  // request 409s on the still-running first one.
   useEffect(() => {
     if (!selectedPrId) return;
+    if (scanInFlightRef.current) return;
     const activePR = prs.find((p) => p.id === selectedPrId);
     if (!activePR) return;
-    setIsScanning(activePR.status === "In Progress");
-  }, [selectedPrId, prs]);
+    setIsScanning(activePR.status === "In Progress" || !!activeScan);
+  }, [selectedPrId, prs, activeScan]);
 
   // ===== DB actions =====
   const handleTestDbConnection = async () => {
@@ -440,6 +464,7 @@ export function useDashboardData() {
     const scanningPrId = selectedPrId;
     const scanningRepoId = selectedRepoId;
     console.log(`[scan] handleTriggerPrScan: starting scan for prId=${scanningPrId}`);
+    scanInFlightRef.current = true;
     setIsScanning(true);
     setScanResult(null);
     setStale(false);
@@ -520,6 +545,11 @@ export function useDashboardData() {
       );
       alert("Pipeline Dispatch Crashed: " + e.message);
     } finally {
+      // Clear the in-flight ref BEFORE re-syncing so the isScanning
+      // useEffect (which reads scanInFlightRef.current) is allowed to
+      // run again — otherwise we'd suppress the post-request re-sync
+      // we're about to trigger by touching prs.
+      scanInFlightRef.current = false;
       setIsScanning(false);
     }
   };
