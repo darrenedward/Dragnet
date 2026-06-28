@@ -159,7 +159,11 @@ export default function ReviewCard({
 
   return (
     <div className="bg-[#0F1219] border border-white/10 rounded-xl overflow-hidden">
-      {/* Header */}
+      {/* Header — hidden during active scan; ScanningBanner below already
+          shows "AI review pipeline running" with iteration/chunk/findings
+          detail, and every right-side chip in this bar is gated on
+          !isScanning anyway, so rendering it would just be a 3-word title. */}
+      {!isScanning && (
       <div className="px-4 py-3 bg-slate-950/50 border-b border-white/10 flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-2">
           {isScanning ? (
@@ -220,6 +224,7 @@ export default function ReviewCard({
           )}
         </div>
       </div>
+      )}
 
       {/* Large PR Mode chunk panel.
           During a live scan, prefer the in-progress run (activeScan) over
