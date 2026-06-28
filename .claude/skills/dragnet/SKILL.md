@@ -91,7 +91,7 @@ The `/api/repos/$REPO_ID/reindex` endpoint exists but **requires a browser sessi
 | `/dragnet <n>` | Review PR #N. Cache-aware — returns existing results if diff unchanged, starts new scan otherwise. **Read-only.** |
 | `/dragnet status <n>` | Show existing review for PR #N. **Never triggers a scan, never writes code, never touches DB rows.** |
 | `/dragnet fix <n>` | **Interactive** fix loop: review → triage → wait for user → fix → re-review. Stops between iterations. |
-| `/dragnet fix <n> --auto` | Aggressive auto-fix loop: review → fix → re-review until rating = 10/10 or 1 non-improving iteration. The target is **10/10, not 8/10** — bailing at 8 hides the remaining 20%. Use when the user explicitly asks for hands-off grinding to the top of the scale. |
+| `/dragnet fix <n> --auto [--loops N]` | Aggressive auto-fix loop: review → fix → re-review until rating = 10/10, 1 non-improving iteration, or N iterations elapsed (default N=5). The target is **10/10, not 8/10** — bailing at 8 hides the remaining 20%. Use when the user explicitly asks for hands-off grinding to the top of the scale. `--loops 3` caps at 3 iterations; `--loops 10` is the hard ceiling. |
 | `/dragnet fix <n> --once` | Single pass: fix all user-approved findings, commit, done. |
 | `/dragnet help` | Print this table. |
 
@@ -252,10 +252,10 @@ The `message` field contains markdown; missing `reviewRun` field means no review
 4. Otherwise render findings. **If `reviewRun.refused === true`:** render a prominent warning at the top — `⚠ Reviewer flagged incomplete coverage: <refusalNote>` — and recommend a re-scan.
 5. Do NOT call `prcheck`. Do NOT edit code. Do NOT touch DB rows. Do NOT trigger scans.
 
-### `/dragnet fix <n> [--once|--auto]`
-1. Resolve repoId, translate ordinal.
+### `/dragnet fix <n> [--once|--auto [--loops N]]`
+1. Resolve repoId, translate ordinal. Parse flags: `--once`, `--auto`, `--loops N` (integer 1-10; default 5 if `--auto` without `--loops`; clamped to 10 max). Unknown flags → error + show help.
 2. Cache-aware review (see above). Wait for completion.
-3. **(--auto only)** If `reviewRun.rating >= 8` → report PASS, exit. Interactive mode skips this step — see rule 8.
+3. **(--auto only)** If `reviewRun.rating = 10` → report PERFECT, exit after rendering the triage table. Interactive mode skips this step — see rule 8.
 4. **Build triage table.** Parse each findings string `[Category|severity|exploitability?] file:line — explanation` (third bracket segment is optional — older cached responses lack it; treat as "unrated" when missing). For each, classify:
    - `real` — actual bug/security issue. Fix it.
    - `false-positive` — verifier got it wrong or LLM hallucinated. Skip + propose rejection note (but DO NOT mark rejected unless user confirms).
@@ -266,7 +266,7 @@ The `message` field contains markdown; missing `reviewRun` field means no review
 7. **In `--auto` mode:** apply fixes to all `real` rows (commit with message "fix: address N findings from /dragnet fix --auto"), skip `false-positive` and `scope-deferred` rows.
 8. **In `--once` mode:** render the table, then STOP. The user invoked `--once` to see the triage and decide; they will say what to do next.
 9. **Loop continuation (interactive only):** after the user approves fixes and they're applied + committed + pushed, run cache-aware review again. Render the new triage table regardless of rating. STOP again. The loop ends when the user says "done"/"exit", OR when rule 5 trips (new rating ≤ old rating), OR when there are no `real` findings left to triage.
-10. **`--auto` loop continuation:** re-run cache-aware review after each commit. If new rating = 10 → report PERFECT, exit. If new rating > old rating AND iterations < 10 → next iteration. If new rating ≤ old rating (1 non-improving iteration, per rule 5) → STOP. If 10 iterations reached without hitting 10/10 → STOP, surface final state. Hard cap is **10 iterations** to prevent runaway token spend; the non-improving-iteration guard (rule 5) usually trips well before that.
+10. **`--auto` loop continuation:** re-run cache-aware review after each commit. If new rating = 10 → report PERFECT, exit. If new rating > old rating AND iterations < maxLoops → next iteration. If new rating ≤ old rating (1 non-improving iteration, per rule 5) → STOP. If maxLoops reached without hitting 10/10 → STOP, surface final state. **maxLoops defaults to 5** and is overridable via `--loops N` (e.g. `--loops 3`, `--loops 10`). Hard ceiling at 10 iterations even if user passes a higher N — prevents runaway token spend when the LLM plateaus.
 
 ## Polling timing
 
