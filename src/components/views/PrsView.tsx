@@ -124,9 +124,9 @@ export default function PrsView({
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
       transition={{ duration: 0.1 }}
-      className="flex-1 flex flex-col xl:flex-row gap-5 overflow-y-auto xl:overflow-hidden min-h-0"
+      className="flex-1 flex flex-col xl:flex-row gap-5 overflow-y-auto overflow-x-hidden min-h-0"
     >
-      <div className="flex flex-col space-y-4 min-w-0 pr-1 flex-1 overflow-y-auto overflow-x-hidden min-h-0 xl:flex-1 xl:overflow-y-auto xl:overflow-x-hidden xl:min-h-0">
+      <div className="flex flex-col space-y-4 min-w-0 pr-1 flex-1 min-h-0">
         <PrHeader
           activePR={activePR}
           isScanning={isScanning}
@@ -359,7 +359,7 @@ function FilesPanel({
   activeFile: PRFile | undefined;
 }) {
   return (
-    <div className="w-full xl:w-96 shrink-0 flex flex-col gap-4 overflow-hidden min-h-0 bg-slate-950/20 border border-white/10 rounded-xl p-4">
+    <div className="w-full xl:w-96 xl:self-start xl:sticky xl:top-0 shrink-0 flex flex-col gap-4 bg-slate-950/20 border border-white/10 rounded-xl p-4">
       <div>
         <h4 className="text-[10px] font-mono font-extrabold text-slate-500 uppercase tracking-[0.2em] mb-2.5">
           Files Involved in PR
