@@ -68,6 +68,8 @@ export interface LatestReviewResult {
     model: string | null;
     triggerReason: string | null;
     reliability: string | null;
+    refused: boolean;
+    refusalNote: string | null;
     chunksTotal: number;
     chunksCompleted: number;
     chunksFailed: number;
@@ -80,6 +82,8 @@ export interface LatestReviewResult {
     repoId: string;
     category: string;
     severity: string;
+    exploitability: string | null;
+    impact: string | null;
     filename: string;
     line: number | null;
     explanation: string;
@@ -318,7 +322,12 @@ export async function assertNoActiveScan(
 export async function completeReviewRun(
   runId: string,
   outcome:
-    | { status: "completed"; rating: number | null }
+    | {
+        status: "completed";
+        rating: number | null;
+        refused?: boolean;
+        refusalNote?: string | null;
+      }
     | { status: "failed" },
 ): Promise<void> {
   try {
@@ -327,7 +336,16 @@ export async function completeReviewRun(
       data: {
         status: outcome.status,
         completedAt: new Date(),
-        ...(outcome.status === "completed" ? { rating: outcome.rating } : {}),
+        ...(outcome.status === "completed"
+          ? {
+              rating: outcome.rating,
+              // refused defaults to false on the column; only write when the
+              // reviewer actually flagged. refusalNote written alongside.
+              ...(outcome.refused === true
+                ? { refused: true, refusalNote: outcome.refusalNote ?? null }
+                : {}),
+            }
+          : {}),
       },
     });
   } catch (err) {
@@ -361,6 +379,8 @@ export async function getLatestCompletedReview(
       model: true,
       triggerReason: true,
       reliability: true,
+      refused: true,
+      refusalNote: true,
       chunksTotal: true,
       chunksCompleted: true,
       chunksFailed: true,
@@ -512,6 +532,8 @@ export async function getActiveScan(prId: string): Promise<{
         repoId: true,
         category: true,
         severity: true,
+        exploitability: true,
+        impact: true,
         filename: true,
         line: true,
         explanation: true,

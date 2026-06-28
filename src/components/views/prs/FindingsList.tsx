@@ -89,6 +89,34 @@ export default function FindingsList({ findings, onCopySuggestion, copyFeedback,
                         <span className="text-[10px] font-mono text-cyan-400 bg-cyan-400/5 px-1.5 rounded font-bold uppercase tracking-wider">
                           {finding.category}
                         </span>
+                        {finding.exploitability && (
+                          <span
+                            title={`Exploitability: ${finding.exploitability}`}
+                            className={`text-[9px] font-mono uppercase px-1.5 py-0.5 rounded font-bold border ${
+                              finding.exploitability === "trivial"
+                                ? "bg-rose-500/10 text-rose-400 border-rose-500/25"
+                                : finding.exploitability === "moderate"
+                                  ? "bg-amber-500/10 text-amber-400 border-amber-500/25"
+                                  : "bg-slate-700/40 text-slate-400 border-white/10"
+                            }`}
+                          >
+                            {finding.exploitability}
+                          </span>
+                        )}
+                        {finding.impact && (
+                          <span
+                            title={`Impact: ${finding.impact}`}
+                            className={`text-[9px] font-mono uppercase px-1.5 py-0.5 rounded font-bold border ${
+                              finding.impact === "critical" || finding.impact === "high"
+                                ? "bg-orange-500/10 text-orange-400 border-orange-500/25"
+                                : finding.impact === "medium"
+                                  ? "bg-yellow-500/10 text-yellow-400 border-yellow-500/25"
+                                  : "bg-slate-700/40 text-slate-400 border-white/10"
+                            }`}
+                          >
+                            {finding.impact}
+                          </span>
+                        )}
                         {finding.source && finding.source !== "llm" && (
                           <span
                             title={`Found by ${finding.source} (deterministic check) — not the LLM`}

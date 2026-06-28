@@ -136,6 +136,8 @@ export async function GET(req: Request, { params }: { params: Promise<{ prId: st
         model: latest.reviewRun.model,
         triggerReason: latest.reviewRun.triggerReason,
         reliability: latest.reviewRun.reliability,
+        refused: latest.reviewRun.refused,
+        refusalNote: latest.reviewRun.refusalNote,
         chunksTotal: latest.reviewRun.chunksTotal,
         chunksCompleted: latest.reviewRun.chunksCompleted,
         chunksFailed: latest.reviewRun.chunksFailed,

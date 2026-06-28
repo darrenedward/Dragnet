@@ -16,6 +16,8 @@ export interface ReviewRunMeta {
   model: string | null;
   triggerReason: string | null;
   reliability?: string | null;
+  refused?: boolean;
+  refusalNote?: string | null;
   chunksTotal?: number;
   chunksCompleted?: number;
   chunksFailed?: number;
@@ -310,6 +312,21 @@ export default function ReviewCard({
           onCopySuggestion={onCopySuggestion}
           copyFeedback={copyFeedback}
         />
+      )}
+
+      {reviewRun?.refused && !isScanning && (
+        <div className="border-t border-amber-500/20 bg-amber-500/[0.03] px-4 py-2.5 flex items-start gap-2">
+          <ShieldAlert size={12} className="text-amber-500 mt-0.5 flex-shrink-0" />
+          <div className="flex-1 min-w-0">
+            <p className="text-[10px] font-mono uppercase tracking-wider text-amber-400 font-bold">
+              Reviewer flagged incomplete coverage
+            </p>
+            <p className="text-[10px] text-amber-300/80 font-mono mt-0.5 leading-relaxed">
+              {reviewRun.refusalNote ?? "Parts of the PR were skipped or not fully analyzed."}
+              <span className="text-amber-500/60"> Re-scan recommended after addressing the underlying cause.</span>
+            </p>
+          </div>
+        </div>
       )}
 
       {(rejectedCount ?? 0) > 0 && !isScanning && (

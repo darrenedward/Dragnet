@@ -59,8 +59,10 @@ export interface ReviewFinding {
   id: string;
   prId: string;
   repoId: string;
-  category: "Security" | "Correctness" | "Performance" | "Style";
+  category: "Security" | "Correctness" | "Performance" | "Accessibility" | "Style";
   severity: "blocker" | "warning" | "suggestion";
+  exploitability?: "trivial" | "moderate" | "difficult" | null;
+  impact?: "critical" | "high" | "medium" | "low" | null;
   filename: string;
   line: number;
   explanation: string;

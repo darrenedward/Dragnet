@@ -103,6 +103,8 @@ model ReviewRun {
   model            String?
   rating           Int?
   reliability      String?        // "complete" | "partial" | "incomplete_security_review"
+  refused          Boolean        @default(false)  // reviewer flagged it declined/skipped part of the PR
+  refusalNote      String?        // topics the reviewer skipped, for the UI banner
   chunksTotal      Int            @default(0)
   chunksCompleted  Int            @default(0)
   chunksFailed     Int            @default(0)
@@ -182,6 +184,8 @@ model ReviewFinding {
   repoId             String
   category           String
   severity           String
+  exploitability     String?     // "trivial" | "moderate" | "difficult" — how easy to exploit
+  impact             String?     // "critical" | "high" | "medium" | "low" — blast radius if exploited
   filename           String
   line               Int?
   explanation        String

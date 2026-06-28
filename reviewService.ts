@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { prisma } from "./src/lib/prisma";
-import { getChatChain } from "./src/lib/llmClient";
+import { getChatChain, getChatClient } from "./src/lib/llmClient";
 import { randomUUID } from "node:crypto";
 import { verifyFindings, isDocumentationFile, type CandidateFinding } from "./src/services/findingVerifier";
 import { completeReviewRun } from "./src/lib/reviewFreshness";
@@ -71,6 +71,18 @@ const reviewResponseSchema = {
             description: "Severity level of the finding.",
             enum: ["blocker", "warning", "suggestion"],
           },
+          exploitability: {
+            type: "string",
+            description:
+              "How easy this is to exploit. 'trivial' = single crafted request; 'moderate' = needs valid auth, specific timing, or internal access; 'difficult' = deep knowledge, chained exploits, or unlikely conditions.",
+            enum: ["trivial", "moderate", "difficult"],
+          },
+          impact: {
+            type: "string",
+            description:
+              "Blast radius if exploited. 'critical' = full auth bypass / RCE / cross-tenant data; 'high' = single-tenant data access / privilege escalation / secret exposure; 'medium' = info disclosure / DoS / weak crypto; 'low' = cosmetic / theoretical / minimal real-world impact.",
+            enum: ["critical", "high", "medium", "low"],
+          },
           filename: {
             type: "string",
             description: "The name of the inspected file where the finding originates.",
@@ -112,12 +124,39 @@ const reviewResponseSchema = {
   required: ["rating", "summary", "findings"],
 };
 
+/**
+ * Refusal-detection response shape. Sent as a single follow-up turn after
+ * the main review loop completes — surfaces anything the model declined to
+ * fully analyze (security filter trip, exploit-pattern content, scope skip).
+ * Without this turn, refusals are silent (~1% of scans per deepsec's data).
+ *
+ * Keep optional so a malformed/missing response degrades gracefully to
+ * `{ refused: false }` rather than failing the whole review.
+ */
+const refusalSchema = {
+  type: "object",
+  properties: {
+    refused: {
+      type: "boolean",
+      description: "true if you declined or skipped any part of the PR review.",
+    },
+    topics: {
+      type: "array",
+      description: "Brief list of files/areas/topics you skipped or didn't fully analyze.",
+      items: { type: "string" },
+    },
+  },
+  required: ["refused"],
+};
+
 /** Allowed enum values — kept in sync with reviewResponseSchema. Findings the
  *  model returns outside these sets are clamped at persistence so the UI
  *  (which only renders known severity/category groups) never silently drops
  *  findings and mismatches the header count. */
 const VALID_CATEGORIES = ["Correctness", "Security", "Performance", "Accessibility", "Style"];
 const VALID_SEVERITIES = ["blocker", "warning", "suggestion"];
+const VALID_EXPLOITABILITY = ["trivial", "moderate", "difficult"];
+const VALID_IMPACT = ["critical", "high", "medium", "low"];
 // Per-call timeout for chat completions. Bumped from 120s → 300s to handle
 // long-context PRs (60+ file diffs) on reasoning models like qwen-plus.
 // 300s aligns with OpenRouter's own ceiling, so waiting longer than this
@@ -280,11 +319,11 @@ MINDSET:
 - One missed exploit = everything gone. Be ruthless.
 
 CATEGORIES (classify every finding into exactly one):
-- "Security" — OWASP top 10 violations, hardcoded secrets, injection risks, auth bypasses, privilege escalation, XSS, CSRF, SSRF, insecure deserialization, path traversal, crypto flaws.
-- "Correctness" — logic bugs, off-by-one, race conditions, null dereferences, type unsafe coercion, unhandled errors, deadlock risks, state corruption.
-- "Performance" — N+1 queries, memory leaks, unbounded loops, blocking event loop, render-blocking, unnecessary allocations.
-- "Accessibility" — missing ARIA labels, keyboard trap, color contrast failures, semantic HTML violations, screen reader breakage.
-- "Style" — code complexity, confusing names, dead code, fragile patterns, copy-paste code, missing error boundaries, overly clever tricks.
+- "Security" — OWASP top 10 violations, hardcoded secrets, injection risks, auth bypasses, privilege escalation, XSS, CSRF, SSRF, insecure deserialization, path traversal, crypto flaws. Before flagging: distinguish real secrets from dummy/test/example values (\`"test"\`, \`"changeme"\`, rotated/expired markers); confirm auth wrappers (Express middleware, Fastify preHandler, NestJS Guard, Rails \`before_action\`, Django decorator, Next.js middleware that wraps the handler) actually wrap the call site — proxy/CDN/WAF/edge rules don't count. Parameterized queries and ORM \`where({col: x})\` shapes are safe.
+- "Correctness" — logic bugs, off-by-one, race conditions, null dereferences, type unsafe coercion, unhandled errors, deadlock risks, state corruption. Before flagging: confirm the bug triggers on a real input path, not just theoretical; race conditions only count if the shared resource is reachable from concurrent requests; inverted/negated boolean checks must actually be inverted (not just hard to read).
+- "Performance" — N+1 queries, memory leaks, unbounded loops, blocking event loop, render-blocking, unnecessary allocations. Before flagging: only if the hot path is hit by user input or runs in a loop over non-trivial data (>1000 items or unbounded). One-time startup costs and dev-only code paths don't count.
+- "Accessibility" — missing ARIA labels, keyboard trap, color contrast failures, semantic HTML violations, screen reader breakage. Before flagging: only missing-semantics cases (label without input, button without accessible name, role violations, keyboard trap). Skip pure style/cosmetic issues like color contrast that fails design tokens but doesn't block AT use.
+- "Style" — code complexity, confusing names, dead code, fragile patterns, copy-paste code, missing error boundaries, overly clever tricks. Before flagging: only if it actively harms readability or violates a stated project convention. Don't flag personal-preference nits.
 
 SEVERITY:
 - "blocker" — WILL cause a production incident, data loss, or security breach. Non-negotiable.
@@ -361,6 +400,8 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
   try {
   let findings: any[] = [];
   let rating: number | null = null;
+  let refused = false;
+  let refusalNote: string | null = null;
   let usedModel = "unconfigured";
   let systemWarn: string | null = null;
 
@@ -826,11 +867,60 @@ ${diffPayload}${deterministicPayload}`;
         ...f,
         category: VALID_CATEGORIES.includes(f?.category) ? f.category : "Style",
         severity: VALID_SEVERITIES.includes(f?.severity) ? f.severity : "suggestion",
+        exploitability: VALID_EXPLOITABILITY.includes(f?.exploitability) ? f.exploitability : "moderate",
+        impact: VALID_IMPACT.includes(f?.impact) ? f.impact : "medium",
         source: "llm",
       }));
       // `?? 5` (not `|| 5`) so a genuine returned 0 is preserved and clamped
       // to 1 below, rather than being masked into a middling 5.
       rating = Math.max(1, Math.min(10, finalReview.rating ?? 5));
+
+      // Refusal-detection follow-up turn (per-run, not per-chunk). Asks the
+      // model whether it declined/skipped part of the PR — surfaces security-
+      // filter trips, scope skips, or "didn't get to that file" cases that
+      // would otherwise be silent. One extra LLM call per scan; falls through
+      // harmlessly to refused=false on any error.
+      if (!reviewChunkId) {
+        try {
+          const refusalClient = getChatClient();
+          if (refusalClient) {
+            const refusalRes = await refusalClient.chat.completions.create({
+              model: usedModel,
+              messages: [
+                {
+                  role: "user",
+                  content:
+                    `You just finished reviewing PR "${pr.title}" on branch ${pr.sourceBranch} ` +
+                    `(${files.length} files reviewed). Did you decline to fully analyze, refuse to look at, ` +
+                    `or skip any part of this PR because the content or task felt uncomfortable, out of scope, ` +
+                    `or tripped a content filter? Respond ONLY with JSON matching this shape: ` +
+                    `{"refused": true|false, "topics": ["brief reason 1", ...]}. ` +
+                    `If you reviewed everything fully, return {"refused": false, "topics": []}.`,
+                },
+              ],
+              response_format: { type: "json_object" },
+              temperature: 0,
+              max_tokens: 500,
+            });
+            const raw = refusalRes.choices?.[0]?.message?.content ?? "";
+            const parsed = JSON.parse(raw);
+            if (parsed?.refused === true) {
+              refused = true;
+              const topics = Array.isArray(parsed.topics) ? parsed.topics.filter(Boolean) : [];
+              refusalNote = topics.length > 0 ? topics.join("; ") : "Reviewer flagged incomplete coverage.";
+              void logReview(prId, `Refusal detected: ${refusalNote}`, "warn", reviewRunId);
+            } else {
+              void logReview(prId, `Refusal check: clean (model reviewed everything)`, "info", reviewRunId);
+            }
+          }
+        } catch (err: any) {
+          // Fail-open: log + fall through with refused=false. The main review
+          // is already complete and persisted below; a refusal-check failure
+          // must NOT abort the persistence path.
+          console.warn(`[scan] refusal-detection turn failed: ${err?.message ?? String(err)}`);
+          void logReview(prId, `Refusal check failed (fail-open): ${err?.message ?? String(err)}`, "warn", reviewRunId);
+        }
+      }
     } else if (agenticError) {
       systemWarn = `All chat providers failed (last error: ${agenticError}). Check your internet connection and LLM Settings.`;
     } else {
@@ -898,6 +988,8 @@ ${diffPayload}${deterministicPayload}`;
       repoId: pr.repoId,
       category: finding.category || "Style",
       severity: finding.severity || "suggestion",
+      exploitability: finding.exploitability || "moderate",
+      impact: finding.impact || "medium",
       filename: finding.filename || "<unattributed>",
       line: finding.line || 1,
       explanation: finding.explanation || "No explanation provided.",
@@ -919,7 +1011,12 @@ ${diffPayload}${deterministicPayload}`;
   // completeReviewRun swallows errors. Await it so callers that immediately
   // refetch the latest completed run don't race the status write.
   if (reviewRunId && !reviewChunkId) {
-    await completeReviewRun(reviewRunId, { status: "completed", rating });
+    await completeReviewRun(reviewRunId, {
+      status: "completed",
+      rating,
+      refused,
+      refusalNote,
+    });
   }
 
   // 7. Update PR rating + status

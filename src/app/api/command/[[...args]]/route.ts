@@ -18,6 +18,7 @@ import {
   createReviewRun,
   completeReviewRun,
   getLatestCompletedReview,
+  getActiveScan,
 } from "@/src/lib/reviewFreshness";
 
 /**
@@ -219,7 +220,7 @@ function formatFindings(pr: any, findings: any[], sizeProfile?: PrSizeProfile): 
     out += "No findings.\n";
   } else {
     for (const f of findings) {
-      out += `### ${f.filename}:${f.line}\n**[${f.category}|${f.severity}]** (confidence: ${((f.confidence ?? 0.5) * 100).toFixed(0)}%)\n${f.explanation}\n`;
+      out += `### ${f.filename}:${f.line}\n**[${f.category}|${f.severity}${f.exploitability ? `|${f.exploitability}` : ""}]** (confidence: ${((f.confidence ?? 0.5) * 100).toFixed(0)}%${f.impact ? `, impact: ${f.impact}` : ""})\n${f.explanation}\n`;
       if (f.diffSuggestion) {
         out += `Suggested fix:\n\`\`\`diff\n${f.diffSuggestion}\n\`\`\`\n`;
       }
@@ -243,6 +244,9 @@ async function formatLatestFindings(pr: any): Promise<string> {
     out += `\n_Reviewed commit ${latest.reviewRun.commitHash.slice(0, 7)}${latest.stale ? " (stale)" : ""}._\n`;
     if (latest.rejectedCount > 0) {
       out += `_Verifier filtered ${latest.rejectedCount} finding${latest.rejectedCount === 1 ? "" : "s"}._\n`;
+    }
+    if (latest.reviewRun.refused) {
+      out += `\n> ⚠ **Reviewer flagged incomplete coverage.** ${latest.reviewRun.refusalNote ?? "Parts of the PR were skipped or not fully analyzed."} Re-scan recommended after addressing the underlying cause.\n`;
     }
   }
   return out;
@@ -306,7 +310,7 @@ async function handlePrComments(args: any): Promise<string> {
   out += `_Reviewed commit ${latest.reviewRun.commitHash.slice(0, 7)}${latest.stale ? " (stale)" : ""}._\n\n`;
   out += `**Size:** ${formatSizeProfile(sizeProfile)}\n\n`;
   for (const f of findings) {
-    out += `- [${f.category}|${f.severity}] ${f.filename}:${f.line}\n  ${f.explanation}\n`;
+    out += `- [${f.category}|${f.severity}${f.exploitability ? `|${f.exploitability}` : ""}] ${f.filename}:${f.line}\n  ${f.explanation}\n`;
   }
   if (latest.rejectedCount > 0) {
     out += `\n_Verifier filtered ${latest.rejectedCount} finding${latest.rejectedCount === 1 ? "" : "s"}._\n`;
@@ -455,7 +459,7 @@ async function handleLegacyCommand(body: any, defRepo: string | null) {
         stale: latest.stale,
         rejectedCount: latest.rejectedCount,
         sizeProfile,
-        comments: latest.findings.map((f: any) => `[${f.category} | ${f.severity}] ${f.filename}:${f.line} - ${f.explanation}`),
+        comments: latest.findings.map((f: any) => `[${f.category} | ${f.severity}${f.exploitability ? ` | ${f.exploitability}` : ""}] ${f.filename}:${f.line} - ${f.explanation}`),
       });
     }
     if (cmdName.endsWith("prcheckstatus") || cmdName.endsWith("status")) {
@@ -463,10 +467,32 @@ async function handleLegacyCommand(body: any, defRepo: string | null) {
       if (!pr) return NextResponse.json({ status: "Error", message: "> No PR found on this repository." });
       const sizeProfile = await loadPrSizeProfile(pr);
       if (isReviewActive(pr.id)) {
+        // Surface live progress: chunk completion + current agentic-loop round.
+        // getActiveScan returns iterationsByChunk keyed by chunkId (or "__run"
+        // for non-chunked scans). Flatten to a single "current round" summary.
+        const active = await getActiveScan(pr.id);
+        const run = active.reviewRun;
+        const chunkIds = Object.keys(active.iterationsByChunk);
+        const currentIter = chunkIds.length
+          ? Math.max(...chunkIds.map((k) => active.iterationsByChunk[k].current))
+          : 0;
+        const maxIter = chunkIds.length
+          ? Math.max(...chunkIds.map((k) => active.iterationsByChunk[k].max))
+          : 0;
         return NextResponse.json({
-          status: "Pending",
-          message: `> Review still in progress for **${pr.sourceBranch}**...`,
+          status: "Scanning",
+          message: `> Scan in progress for **${pr.sourceBranch}**...`,
           sizeProfile,
+          progress: run && {
+            chunksCompleted: run.chunksCompleted,
+            chunksTotal: run.chunksTotal,
+            chunksFailed: run.chunksFailed,
+            chunksSkipped: run.chunksSkipped,
+            iteration: currentIter,
+            maxIterations: maxIter,
+            partialFindingsCount: active.findings.length,
+            startedAt: run.startedAt,
+          },
         });
       }
       // Re-fetch so we pick up any rating update from the async runPrScan.
@@ -482,7 +508,7 @@ async function handleLegacyCommand(body: any, defRepo: string | null) {
         sizeProfile,
         findingsCount: latest.findings.length,
         findings: latest.findings.map((f: any) =>
-          `[${f.category} | ${f.severity}] ${f.filename}:${f.line} - ${f.explanation}`,
+          `[${f.category} | ${f.severity}${f.exploitability ? ` | ${f.exploitability}` : ""}] ${f.filename}:${f.line} - ${f.explanation}`,
         ),
       });
     }
