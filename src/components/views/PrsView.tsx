@@ -140,7 +140,7 @@ export default function PrsView({
           onIndexComplete={onIndexComplete}
         />
 
-        <div className="flex flex-col space-y-4 min-w-0 mt-4 flex-1 overflow-y-auto overflow-x-hidden min-h-0 pr-1">
+        <div className="space-y-4 min-w-0 mt-4 flex-1 overflow-y-auto overflow-x-hidden min-h-0 pr-1">
           <SectionLabel>Scan Logs</SectionLabel>
           <ReviewProgress
             prId={activePR?.id}
