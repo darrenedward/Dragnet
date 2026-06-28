@@ -10,6 +10,7 @@ import {
   type ReviewChunk,
   type ReviewFinding,
 } from "../lib/types";
+import { fetchJson } from "../lib/http";
 
 /**
  * Single source of truth for the dashboard's data state, polling, and
@@ -123,7 +124,7 @@ export function useDashboardData() {
   // ===== Fetchers =====
   const fetchDbConfig = async () => {
     try {
-      const res = await fetch("/api/db/config");
+      const res = await fetchJson("/api/db/config");
       if (res.ok) {
         const data = await res.json();
         setDbConfig({
@@ -144,7 +145,7 @@ export function useDashboardData() {
 
   const fetchRepos = async () => {
     try {
-      const res = await fetch("/api/repos");
+      const res = await fetchJson("/api/repos");
       const data = await res.json();
       if (Array.isArray(data)) {
         setRepos(data);
@@ -190,7 +191,7 @@ export function useDashboardData() {
     }
 
     try {
-      const res = await fetch(`/api/repos/${repoId}/prs`);
+      const res = await fetchJson(`/api/repos/${repoId}/prs`);
       const data = await res.json();
       if (requestId !== latestPrsRequest.current) return;
 
@@ -230,7 +231,7 @@ export function useDashboardData() {
 
   const refreshPrsAfterEmptySnapshot = async (repoId: string, requestId: number) => {
     try {
-      const refreshRes = await fetch(`/api/repos/${repoId}/prs`, { method: "POST" });
+      const refreshRes = await fetchJson(`/api/repos/${repoId}/prs`, { method: "POST" });
       const refreshData = await refreshRes.json();
       if (requestId !== latestPrsRequest.current) return [];
       return Array.isArray(refreshData) ? refreshData : [];
@@ -258,7 +259,7 @@ export function useDashboardData() {
       setStale(false);
     }
     try {
-      const filesRes = await fetch(`/api/prs/${prId}/files`);
+      const filesRes = await fetchJson(`/api/prs/${prId}/files`);
       const filesData = await filesRes.json();
       if (requestId !== latestDetailsRequest.current) return;
       if (Array.isArray(filesData)) {
@@ -273,7 +274,7 @@ export function useDashboardData() {
         }
       }
 
-      const findingsRes = await fetch(`/api/prs/${prId}/findings`);
+      const findingsRes = await fetchJson(`/api/prs/${prId}/findings`);
       const findingsData = await findingsRes.json();
       if (requestId !== latestDetailsRequest.current) return;
       if (findingsData && typeof findingsData === "object" && "findings" in findingsData) {
@@ -312,7 +313,7 @@ export function useDashboardData() {
 
   const fetchLogs = async () => {
     try {
-      const res = await fetch("/api/reviews");
+      const res = await fetchJson("/api/reviews");
       const data = await res.json();
       if (Array.isArray(data)) {
         const mappedLogs: ActivityLog[] = data.map((item: any) => ({
@@ -391,7 +392,7 @@ export function useDashboardData() {
     setIsTestingDb(true);
     setDbTestResult(null);
     try {
-      const res = await fetch("/api/db/test", {
+      const res = await fetchJson("/api/db/test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(dbConfig),
@@ -413,7 +414,7 @@ export function useDashboardData() {
     setIsSavingDb(true);
     setDbSaveResult(null);
     try {
-      const res = await fetch("/api/db/config", {
+      const res = await fetchJson("/api/db/config", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(dbConfig),
@@ -451,7 +452,7 @@ export function useDashboardData() {
 
     try {
       console.log(`[scan] handleTriggerPrScan: POST /api/prs/${scanningPrId}/scan`);
-      const res = await fetch(`/api/prs/${scanningPrId}/scan`, {
+      const res = await fetchJson(`/api/prs/${scanningPrId}/scan`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -509,7 +510,7 @@ export function useDashboardData() {
     if (!selectedPrId || !reviewRun?.id) return;
     setIsRetryingChunks(true);
     try {
-      const res = await fetch(`/api/prs/${selectedPrId}/runs/${reviewRun.id}/retry-failed-chunks`, {
+      const res = await fetchJson(`/api/prs/${selectedPrId}/runs/${reviewRun.id}/retry-failed-chunks`, {
         method: "POST",
       });
       const result = await res.json();
@@ -549,7 +550,7 @@ export function useDashboardData() {
     const mode = newRepoPath.trim() ? "local" : newRepoMode;
 
     try {
-      const res = await fetch("/api/repos", {
+      const res = await fetchJson("/api/repos", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

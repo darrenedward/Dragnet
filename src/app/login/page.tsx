@@ -1,11 +1,34 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { authClient } from "../../lib/auth-client";
 
-export default function LoginPage() {
+/**
+ * Validate a user-supplied `callbackURL` and return a safe same-origin path.
+ *
+ * Defence against open-redirect attacks:
+ *   - Reject anything that doesn't start with `/` (catches `http://evil`,
+ *     `//evil.com` protocol-relative, `mailto:`, `javascript:`, etc.)
+ *   - Reject `//...` which browsers treat as protocol-relative
+ *   - Reject backslash variants (`/\evil.com`) which some browsers normalise
+ *   - Default to `/` for anything that fails the above checks or is missing
+ *
+ * Returns a string starting with exactly one `/`.
+ */
+function safeCallbackURL(value: string | null): string {
+  if (!value) return "/";
+  if (!value.startsWith("/")) return "/";
+  if (value.startsWith("//")) return "/";
+  if (value.startsWith("/\\")) return "/";
+  return value;
+}
+
+function LoginForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const callbackURL = safeCallbackURL(searchParams.get("callbackURL"));
+
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -21,7 +44,7 @@ export default function LoginPage() {
       setLoading(false);
       return;
     }
-    router.push("/");
+    router.push(callbackURL);
   };
 
   return (
@@ -74,5 +97,18 @@ export default function LoginPage() {
         </p>
       </div>
     </div>
+  );
+}
+
+/**
+ * `useSearchParams` requires a Suspense boundary in Next.js 16 App Router
+ * for static rendering. Wrap the form so the page can be statically
+ * rendered without forcing the whole route to dynamic.
+ */
+export default function LoginPage() {
+  return (
+    <Suspense fallback={null}>
+      <LoginForm />
+    </Suspense>
   );
 }

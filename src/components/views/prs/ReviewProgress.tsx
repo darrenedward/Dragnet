@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Bot, ChevronDown, ChevronRight, Cpu, Loader2, Search, Siren, XCircle } from "lucide-react";
+import { fetchJson } from "../../../lib/http";
 
 interface LogEntry {
   id: string;
@@ -53,7 +54,7 @@ export default function ReviewProgress({ prId, reviewRunId, isScanning }: Props)
 
     const poll = async () => {
       try {
-        const res = await fetch(`/api/reviews/log?reviewRunId=${reviewRunId}`);
+        const res = await fetchJson(`/api/reviews/log?reviewRunId=${reviewRunId}`);
         if (!cancelled && res.ok) {
           const nextLogs: LogEntry[] = await res.json();
           const signature = nextLogs.map((log) => `${log.id}:${log.level}`).join("|");

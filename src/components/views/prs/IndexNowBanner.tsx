@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Database } from "lucide-react";
+import { fetchJson } from "../../../lib/http";
 
 interface Props {
   repoId: string | undefined;
@@ -23,7 +24,7 @@ export default function IndexNowBanner({ repoId, indexedAt, onIndexComplete }: P
     setIsStarting(true);
     setError(null);
     try {
-      const res = await fetch(`/api/repos/${repoId}/index`, { method: "POST" });
+      const res = await fetchJson(`/api/repos/${repoId}/index`, { method: "POST" });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         if (data?.error !== "ALREADY_INDEXING") {
@@ -34,7 +35,7 @@ export default function IndexNowBanner({ repoId, indexedAt, onIndexComplete }: P
       const deadline = Date.now() + POLL_TIMEOUT_MS;
       while (Date.now() < deadline) {
         await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
-        const poll = await fetch(`/api/repos/${repoId}`);
+        const poll = await fetchJson(`/api/repos/${repoId}`);
         if (poll.ok) {
           const repo = await poll.json();
           if (repo?.indexedAt) {
