@@ -73,15 +73,12 @@ If `prlist` returns 401 with `{"jsonrpc":"2.0","error":{"code":-32001,"message":
 
 `prcheckstatus` (used by `/dragnet status <n>`) **never** returns this error — it surfaces the most recent cached findings regardless of freshness. If you see Stale Index while running `/dragnet status <n>`, **you called the wrong command** — go back and use `prcheckstatus`, not `prcheck`.
 
-Only `prcheck` (used by `/dragnet <n>` and `/dragnet fix <n>`) checks freshness and returns:
+`prcheck` (used by `/dragnet <n>` and `/dragnet fix <n>`) calls `assertIndexFresh` on the repo before starting the review. **Two outcomes, both auto-handled — you do NOT direct the user to manually reindex:**
 
-```json
-{"status":"Error","message":"> ⚠ **Stale index**..."}
-```
+- **STALE_INDEX** (indexedAt non-null, HEAD moved on): `prcheck` auto-triggers an incremental reindex inline (`IndexingService.indexFolder`) before starting the review. Adds a few seconds of latency on the first call after each fix commit. No user action needed — just call `prcheck` again and it handles it transparently. **This is the normal path inside `/dragnet fix --auto` loops after each fix commit advances HEAD.**
+- **INDEX_REQUIRED** (repo.indexedAt is null — repo was never indexed): `prcheck` returns `> ⚠ **Index required.** ...`. This is the ONE case that needs user action — the repo has never been indexed. Tell the user: *"Open the Dragnet dashboard at `http://localhost:3300`, click the repo, and hit **Index now** (first-time index). Then re-run `/dragnet <n>`."* Don't confuse this with stale-index, which is automatic.
 
-When you see this: **stop and tell the user** — *"Index is stale. Open the Dragnet dashboard at `http://localhost:3300`, click the repo, and hit **Reindex**. Then re-run `/dragnet <n>`."*
-
-The `/api/repos/$REPO_ID/reindex` endpoint exists but **requires a browser session cookie, not an API key** — the CLI skill cannot trigger reindex itself. Don't try `reindex` as a `/api/command` subcommand; it returns `Unknown command: reindex`. Don't try `/api/repos/*/reindex` via curl either; it returns 401.
+The `/api/repos/$REPO_ID/reindex` endpoint exists and accepts API keys, but the Next.js network-boundary proxy (`src/proxy.ts`) gates `/api/repos/*` paths with a session-cookie-presence check — so it 401s against an API key. Don't try to call it from the skill; `prcheck` already auto-reindexes inline and is the right path.
 
 ## Commands
 
