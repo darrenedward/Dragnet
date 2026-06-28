@@ -18,6 +18,7 @@ import {
   createReviewRun,
   completeReviewRun,
   getLatestCompletedReview,
+  getActiveScan,
 } from "@/src/lib/reviewFreshness";
 
 /**
@@ -463,10 +464,32 @@ async function handleLegacyCommand(body: any, defRepo: string | null) {
       if (!pr) return NextResponse.json({ status: "Error", message: "> No PR found on this repository." });
       const sizeProfile = await loadPrSizeProfile(pr);
       if (isReviewActive(pr.id)) {
+        // Surface live progress: chunk completion + current agentic-loop round.
+        // getActiveScan returns iterationsByChunk keyed by chunkId (or "__run"
+        // for non-chunked scans). Flatten to a single "current round" summary.
+        const active = await getActiveScan(pr.id);
+        const run = active.reviewRun;
+        const chunkIds = Object.keys(active.iterationsByChunk);
+        const currentIter = chunkIds.length
+          ? Math.max(...chunkIds.map((k) => active.iterationsByChunk[k].current))
+          : 0;
+        const maxIter = chunkIds.length
+          ? Math.max(...chunkIds.map((k) => active.iterationsByChunk[k].max))
+          : 0;
         return NextResponse.json({
-          status: "Pending",
-          message: `> Review still in progress for **${pr.sourceBranch}**...`,
+          status: "Scanning",
+          message: `> Scan in progress for **${pr.sourceBranch}**...`,
           sizeProfile,
+          progress: run && {
+            chunksCompleted: run.chunksCompleted,
+            chunksTotal: run.chunksTotal,
+            chunksFailed: run.chunksFailed,
+            chunksSkipped: run.chunksSkipped,
+            iteration: currentIter,
+            maxIterations: maxIter,
+            partialFindingsCount: active.findings.length,
+            startedAt: run.startedAt,
+          },
         });
       }
       // Re-fetch so we pick up any rating update from the async runPrScan.
