@@ -16,6 +16,49 @@ export interface ScanResult {
   systemWarn?: string | null;
 }
 
+/**
+ * Minimal per-file entry for the PR manifest preamble. Built by the
+ * large-PR orchestrator and passed through runPrScan so each chunk
+ * review knows what else is in the PR — reduces "file does not exist"
+ * false positives that come from reviewing chunk N in isolation when
+ * the cited file lives in chunk M.
+ */
+export type PrManifestEntry = {
+  filename: string;
+  additions: number;
+  deletions: number;
+};
+
+/**
+ * Build the "other files in this PR" preamble prepended to every
+ * large-PR chunk review. Tells the reviewer what files exist outside
+ * the current chunk so it doesn't claim they're missing.
+ *
+ * The current chunk's files are excluded — the reviewer already sees
+ * their full diffs in the diff payload below. Only the sibling files
+ * (other chunks) are listed, sorted alphabetically for determinism.
+ *
+ * Cap at 200 entries to bound prompt growth on huge PRs. With ~50
+ * chars/line that's ~10KB worst case, negligible vs. 200K context.
+ */
+function buildManifestPreamble(manifest: PrManifestEntry[], chunkFiles: any[]): string {
+  const inChunk = new Set((chunkFiles || []).map((f) => f.filename));
+  const siblings = manifest
+    .filter((f) => !inChunk.has(f.filename))
+    .sort((a, b) => a.filename.localeCompare(b.filename))
+    .slice(0, 200);
+  if (siblings.length === 0) return "";
+
+  const lines = siblings.map((f) => `  ${f.filename} (+${f.additions} -${f.deletions})`);
+  return `
+=== OTHER FILES IN THIS PR (you are reviewing ONE chunk — these are siblings you cannot see directly) ===
+${lines.join("\n")}
+
+Before claiming any file, route, or import does not exist, call \`readFile\` or \`searchCodebase\` — it almost certainly exists in one of the sibling files above.
+
+`;
+}
+
 async function logReview(prId: string, message: string, level: string = "info", reviewRunId?: string, reviewChunkId?: string) {
   try {
     await prisma.reviewLog.create({
@@ -408,7 +451,7 @@ Do not sugarcoat. Do not soften the blow. If the code is bad, say so. If it's cl
  * findings + a null rating and surfaces the reason via systemWarn — it never
  * fabricates templated findings.
  */
-export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunId?: string, reviewChunkId?: string): Promise<ScanResult> {
+export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunId?: string, reviewChunkId?: string, prManifest?: PrManifestEntry[]): Promise<ScanResult> {
   console.log(`[scan] runPrScan: starting for prId=${prId}, preloadedFiles=${preloadedFiles?.length}, reviewChunkId=${reviewChunkId ?? "none"}`);
   // Cumulative-char budget for readFile tool calls this scan. Caps context
   // blow-up + cost DoS — see readFile tool implementation below.
@@ -593,7 +636,7 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
       try {
         const initialPrompt = `Your mission: audit this PR with maximum prejudice. Assume the author is hiding something. Trace every changed function across the codebase — check its callers, its callees, its error handling, its edge cases. Use \`searchCodebase\`, \`getCallers\`, and \`findSimilar\` to validate that nothing is overlooked.
 When you are satisfied (or outraged), call \`submitReview\` exactly once.
-
+${prManifest && prManifest.length > 0 ? buildManifestPreamble(prManifest, files) : ""}
 === CANDIDATE PR INFORMATION ===
 PR ID: ${pr.id}
 Repo: ${pr.repoId}

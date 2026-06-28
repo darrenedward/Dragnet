@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { prisma } from "@/src/lib/prisma";
-import { runPrScan, type ScanResult } from "@/reviewService";
+import { runPrScan, type ScanResult, type PrManifestEntry } from "@/reviewService";
 import { aggregateResults } from "./aggregator";
 import { chunkDiff } from "./chunker";
 import { assertTier, buildDiffManifest } from "./manifest";
@@ -16,6 +16,7 @@ type ChunkRunner = (
   files: ReviewFileInput[],
   reviewRunId: string,
   reviewChunkId: string,
+  prManifest?: PrManifestEntry[],
 ) => Promise<ScanResult>;
 
 export interface RunLargePrReviewOptions {
@@ -121,7 +122,7 @@ export async function runLargePrReview({
     await updateChunkCounters(reviewRunId);
     await logRun(prId, reviewRunId, `Chunk ${plan.id}: scanning ${plan.label} (${plan.lineCount} lines)`, "info", chunkId);
 
-    const result = await runChunkWithRetry({ prId, reviewRunId, chunkId, plan, runner });
+    const result = await runChunkWithRetry({ prId, reviewRunId, chunkId, plan, runner, prManifest: buildPrManifest(files) });
     if (result.ok === true) {
       consecutiveErrorKey = null;
       consecutiveErrorCount = 0;
@@ -247,6 +248,7 @@ export async function retryFailedChunks(
         touchesSecuritySensitive: chunk.touchesSecuritySensitive,
       },
       runner,
+      prManifest: buildPrManifest(prFiles),
     });
     if (result.ok === true) {
       await prisma.reviewChunk.update({
@@ -294,17 +296,19 @@ async function runChunkWithRetry({
   chunkId,
   plan,
   runner,
+  prManifest,
 }: {
   prId: string;
   reviewRunId: string;
   chunkId: string;
   plan: ChunkPlan;
   runner: ChunkRunner;
+  prManifest?: PrManifestEntry[];
 }): Promise<{ ok: true; scan: ScanResult } | { ok: false; error: Error }> {
   let lastError: Error | null = null;
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
-      const scan = await runner(prId, plan.files, reviewRunId, chunkId);
+      const scan = await runner(prId, plan.files, reviewRunId, chunkId, prManifest);
       return { ok: true, scan };
     } catch (err: any) {
       lastError = err instanceof Error ? err : new Error(String(err));
@@ -312,6 +316,22 @@ async function runChunkWithRetry({
     }
   }
   return { ok: false, error: lastError || new Error("Chunk scan failed.") };
+}
+
+/**
+ * Build the simplified PR manifest passed to every chunk's review prompt.
+ * Source: the full PR file list. Output: minimal {filename, additions,
+ * deletions} entries (no diff content — keeps prompt size bounded).
+ *
+ * The preamble the LLM sees excludes the current chunk's files (it
+ * already has those). See buildManifestPreamble in reviewService.ts.
+ */
+function buildPrManifest(files: ReviewFileInput[]): PrManifestEntry[] {
+  return files.map((f) => ({
+    filename: f.filename,
+    additions: f.additions ?? 0,
+    deletions: f.deletions ?? 0,
+  }));
 }
 
 async function markSkipped(reviewRunId: string, chunkId: string, reason: string): Promise<void> {
