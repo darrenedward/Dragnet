@@ -76,6 +76,8 @@ export async function GET(req: Request) {
           line: true,
           severity: true,
           category: true,
+          exploitability: true,
+          impact: true,
           explanation: true,
           diffSuggestion: true,
           evidenceChain: true,

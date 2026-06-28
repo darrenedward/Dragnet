@@ -196,8 +196,8 @@ The `<arg>` is a PR `id` (preferred) or `branch` — both accepted. Numeric ordi
   "rejectedCount": 0,        // findings filtered by verifier
   "findingsCount": 4,
   "findings": [              // pre-formatted strings, NOT objects
-    "[Correctness|warning] src/proxy.ts:40 — <explanation>",
-    "[Security|suggestion] src/foo.ts:123 — <explanation>"
+    "[Correctness|warning|moderate] src/proxy.ts:40 — <explanation>",
+    "[Security|suggestion|difficult] src/foo.ts:123 — <explanation>"
   ]
 }
 ```
@@ -256,10 +256,11 @@ The `message` field contains markdown; missing `reviewRun` field means no review
 1. Resolve repoId, translate ordinal.
 2. Cache-aware review (see above). Wait for completion.
 3. **(--auto only)** If `reviewRun.rating >= 8` → report PASS, exit. Interactive mode skips this step — see rule 8.
-4. **Build triage table.** Parse each findings string `[Category|severity] file:line — explanation`. For each, classify:
+4. **Build triage table.** Parse each findings string `[Category|severity|exploitability?] file:line — explanation` (third bracket segment is optional — older cached responses lack it; treat as "unrated" when missing). For each, classify:
    - `real` — actual bug/security issue. Fix it.
    - `false-positive` — verifier got it wrong or LLM hallucinated. Skip + propose rejection note (but DO NOT mark rejected unless user confirms).
    - `scope-deferred` — real concern but out of scope (e.g., planned multi-tenancy). Skip + propose a comment/doc to satisfy future scans.
+   - When rendering the table, surface `exploitability` (trivial/moderate/difficult) and `impact` (critical/high/medium/low) as columns if present. Prioritization rule of thumb: trivial+critical first, difficult+low last. Treat missing values as "unrated" — don't infer.
 5. **Render the table to the user.** Always — even if rating is 8, 9, or 10. Findings at those ratings are usually suggestions, and the user gets to decide whether to chase a higher score or ship.
 6. **In interactive mode (default, no flag):** STOP. Wait for user to say "fix them", "fix #2 and #3 only", "mark #1 rejected", "done", etc. Do NOT apply fixes, commit, or kick off a new scan until the user responds. Do NOT auto-exit on rating.
 7. **In `--auto` mode:** apply fixes to all `real` rows (commit with message "fix: address N findings from /dragnet fix --auto"), skip `false-positive` and `scope-deferred` rows.

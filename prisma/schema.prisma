@@ -184,6 +184,8 @@ model ReviewFinding {
   repoId             String
   category           String
   severity           String
+  exploitability     String?     // "trivial" | "moderate" | "difficult" — how easy to exploit
+  impact             String?     // "critical" | "high" | "medium" | "low" — blast radius if exploited
   filename           String
   line               Int?
   explanation        String

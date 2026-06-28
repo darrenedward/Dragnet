@@ -71,6 +71,18 @@ const reviewResponseSchema = {
             description: "Severity level of the finding.",
             enum: ["blocker", "warning", "suggestion"],
           },
+          exploitability: {
+            type: "string",
+            description:
+              "How easy this is to exploit. 'trivial' = single crafted request; 'moderate' = needs valid auth, specific timing, or internal access; 'difficult' = deep knowledge, chained exploits, or unlikely conditions.",
+            enum: ["trivial", "moderate", "difficult"],
+          },
+          impact: {
+            type: "string",
+            description:
+              "Blast radius if exploited. 'critical' = full auth bypass / RCE / cross-tenant data; 'high' = single-tenant data access / privilege escalation / secret exposure; 'medium' = info disclosure / DoS / weak crypto; 'low' = cosmetic / theoretical / minimal real-world impact.",
+            enum: ["critical", "high", "medium", "low"],
+          },
           filename: {
             type: "string",
             description: "The name of the inspected file where the finding originates.",
@@ -143,6 +155,8 @@ const refusalSchema = {
  *  findings and mismatches the header count. */
 const VALID_CATEGORIES = ["Correctness", "Security", "Performance", "Accessibility", "Style"];
 const VALID_SEVERITIES = ["blocker", "warning", "suggestion"];
+const VALID_EXPLOITABILITY = ["trivial", "moderate", "difficult"];
+const VALID_IMPACT = ["critical", "high", "medium", "low"];
 // Per-call timeout for chat completions. Bumped from 120s → 300s to handle
 // long-context PRs (60+ file diffs) on reasoning models like qwen-plus.
 // 300s aligns with OpenRouter's own ceiling, so waiting longer than this
@@ -853,6 +867,8 @@ ${diffPayload}${deterministicPayload}`;
         ...f,
         category: VALID_CATEGORIES.includes(f?.category) ? f.category : "Style",
         severity: VALID_SEVERITIES.includes(f?.severity) ? f.severity : "suggestion",
+        exploitability: VALID_EXPLOITABILITY.includes(f?.exploitability) ? f.exploitability : "moderate",
+        impact: VALID_IMPACT.includes(f?.impact) ? f.impact : "medium",
         source: "llm",
       }));
       // `?? 5` (not `|| 5`) so a genuine returned 0 is preserved and clamped
@@ -972,6 +988,8 @@ ${diffPayload}${deterministicPayload}`;
       repoId: pr.repoId,
       category: finding.category || "Style",
       severity: finding.severity || "suggestion",
+      exploitability: finding.exploitability || "moderate",
+      impact: finding.impact || "medium",
       filename: finding.filename || "<unattributed>",
       line: finding.line || 1,
       explanation: finding.explanation || "No explanation provided.",

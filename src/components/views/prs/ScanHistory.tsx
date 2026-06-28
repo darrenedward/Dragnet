@@ -37,6 +37,8 @@ interface RunFindings {
     verificationStatus: string | null;
     verificationNote: string | null;
     source: string | null;
+    exploitability?: string | null;
+    impact?: string | null;
   }>;
   rejectedFindings: Array<{
     id: string;

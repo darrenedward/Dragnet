@@ -82,6 +82,8 @@ export interface LatestReviewResult {
     repoId: string;
     category: string;
     severity: string;
+    exploitability: string | null;
+    impact: string | null;
     filename: string;
     line: number | null;
     explanation: string;
@@ -530,6 +532,8 @@ export async function getActiveScan(prId: string): Promise<{
         repoId: true,
         category: true,
         severity: true,
+        exploitability: true,
+        impact: true,
         filename: true,
         line: true,
         explanation: true,

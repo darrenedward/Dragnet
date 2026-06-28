@@ -148,7 +148,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
               { verificationStatus: { not: "rejected" } },
             ],
           },
-          select: { id: true, category: true, severity: true, filename: true, line: true, explanation: true, diffSuggestion: true, evidenceChain: true, confidence: true, verificationStatus: true, verificationNote: true, timestamp: true },
+          select: { id: true, category: true, severity: true, exploitability: true, impact: true, filename: true, line: true, explanation: true, diffSuggestion: true, evidenceChain: true, confidence: true, verificationStatus: true, verificationNote: true, timestamp: true },
         });
         return NextResponse.json({
           cached: true,

@@ -220,7 +220,7 @@ function formatFindings(pr: any, findings: any[], sizeProfile?: PrSizeProfile): 
     out += "No findings.\n";
   } else {
     for (const f of findings) {
-      out += `### ${f.filename}:${f.line}\n**[${f.category}|${f.severity}]** (confidence: ${((f.confidence ?? 0.5) * 100).toFixed(0)}%)\n${f.explanation}\n`;
+      out += `### ${f.filename}:${f.line}\n**[${f.category}|${f.severity}${f.exploitability ? `|${f.exploitability}` : ""}]** (confidence: ${((f.confidence ?? 0.5) * 100).toFixed(0)}%${f.impact ? `, impact: ${f.impact}` : ""})\n${f.explanation}\n`;
       if (f.diffSuggestion) {
         out += `Suggested fix:\n\`\`\`diff\n${f.diffSuggestion}\n\`\`\`\n`;
       }
@@ -310,7 +310,7 @@ async function handlePrComments(args: any): Promise<string> {
   out += `_Reviewed commit ${latest.reviewRun.commitHash.slice(0, 7)}${latest.stale ? " (stale)" : ""}._\n\n`;
   out += `**Size:** ${formatSizeProfile(sizeProfile)}\n\n`;
   for (const f of findings) {
-    out += `- [${f.category}|${f.severity}] ${f.filename}:${f.line}\n  ${f.explanation}\n`;
+    out += `- [${f.category}|${f.severity}${f.exploitability ? `|${f.exploitability}` : ""}] ${f.filename}:${f.line}\n  ${f.explanation}\n`;
   }
   if (latest.rejectedCount > 0) {
     out += `\n_Verifier filtered ${latest.rejectedCount} finding${latest.rejectedCount === 1 ? "" : "s"}._\n`;
@@ -459,7 +459,7 @@ async function handleLegacyCommand(body: any, defRepo: string | null) {
         stale: latest.stale,
         rejectedCount: latest.rejectedCount,
         sizeProfile,
-        comments: latest.findings.map((f: any) => `[${f.category} | ${f.severity}] ${f.filename}:${f.line} - ${f.explanation}`),
+        comments: latest.findings.map((f: any) => `[${f.category} | ${f.severity}${f.exploitability ? ` | ${f.exploitability}` : ""}] ${f.filename}:${f.line} - ${f.explanation}`),
       });
     }
     if (cmdName.endsWith("prcheckstatus") || cmdName.endsWith("status")) {
@@ -508,7 +508,7 @@ async function handleLegacyCommand(body: any, defRepo: string | null) {
         sizeProfile,
         findingsCount: latest.findings.length,
         findings: latest.findings.map((f: any) =>
-          `[${f.category} | ${f.severity}] ${f.filename}:${f.line} - ${f.explanation}`,
+          `[${f.category} | ${f.severity}${f.exploitability ? ` | ${f.exploitability}` : ""}] ${f.filename}:${f.line} - ${f.explanation}`,
         ),
       });
     }
