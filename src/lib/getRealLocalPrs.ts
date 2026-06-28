@@ -1,11 +1,19 @@
 import path from "path";
 import fs from "fs";
 import { randomUUID } from "node:crypto";
-import { execFileSync } from "child_process";
+import { execFile } from "child_process";
+import { promisify } from "util";
 import { prisma } from "@/src/lib/prisma";
 
-function git(args: string[], cwd: string) {
-  return execFileSync("git", args, { cwd, stdio: ["ignore", "pipe", "ignore"] });
+const execFileAsync = promisify(execFile);
+
+async function git(args: string[], cwd: string): Promise<Buffer> {
+  const { stdout } = await execFileAsync("git", args, {
+    cwd,
+    maxBuffer: 50 * 1024 * 1024,
+    windowsHide: true,
+  });
+  return Buffer.from(stdout);
 }
 
 /**
@@ -80,7 +88,7 @@ export async function getRealLocalPrs(repoPath: string, repoId: string) {
     }
 
     try {
-      git(["rev-parse", "--is-inside-work-tree"], resolvedPath);
+      await git(["rev-parse", "--is-inside-work-tree"], resolvedPath);
     } catch {
       return null;
     }
@@ -88,8 +96,8 @@ export async function getRealLocalPrs(repoPath: string, repoId: string) {
     const repo = await prisma.repository.findUnique({ where: { id: repoId } });
     if (!repo) return null;
 
-    const baseBranch = detectBaseBranch(resolvedPath, repo.baseBranch);
-    const allBranches = listBranches(resolvedPath);
+    const baseBranch = await detectBaseBranch(resolvedPath, repo.baseBranch);
+    const allBranches = await listBranches(resolvedPath);
 
     // Filter to branches matching the pattern, excluding the base branch.
     const pattern = repo.branchPattern || "*";
@@ -124,7 +132,7 @@ export async function getRealLocalPrs(repoPath: string, repoId: string) {
         // already exist from when the branch had pending changes. Mark
         // it "Merged" so the list view can show it greyed-out instead
         // of letting a later scan fail with "No modified files".
-        const merged = isBranchMerged(resolvedPath, baseBranch, branch.name);
+        const merged = await isBranchMerged(resolvedPath, baseBranch, branch.name);
         if (merged) {
           const existing = await prisma.pullRequest.findUnique({
             where: { id: prId },
@@ -143,7 +151,7 @@ export async function getRealLocalPrs(repoPath: string, repoId: string) {
           continue;
         }
 
-        const filesList = collectBranchFiles(resolvedPath, baseBranch, branch.name);
+        const filesList = await collectBranchFiles(resolvedPath, baseBranch, branch.name);
         if (filesList.length === 0) continue;
 
         // Preserve existing status — the background poll must NOT reset a
@@ -221,16 +229,16 @@ export async function getRealLocalPrs(repoPath: string, repoId: string) {
  *   4. currently-checked-out branch (HEAD)
  *   5. fallback to "main"
  */
-function detectBaseBranch(repoPath: string, configuredBase: string): string {
+async function detectBaseBranch(repoPath: string, configuredBase: string): Promise<string> {
   const candidates = [configuredBase, "main", "master"].filter(Boolean);
   for (const candidate of candidates) {
     try {
-      git(["show-ref", "--verify", "--quiet", `refs/heads/${candidate}`], repoPath);
+      await git(["show-ref", "--verify", "--quiet", `refs/heads/${candidate}`], repoPath);
       return candidate;
     } catch {}
   }
   try {
-    return git(["rev-parse", "--abbrev-ref", "HEAD"], repoPath).toString().trim();
+    return (await git(["rev-parse", "--abbrev-ref", "HEAD"], repoPath)).toString().trim();
   } catch {
     return "main";
   }
@@ -242,9 +250,9 @@ function detectBaseBranch(repoPath: string, configuredBase: string): string {
  * is an ancestor of the second. Any non-zero exit (not merged, bad ref,
  * missing repo) returns false.
  */
-export function isBranchMerged(repoPath: string, baseBranch: string, branch: string): boolean {
+export async function isBranchMerged(repoPath: string, baseBranch: string, branch: string): Promise<boolean> {
   try {
-    git(["merge-base", "--is-ancestor", branch, baseBranch], repoPath);
+    await git(["merge-base", "--is-ancestor", branch, baseBranch], repoPath);
     return true;
   } catch {
     return false;
@@ -255,8 +263,8 @@ export function isBranchMerged(repoPath: string, baseBranch: string, branch: str
  * Returns all local branches sorted alphabetically by name. The
  * `--sort=refname` flag guarantees stable ordering across runs.
  */
-function listBranches(repoPath: string): BranchInfo[] {
-  const buffer = git(
+async function listBranches(repoPath: string): Promise<BranchInfo[]> {
+  const buffer = await git(
     [
       "for-each-ref",
       "refs/heads/",
@@ -280,7 +288,7 @@ function listBranches(repoPath: string): BranchInfo[] {
 }
 
 export async function refreshPrFiles(repoPath: string, baseBranch: string, branchName: string, prId: string) {
-  const files = collectBranchFiles(repoPath, baseBranch, branchName);
+  const files = await collectBranchFiles(repoPath, baseBranch, branchName);
   // Deliberately NOT wrapped in $transaction. The Supabase transaction
   // pooler (PgBouncer) caps interactive transactions at 5s; the createMany
   // payload here carries full file contents + diffs and routinely exceeds
@@ -309,14 +317,14 @@ export async function refreshPrFiles(repoPath: string, baseBranch: string, branc
   return files;
 }
 
-function collectBranchFiles(
+async function collectBranchFiles(
   repoPath: string,
   baseBranch: string,
   branchName: string,
-): RepoFile[] {
+): Promise<RepoFile[]> {
   const files: RepoFile[] = [];
   try {
-    const changedFilesBuffer = git(
+    const changedFilesBuffer = await git(
       ["diff", "--name-status", `${baseBranch}...${branchName}`],
       repoPath,
     );
@@ -333,13 +341,13 @@ function collectBranchFiles(
       let modifiedContent = "";
 
       try {
-        diffStr = git(["diff", `${baseBranch}...${branchName}`, "--", filename], repoPath).toString();
+        diffStr = (await git(["diff", `${baseBranch}...${branchName}`, "--", filename], repoPath)).toString();
       } catch {}
       try {
-        originalContent = git(["show", `${baseBranch}:${filename}`], repoPath).toString();
+        originalContent = (await git(["show", `${baseBranch}:${filename}`], repoPath)).toString();
       } catch {}
       try {
-        modifiedContent = git(["show", `${branchName}:${filename}`], repoPath).toString();
+        modifiedContent = (await git(["show", `${branchName}:${filename}`], repoPath)).toString();
       } catch {}
 
       const additions = diffStr.split("\n").filter((l) => l.startsWith("+") && !l.startsWith("+++")).length;

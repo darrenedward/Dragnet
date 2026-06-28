@@ -90,7 +90,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ prIdOrNu
     const tier = assertTier(manifest);
 
     // Merged-branch short-circuit — same rationale as scan/route.ts.
-    if (repo.path && pr.sourceBranch && files.length === 0 && isBranchMerged(repo.path, baseBranch, pr.sourceBranch)) {
+    if (repo.path && pr.sourceBranch && files.length === 0 && await isBranchMerged(repo.path, baseBranch, pr.sourceBranch)) {
       await prisma.pullRequest.update({
         where: { id: pr.id },
         data: { status: "Merged" },

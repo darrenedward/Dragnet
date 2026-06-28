@@ -110,7 +110,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
     // there is nothing to review — returning a clean merged state instead
     // of letting runPrScan throw "No modified files". Also marks the PR
     // row so the list view can render it as Merged.
-    if (repoPath && pr.sourceBranch && files.length === 0 && isBranchMerged(repoPath, baseBranch, pr.sourceBranch)) {
+    if (repoPath && pr.sourceBranch && files.length === 0 && await isBranchMerged(repoPath, baseBranch, pr.sourceBranch)) {
       console.log(`[scan] route: branch ${pr.sourceBranch} fully merged into ${baseBranch} — returning merged state`);
       await prisma.pullRequest.update({
         where: { id: prId },

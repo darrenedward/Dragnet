@@ -105,7 +105,7 @@ export async function POST(req: Request) {
     // Merged-branch short-circuit. Pre-push shouldn't fire for a merged
     // branch in normal flow (you don't push to a branch that's already
     // merged), but if it does, exit clean — no point gating an empty diff.
-    if (repo.path && pr.sourceBranch && files.length === 0 && isBranchMerged(repo.path, baseBranch, pr.sourceBranch)) {
+    if (repo.path && pr.sourceBranch && files.length === 0 && await isBranchMerged(repo.path, baseBranch, pr.sourceBranch)) {
       return NextResponse.json({
         passed: true,
         merged: true,
