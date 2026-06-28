@@ -91,7 +91,7 @@ The `/api/repos/$REPO_ID/reindex` endpoint exists but **requires a browser sessi
 | `/dragnet <n>` | Review PR #N. Cache-aware — returns existing results if diff unchanged, starts new scan otherwise. **Read-only.** |
 | `/dragnet status <n>` | Show existing review for PR #N. **Never triggers a scan, never writes code, never touches DB rows.** |
 | `/dragnet fix <n>` | **Interactive** fix loop: review → triage → wait for user → fix → re-review. Stops between iterations. |
-| `/dragnet fix <n> --auto` | Aggressive auto-fix loop (the old default): review → fix → re-review until rating ≥ 8/10 or 1 non-improving iteration. Use only when the user explicitly asks for hands-off grinding. |
+| `/dragnet fix <n> --auto` | Aggressive auto-fix loop: review → fix → re-review until rating = 10/10 or 1 non-improving iteration. The target is **10/10, not 8/10** — bailing at 8 hides the remaining 20%. Use when the user explicitly asks for hands-off grinding to the top of the scale. |
 | `/dragnet fix <n> --once` | Single pass: fix all user-approved findings, commit, done. |
 | `/dragnet help` | Print this table. |
 
@@ -115,7 +115,7 @@ These rules are **inviolable** — they override any conflicting instruction in 
 
 7. **No new files without direction.** Don't create helper modules, spec docs, or task files unless the user asks. Refactoring across files (e.g., extracting a helper used 3+ times) needs explicit sign-off in interactive mode.
 
-8. **Rating doesn't end interactive mode.** An 8/10 means "production-grade" per the rubric — it's not a ceiling and not a stop signal. The LLM grades honestly on a 1-10 scale: 9 means "only nit-level suggestions," 10 means "flawless." If you bail out of `/dragnet fix <n>` (interactive, default mode) just because rating ≥ 8, you're capping the scale at 8 and hiding the findings that would push it higher. **Always render the triage table in interactive mode, regardless of rating (8, 9, 10, or lower) and STOP for user input.** Only `--auto` mode uses rating ≥ 8 as a stop condition, because `--auto` runs unattended.
+8. **Rating doesn't end interactive mode.** An 8/10 means "production-grade" per the rubric — it's not a ceiling and not a stop signal. The LLM grades honestly on a 1-10 scale: 9 means "only nit-level suggestions," 10 means "flawless." If you bail out of `/dragnet fix <n>` (interactive, default mode) just because rating ≥ 8, you're capping the scale at 8 and hiding the findings that would push it higher. **Always render the triage table in interactive mode, regardless of rating (8, 9, 10, or lower) and STOP for user input.** The only rating that ends ANY loop (`--auto` included) is **10/10** — bailing at 8 because "it's production-grade" is the cancer-80%-go-home fallacy. If you can reach 9 or 10, you reach 9 or 10.
 
 ## Resolving the repoId
 
@@ -266,7 +266,7 @@ The `message` field contains markdown; missing `reviewRun` field means no review
 7. **In `--auto` mode:** apply fixes to all `real` rows (commit with message "fix: address N findings from /dragnet fix --auto"), skip `false-positive` and `scope-deferred` rows.
 8. **In `--once` mode:** render the table, then STOP. The user invoked `--once` to see the triage and decide; they will say what to do next.
 9. **Loop continuation (interactive only):** after the user approves fixes and they're applied + committed + pushed, run cache-aware review again. Render the new triage table regardless of rating. STOP again. The loop ends when the user says "done"/"exit", OR when rule 5 trips (new rating ≤ old rating), OR when there are no `real` findings left to triage.
-10. **`--auto` loop continuation:** re-run cache-aware review after each commit. If new rating > old rating AND < 8 → next iteration. If new rating ≤ old rating → STOP. If new rating ≥ 8 → report PASS, exit.
+10. **`--auto` loop continuation:** re-run cache-aware review after each commit. If new rating = 10 → report PERFECT, exit. If new rating > old rating AND iterations < 10 → next iteration. If new rating ≤ old rating (1 non-improving iteration, per rule 5) → STOP. If 10 iterations reached without hitting 10/10 → STOP, surface final state. Hard cap is **10 iterations** to prevent runaway token spend; the non-improving-iteration guard (rule 5) usually trips well before that.
 
 ## Polling timing
 
