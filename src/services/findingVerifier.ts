@@ -52,6 +52,7 @@ import path from "node:path";
 import { prisma } from "@/src/lib/prisma";
 import { safeReadFileSync } from "@/src/lib/pathSafety";
 import { getChatClient, getChatModel } from "@/src/lib/llmClient";
+import { checkAbsenceClaim, extractCitedSymbols } from "./findingVerifier/absenceClaim";
 
 export interface CandidateFinding {
   id: string;
@@ -190,6 +191,20 @@ async function verifyOne(
   const stageA = validateLineAndFile(finding, repoPath, prId);
   if (stageA) return stageA;
 
+  // ─── Stage A.5: absence-claim verification ────────────────────────
+  // Catches the failure mode where the LLM reviewer claims a file/route/
+  // import does not exist or is unused, but the filesystem contradicts
+  // it. Deterministic, no LLM call.
+  const stageA5 = checkAbsenceClaim(finding, repoPath);
+  if (stageA5) {
+    if (stageA5.status === "rejected") {
+      console.warn(
+        `[verifier] stage A.5 rejected finding ${finding.id} (${finding.filename}:${finding.line}) — ${stageA5.note}`,
+      );
+    }
+    return stageA5;
+  }
+
   // ─── Stage B: counter-evidence retrieval (4 families) ─────────────
   const family = classifyFamily(finding);
   if (!family) {
@@ -266,23 +281,6 @@ function loadFileContent(
   // resolves + opens + reads in one step with O_NOFOLLOW, closing the
   // TOCTOU window that resolveSafePath + readFileSync would leave open.
   return safeReadFileSync(repoPath, filename);
-}
-
-function extractCitedSymbols(explanation: string): string[] {
-  // Pull out backtick-quoted identifiers first (highest signal).
-  const tickMatch = explanation.match(/`([A-Za-z_][A-Za-z0-9_.#[\]/-]{1,80})`/g);
-  const ticked = tickMatch?.map((m) => m.replace(/`/g, "")) ?? [];
-
-  // Also pick up camelCase / kebab-case identifiers from the prose.
-  const proseMatch = explanation.match(/\b(?:[a-z][a-zA-Z0-9_]{3,}|[A-Z][a-z]+(?:[A-Z][a-z]+)+)\b/g);
-  const fromProse = proseMatch ?? [];
-
-  // Dedup, drop common English words that look like identifiers.
-  const STOP = new Set(["the", "this", "that", "with", "from", "into", "true", "false", "null"]);
-  const all = [...new Set([...ticked, ...fromProse])].filter((s) => !STOP.has(s.toLowerCase()));
-
-  // Cap at 5 — a finding citing 6+ symbols is probably vague prose.
-  return all.slice(0, 5);
 }
 
 // ─── Stage B: classification + counter-evidence ──────────────────────
