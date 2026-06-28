@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { prisma } from "./src/lib/prisma";
-import { getChatChain } from "./src/lib/llmClient";
+import { getChatChain, getChatClient } from "./src/lib/llmClient";
 import { randomUUID } from "node:crypto";
 import { verifyFindings, isDocumentationFile, type CandidateFinding } from "./src/services/findingVerifier";
 import { completeReviewRun } from "./src/lib/reviewFreshness";
@@ -110,6 +110,31 @@ const reviewResponseSchema = {
     },
   },
   required: ["rating", "summary", "findings"],
+};
+
+/**
+ * Refusal-detection response shape. Sent as a single follow-up turn after
+ * the main review loop completes — surfaces anything the model declined to
+ * fully analyze (security filter trip, exploit-pattern content, scope skip).
+ * Without this turn, refusals are silent (~1% of scans per deepsec's data).
+ *
+ * Keep optional so a malformed/missing response degrades gracefully to
+ * `{ refused: false }` rather than failing the whole review.
+ */
+const refusalSchema = {
+  type: "object",
+  properties: {
+    refused: {
+      type: "boolean",
+      description: "true if you declined or skipped any part of the PR review.",
+    },
+    topics: {
+      type: "array",
+      description: "Brief list of files/areas/topics you skipped or didn't fully analyze.",
+      items: { type: "string" },
+    },
+  },
+  required: ["refused"],
 };
 
 /** Allowed enum values — kept in sync with reviewResponseSchema. Findings the
@@ -361,6 +386,8 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
   try {
   let findings: any[] = [];
   let rating: number | null = null;
+  let refused = false;
+  let refusalNote: string | null = null;
   let usedModel = "unconfigured";
   let systemWarn: string | null = null;
 
@@ -831,6 +858,53 @@ ${diffPayload}${deterministicPayload}`;
       // `?? 5` (not `|| 5`) so a genuine returned 0 is preserved and clamped
       // to 1 below, rather than being masked into a middling 5.
       rating = Math.max(1, Math.min(10, finalReview.rating ?? 5));
+
+      // Refusal-detection follow-up turn (per-run, not per-chunk). Asks the
+      // model whether it declined/skipped part of the PR — surfaces security-
+      // filter trips, scope skips, or "didn't get to that file" cases that
+      // would otherwise be silent. One extra LLM call per scan; falls through
+      // harmlessly to refused=false on any error.
+      if (!reviewChunkId) {
+        try {
+          const refusalClient = getChatClient();
+          if (refusalClient) {
+            const refusalRes = await refusalClient.chat.completions.create({
+              model: usedModel,
+              messages: [
+                {
+                  role: "user",
+                  content:
+                    `You just finished reviewing PR "${pr.title}" on branch ${pr.sourceBranch} ` +
+                    `(${files.length} files reviewed). Did you decline to fully analyze, refuse to look at, ` +
+                    `or skip any part of this PR because the content or task felt uncomfortable, out of scope, ` +
+                    `or tripped a content filter? Respond ONLY with JSON matching this shape: ` +
+                    `{"refused": true|false, "topics": ["brief reason 1", ...]}. ` +
+                    `If you reviewed everything fully, return {"refused": false, "topics": []}.`,
+                },
+              ],
+              response_format: { type: "json_object" },
+              temperature: 0,
+              max_tokens: 500,
+            });
+            const raw = refusalRes.choices?.[0]?.message?.content ?? "";
+            const parsed = JSON.parse(raw);
+            if (parsed?.refused === true) {
+              refused = true;
+              const topics = Array.isArray(parsed.topics) ? parsed.topics.filter(Boolean) : [];
+              refusalNote = topics.length > 0 ? topics.join("; ") : "Reviewer flagged incomplete coverage.";
+              void logReview(prId, `Refusal detected: ${refusalNote}`, "warn", reviewRunId);
+            } else {
+              void logReview(prId, `Refusal check: clean (model reviewed everything)`, "info", reviewRunId);
+            }
+          }
+        } catch (err: any) {
+          // Fail-open: log + fall through with refused=false. The main review
+          // is already complete and persisted below; a refusal-check failure
+          // must NOT abort the persistence path.
+          console.warn(`[scan] refusal-detection turn failed: ${err?.message ?? String(err)}`);
+          void logReview(prId, `Refusal check failed (fail-open): ${err?.message ?? String(err)}`, "warn", reviewRunId);
+        }
+      }
     } else if (agenticError) {
       systemWarn = `All chat providers failed (last error: ${agenticError}). Check your internet connection and LLM Settings.`;
     } else {
@@ -919,7 +993,12 @@ ${diffPayload}${deterministicPayload}`;
   // completeReviewRun swallows errors. Await it so callers that immediately
   // refetch the latest completed run don't race the status write.
   if (reviewRunId && !reviewChunkId) {
-    await completeReviewRun(reviewRunId, { status: "completed", rating });
+    await completeReviewRun(reviewRunId, {
+      status: "completed",
+      rating,
+      refused,
+      refusalNote,
+    });
   }
 
   // 7. Update PR rating + status

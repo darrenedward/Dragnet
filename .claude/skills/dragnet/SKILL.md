@@ -188,7 +188,9 @@ The `<arg>` is a PR `id` (preferred) or `branch` — both accepted. Numeric ordi
     "commitHash": "abc1234...",
     "rating": 7,             // numeric 1-10, or null if run failed
     "model": "MiniMax-M3",
-    "completedAt": "2026-06-26T06:28:34.413Z"
+    "completedAt": "2026-06-26T06:28:34.413Z",
+    "refused": false,        // true if reviewer flagged it skipped/declined part of the PR
+    "refusalNote": null      // string when refused=true: topics the reviewer skipped
   },
   "stale": false,            // true if diff has changed since this run
   "rejectedCount": 0,        // findings filtered by verifier
@@ -240,13 +242,15 @@ The `message` field contains markdown; missing `reviewRun` field means no review
 2. Translate `<n>` to a PR id: POST `prlist`, take `pullRequests[n-1].id`.
 3. Run the cache-aware review logic above.
 4. Render the rating, model, commitHash, and findings grouped by severity (blocker → warning → suggestion).
-5. If rating < 8, suggest `/dragnet fix <n>`.
+5. **If `reviewRun.refused === true`:** render a prominent warning at the top — `⚠ Reviewer flagged incomplete coverage: <refusalNote>`. The review ran but parts of the PR were skipped (security filter, scope, etc.). Re-scan after addressing the cause.
+6. If rating < 8, suggest `/dragnet fix <n>`.
 
 ### `/dragnet status <n>`
 1. Resolve repoId, translate ordinal → PR id.
 2. POST `prcheckstatus <id>`.
 3. If response has no `reviewRun`: tell user "No completed review yet — run `/dragnet <n>` to start one."
-4. Otherwise render findings. Do NOT call `prcheck`. Do NOT edit code. Do NOT touch DB rows. Do NOT trigger scans.
+4. Otherwise render findings. **If `reviewRun.refused === true`:** render a prominent warning at the top — `⚠ Reviewer flagged incomplete coverage: <refusalNote>` — and recommend a re-scan.
+5. Do NOT call `prcheck`. Do NOT edit code. Do NOT touch DB rows. Do NOT trigger scans.
 
 ### `/dragnet fix <n> [--once|--auto]`
 1. Resolve repoId, translate ordinal.

@@ -40,6 +40,8 @@ export async function GET(req: Request) {
         completedAt: true,
         rating: true,
         reliability: true,
+        refused: true,
+        refusalNote: true,
         chunksTotal: true,
         chunksCompleted: true,
         chunksFailed: true,

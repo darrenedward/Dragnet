@@ -245,6 +245,9 @@ async function formatLatestFindings(pr: any): Promise<string> {
     if (latest.rejectedCount > 0) {
       out += `_Verifier filtered ${latest.rejectedCount} finding${latest.rejectedCount === 1 ? "" : "s"}._\n`;
     }
+    if (latest.reviewRun.refused) {
+      out += `\n> ⚠ **Reviewer flagged incomplete coverage.** ${latest.reviewRun.refusalNote ?? "Parts of the PR were skipped or not fully analyzed."} Re-scan recommended after addressing the underlying cause.\n`;
+    }
   }
   return out;
 }
