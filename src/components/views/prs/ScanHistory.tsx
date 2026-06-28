@@ -109,7 +109,7 @@ export default function ScanHistory({ prId, currentRunId }: Props) {
   const [runFindings, setRunFindings] = useState<Record<string, RunFindings>>({});
   const [loading, setLoading] = useState(false);
   const [showRejected, setShowRejected] = useState<Record<string, boolean>>({});
-  const [panelOpen, setPanelOpen] = useState(true);
+  const [panelOpen, setPanelOpen] = useState(false);
 
   useEffect(() => {
     if (!prId) {
