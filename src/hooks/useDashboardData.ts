@@ -576,10 +576,18 @@ export function useDashboardData() {
   };
 
   const handleRetryFailedChunks = async () => {
-    if (!selectedPrId || !reviewRun?.id) return;
+    if (!selectedPrId) return;
+    // The LargePrModePanel renders against activeScan while a scan is in
+    // progress and against reviewRun afterwards. Match that source of truth
+    // here — otherwise a first-time stuck scan has reviewRun=null and this
+    // handler silently no-ops, and a re-scan stuck mid-flight sends the POST
+    // to the PREVIOUS completed runId ("Nothing to resume"). Prefer activeScan
+    // when present, fall back to reviewRun for the after-the-fact retry case.
+    const runId = activeScan?.id ?? reviewRun?.id;
+    if (!runId) return;
     setIsRetryingChunks(true);
     try {
-      const res = await fetchJson(`/api/prs/${selectedPrId}/runs/${reviewRun.id}/retry-failed-chunks`, {
+      const res = await fetchJson(`/api/prs/${selectedPrId}/runs/${runId}/retry-failed-chunks`, {
         method: "POST",
       });
       const result = await res.json();
