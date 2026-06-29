@@ -146,7 +146,7 @@ function ProjectsPane({
             title="Add local git directory"
           >
             <Plus size={11} />
-            <span>Add Project</span>
+            <span>Add</span>
           </button>
         </div>
       </div>
