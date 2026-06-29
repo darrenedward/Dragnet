@@ -333,14 +333,6 @@ export default function App() {
             <div className="flex items-center gap-2">
               <button
                 onClick={() => {
-                  alert("Local Export: Reports synced under '~/.dragnet/reports/...' data catalog.");
-                }}
-                className="px-3 py-1.5 text-xs font-semibold bg-white/5 border border-white/10 text-slate-300 rounded hover:bg-white/10 transition-colors cursor-pointer"
-              >
-                Sync local report folder
-              </button>
-              <button
-                onClick={() => {
                   alert(`Direct Workspace Diff View: Displaying changes from base path for ${activeRepo ? activeRepo.name : d.selectedRepoId}`);
                 }}
                 className="px-3 py-1.5 text-xs font-semibold bg-cyan-500 text-black rounded hover:bg-cyan-400 transition-colors cursor-pointer"
