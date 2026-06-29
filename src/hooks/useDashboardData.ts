@@ -82,6 +82,7 @@ export function useDashboardData() {
   // the agentic loop is still running, instead of just a spinner.
   const [activeScan, setActiveScan] = useState<{
     id: string;
+    prId: string;
     commitHash: string;
     diffHash: string;
     startedAt: string;
@@ -347,6 +348,20 @@ export function useDashboardData() {
     fetchDbConfig();
   }, []);
 
+  // Clear stale scan state IMMEDIATELY when selection changes — before the
+  // 50ms-debounced fetch below fires. Without this, switching PRs while a
+  // scan is running on the previous PR leaves activeScan pointing at the
+  // old run, which makes ReviewProgress poll the old run's logs into the
+  // new view. fetchPrDetails/fetchPrsForSelectedRepo also clear this state
+  // on the server side, but they're async + debounced; this effect runs
+  // synchronously on selection change so the UI never renders stale data.
+  useEffect(() => {
+    setActiveScan(null);
+    setActiveScanChunks([]);
+    setActiveFindings([]);
+    setActiveIterations({});
+  }, [selectedRepoId, selectedPrId]);
+
   // Fetch PRs + details immediately when selection changes (no polling reset).
   useEffect(() => {
     const t = setTimeout(() => {
@@ -408,7 +423,13 @@ export function useDashboardData() {
     if (scanInFlightRef.current) return;
     const activePR = prs.find((p) => p.id === selectedPrId);
     if (!activePR) return;
-    setIsScanning(activePR.status === "In Progress" || !!activeScan);
+    // Scope the activeScan check to the selected PR. The /findings endpoint
+    // returns activeScan per-prId, so it SHOULD always match selectedPrId —
+    // but during selection transitions, stale state can leave activeScan
+    // pointing at the previously-selected PR's run. The prId guard rejects
+    // that, so isScanning can't be forced true by a foreign run.
+    const activeScanIsForSelectedPr = !!activeScan && activeScan.prId === selectedPrId;
+    setIsScanning(activePR.status === "In Progress" || activeScanIsForSelectedPr);
   }, [selectedPrId, prs, activeScan]);
 
   // ===== DB actions =====
@@ -653,55 +674,72 @@ export function useDashboardData() {
   };
 
   // ===== Markdown export =====
-  const handleExportMarkdown = () => {
-    const activeRepo = repos.find((r) => r.id === selectedRepoId);
-    const activePr = prs.find((p) => p.id === selectedPrId && p.repoId === selectedRepoId);
-    if (!activePr || !activeRepo) return;
+  // Two paths share the server-side builder so output stays byte-identical:
+  //   - format="file"     writes to .dragnet/reviews/<slug>/<runId>.md
+  //   - format="download" returns the markdown inline; client wraps in a Blob
+  //                      and triggers a browser download (legacy path).
+  const [exportStatus, setExportStatus] = useState<{
+    kind: "file" | "download";
+    success: boolean;
+    message: string;
+  } | null>(null);
 
-    let mdContent = `# Dragnet automated PR Code Review Summary Card\n\n`;
-    mdContent += `### System Details:\n`;
-    mdContent += `- **Project:** \`${activeRepo.name}\`\n`;
-    mdContent += `- **Pull Request:** \`${activePr.title}\`\n`;
-    mdContent += `- **Source Branch:** \`${activePr.sourceBranch}\` \`(${activePr.commitHash})\`\n`;
-    mdContent += `- **Target/Base Branch:** \`${activePr.targetBranch}\`\n`;
-    mdContent += `- **Author Name:** \`${activePr.author}\`\n`;
-    mdContent += `- **Scanned On (UTC):** \`${new Date().toISOString()}\`\n`;
-    mdContent += `- **Core Policy Stack:** Compliance Dragnet Guard v4\n\n`;
-    mdContent += `--- \n\n`;
-
-    mdContent += `## Files Checked in Pull Request:\n`;
-    prFiles.forEach((file) => {
-      mdContent += `- **File:** \`${file.filename}\` (\`+${file.additions}\` additions, \`-${file.deletions}\` deletions)\n`;
-    });
-    mdContent += `\n`;
-
-    mdContent += `## Review Findings and Severity Alerts:\n\n`;
-
-    if (findings.length === 0) {
-      mdContent += `🎉 **Perfect PR Pass!** No bugs, performance leaks, or security vulnerabilities discovered for this diff block.\n`;
-    } else {
-      findings.forEach((find, idx) => {
-        mdContent += `### [${idx + 1}] Severity: **${find.severity.toUpperCase()}** • Category: **${find.category}**\n`;
-        mdContent += `- **Location:** \`${find.filename}\` (Line ${find.line})\n`;
-        mdContent += `- **Observation Detail:** ${find.explanation}\n`;
-        if (find.diffSuggestion) {
-          mdContent += `\n**Proposed Resolution:**\n`;
-          mdContent += `\`\`\`rust\n${find.diffSuggestion}\n\`\`\`\n`;
-        }
-        mdContent += `\n---\n\n`;
+  const handleExportMarkdown = async (format: "file" | "download" = "download") => {
+    if (!selectedPrId) return;
+    if (!reviewRun?.id) {
+      setExportStatus({
+        kind: format,
+        success: false,
+        message: "No completed review run to export.",
+      });
+      return;
+    }
+    setExportStatus(null);
+    try {
+      const res = await fetchJson(
+        `/api/prs/${selectedPrId}/runs/${reviewRun.id}/export-markdown`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ format }),
+        },
+      );
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        throw new Error(data.error || `Export failed (HTTP ${res.status}).`);
+      }
+      if (format === "file") {
+        setExportStatus({
+          kind: "file",
+          success: true,
+          message: `Saved to ${data.relPath}`,
+        });
+      } else {
+        // Server returned the markdown inline; trigger a browser download.
+        const blob = new Blob([data.markdown], { type: "text/markdown;charset=utf-8;" });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.setAttribute("href", url);
+        link.setAttribute("download", data.filename);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+        setExportStatus({
+          kind: "download",
+          success: true,
+          message: "Downloaded.",
+        });
+      }
+    } catch (err: any) {
+      setExportStatus({
+        kind: format,
+        success: false,
+        message: err?.message || "Export failed.",
       });
     }
-
-    mdContent += `\n\n_Auto compiled by Dragnet daemon - Local-First PR review agent._`;
-
-    const blob = new Blob([mdContent], { type: "text/markdown;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.setAttribute("href", url);
-    link.setAttribute("download", `${activeRepo.name}-${activePr.sourceBranch.replace(/\//g, "-")}-review-card.md`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    // Auto-clear the status pill after 6s.
+    setTimeout(() => setExportStatus(null), 6000);
   };
 
   const handleCopyCode = (text: string, pathId: string) => {
@@ -762,6 +800,7 @@ export function useDashboardData() {
     handleTriggerPrScan,
     handleRetryFailedChunks,
     handleExportMarkdown,
+    exportStatus,
     handleCopyCode,
     copyFeedback,
     // add repo modal

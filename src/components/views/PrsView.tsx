@@ -9,6 +9,7 @@ import {
   FileCode2,
   GitBranch,
   Hash,
+  Save,
   User,
   X,
   Zap,
@@ -31,7 +32,8 @@ interface Props {
   activePR: PullRequest | undefined;
   isScanning: boolean;
   onTriggerScan: () => void;
-  onExportMarkdown: () => void;
+  onExportMarkdown: (format: "file" | "download") => void;
+  exportStatus: { kind: "file" | "download"; success: boolean; message: string } | null;
   scanResult: ScanResult | null;
   onDismissScanResult: () => void;
   findings: ReviewFinding[];
@@ -93,6 +95,7 @@ export default function PrsView({
   isScanning,
   onTriggerScan,
   onExportMarkdown,
+  exportStatus,
   scanResult,
   onDismissScanResult,
   findings,
@@ -132,6 +135,7 @@ export default function PrsView({
           isScanning={isScanning}
           onTriggerScan={onTriggerScan}
           onExportMarkdown={onExportMarkdown}
+          exportStatus={exportStatus}
           hasFindings={findings.length > 0}
           scanResult={scanResult}
           onDismissScanResult={onDismissScanResult}
@@ -192,6 +196,7 @@ function PrHeader({
   isScanning,
   onTriggerScan,
   onExportMarkdown,
+  exportStatus,
   hasFindings,
   scanResult,
   onDismissScanResult,
@@ -202,7 +207,8 @@ function PrHeader({
   activePR: PullRequest | undefined;
   isScanning: boolean;
   onTriggerScan: () => void;
-  onExportMarkdown: () => void;
+  onExportMarkdown: (format: "file" | "download") => void;
+  exportStatus: { kind: "file" | "download"; success: boolean; message: string } | null;
   hasFindings: boolean;
   scanResult: ScanResult | null;
   onDismissScanResult: () => void;
@@ -280,14 +286,35 @@ function PrHeader({
             <span>{scanning ? "AI Pipeline Working..." : !repoIndexedAt ? "Index Required" : "Trigger AI Review Scan"}</span>
           </button>
           {hasFindings && (
-            <button
-              onClick={onExportMarkdown}
-              className="px-3 py-2 bg-white/5 border border-white/10 text-slate-300 hover:bg-white/10 text-xs font-mono font-bold rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer"
-              title="Download complete markdown report summary"
-            >
-              <Download size={13} />
-              <span>Export MD Card</span>
-            </button>
+            <>
+              <button
+                onClick={() => onExportMarkdown("file")}
+                className="px-3 py-2 bg-white/5 border border-white/10 text-slate-300 hover:bg-white/10 text-xs font-mono font-bold rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer"
+                title="Save the markdown summary to .dragnet/reviews/<branch>/<runId>.md inside the project"
+              >
+                <Save size={13} />
+                <span>Save to Project</span>
+              </button>
+              <button
+                onClick={() => onExportMarkdown("download")}
+                className="px-3 py-2 bg-white/5 border border-white/10 text-slate-300 hover:bg-white/10 text-xs font-mono font-bold rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer"
+                title="Download the markdown summary as a .md file"
+              >
+                <Download size={13} />
+                <span>Download</span>
+              </button>
+              {exportStatus && (
+                <span
+                  className={`text-[10px] font-mono px-2 py-1 rounded border ${
+                    exportStatus.success
+                      ? "text-emerald-400 bg-emerald-500/10 border-emerald-500/20"
+                      : "text-rose-400 bg-rose-500/10 border-rose-500/20"
+                  }`}
+                >
+                  {exportStatus.message}
+                </span>
+              )}
+            </>
           )}
         </div>
       </div>

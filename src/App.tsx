@@ -293,6 +293,7 @@ export default function App() {
                   isScanning={d.isScanning}
                   onTriggerScan={d.handleTriggerPrScan}
                   onExportMarkdown={d.handleExportMarkdown}
+                  exportStatus={d.exportStatus}
                   scanResult={d.scanResult}
                   onDismissScanResult={() => d.setScanResult(null)}
                   findings={d.findings}
