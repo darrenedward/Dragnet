@@ -791,6 +791,18 @@ ${diffPayload}${deterministicPayload}`;
                   if (repo) {
                     const repoPath = repo.localPath || repo.path;
                     if (repoPath) {
+                      // Some providers (NVIDIA Nemotron, OpenRouter pass-through)
+                      // occasionally omit filePath or send it as null. Without
+                      // this guard, safeReadFileSync → resolveSafePath calls
+                      // path.resolve(base, undefined) which throws
+                      // ERR_INVALID_ARG_TYPE. The outer try/catch swallows it,
+                      // but the resulting "paths[1] argument" message is
+                      // gibberish to the model — it can't tell that the fix is
+                      // "send filePath". Validate explicitly and nudge.
+                      if (typeof fnArgs.filePath !== "string" || fnArgs.filePath.trim() === "") {
+                        toolResult = "Error: readFile requires a non-empty 'filePath' string argument (repo-relative). Call readFile again with {\"filePath\": \"src/path/to/file.ts\"}.";
+                        resultSummary = "blocked: missing filePath";
+                      } else {
                       // Path-traversal + symlink-escape + TOCTOU defense.
                       // safeReadFileSync resolves + opens with O_NOFOLLOW +
                       // reads in one atomic step, closing the window between
@@ -826,6 +838,7 @@ ${diffPayload}${deterministicPayload}`;
                           resultSummary = `Read ${truncLines.length} lines from ${fnArgs.filePath}`;
                         }
                       }
+                      } // close filePath-valid else
                     } else {
                       toolResult = "Error: Repository path not configured.";
                     }
