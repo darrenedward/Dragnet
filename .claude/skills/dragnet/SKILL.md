@@ -91,7 +91,7 @@ The `/api/repos/$REPO_ID/reindex` endpoint exists and accepts API keys, but the 
 | `/dragnet fix <n>` | **Interactive** fix loop: review → triage → wait for user → fix → re-review. Stops between iterations. |
 | `/dragnet fix <n> --auto [--loops N]` | Aggressive auto-fix loop: review → fix → re-review until rating = 10/10, 1 non-improving iteration, or N iterations elapsed (default N=5). The target is **10/10, not 8/10** — bailing at 8 hides the remaining 20%. Use when the user explicitly asks for hands-off grinding to the top of the scale. `--loops 3` caps at 3 iterations; `--loops 10` is the hard ceiling. |
 | `/dragnet fix <n> --once` | Single pass: fix all user-approved findings, commit, done. |
-| `/dragnet report` | Read the newest scan report at `.dragnet/reports/*.log`, triage every error into {code-fixable, config-fixable, environment-fixable, expected}, fix all code-fixable errors in one pass, re-test by re-scanning, render the new report. Stop after one iteration (no `--auto` mode yet). |
+| `/dragnet report` | Read the newest scan report at `.dragnet/reports/*.md`, triage every error into {code-fixable, config-fixable, environment-fixable, expected}, fix all code-fixable errors in one pass, re-test by re-scanning, render the new report. Stop after one iteration (no `--auto` mode yet). |
 | `/dragnet help` | Print this table. |
 
 Typical workflow: `/dragnet` → pick a PR → `/dragnet 1` → see rating → `/dragnet fix 1` → triage with user → fix → re-review. Debug a failed scan with `/dragnet report`.
@@ -269,12 +269,12 @@ The `message` field contains markdown; missing `reviewRun` field means no review
 
 ### `/dragnet report`
 
-Reads the newest scan report from `.dragnet/reports/*.log` and triages every error into one of four categories. Fixes only the code-fixable ones, then re-tests by re-scanning. One iteration per invocation.
+Reads the newest scan report from `.dragnet/reports/*.md` and triages every error into one of four categories. Fixes only the code-fixable ones, then re-tests by re-scanning. One iteration per invocation.
 
 1. **Resolve repo root + locate newest report.**
    ```bash
    ROOT=$(git rev-parse --show-toplevel)
-   NEWEST=$(ls -t "$ROOT/.dragnet/reports/"*.log 2>/dev/null | head -1)
+   NEWEST=$(ls -t "$ROOT/.dragnet/reports/"*.md 2>/dev/null | head -1)
    ```
    If `$NEWEST` is empty: tell the user *"No scan report found at `$ROOT/.dragnet/reports/`. Run a scan from the Dragnet UI first."* Stop. Do NOT call the API.
 2. **Read the report.** Use `Read` on `$NEWEST`. Lines look like `<ISO> [<level>] [<chunkId>?] <message>`.

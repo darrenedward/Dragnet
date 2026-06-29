@@ -416,7 +416,7 @@ async function logRun(
   } catch {
     // best-effort progress log
   }
-  // Disk mirror to <repoPath>/.dragnet/reports/<reviewRunId>.log so the
+  // Disk mirror to <repoPath>/.dragnet/reports/<reviewRunId>.md so the
   // /dragnet report skill command can read the scan's history from inside
   // the scanned repo. Best-effort — appendReport swallows fs errors.
   await appendReport(

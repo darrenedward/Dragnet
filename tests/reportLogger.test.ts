@@ -82,7 +82,7 @@ describe("appendReport", () => {
   it("creates the .dragnet/reports/ directory and writes the line", async () => {
     await appendReport(sandbox, "run-1", "first line");
 
-    const target = join(sandbox, REPORTS_DIR_NAME, "run-1.log");
+    const target = join(sandbox, REPORTS_DIR_NAME, "run-1.md");
     const contents = await readFile(target, "utf8");
     expect(contents).toBe("first line\n");
   });
@@ -93,7 +93,7 @@ describe("appendReport", () => {
     await appendReport(sandbox, "run-2", "line-c");
 
     const contents = await readFile(
-      join(sandbox, REPORTS_DIR_NAME, "run-2.log"),
+      join(sandbox, REPORTS_DIR_NAME, "run-2.md"),
       "utf8",
     );
     expect(contents).toBe("line-a\nline-b\nline-c\n");
@@ -103,8 +103,8 @@ describe("appendReport", () => {
     await appendReport(sandbox, "run-a", "alpha");
     await appendReport(sandbox, "run-b", "beta");
 
-    const a = await readFile(join(sandbox, REPORTS_DIR_NAME, "run-a.log"), "utf8");
-    const b = await readFile(join(sandbox, REPORTS_DIR_NAME, "run-b.log"), "utf8");
+    const a = await readFile(join(sandbox, REPORTS_DIR_NAME, "run-a.md"), "utf8");
+    const b = await readFile(join(sandbox, REPORTS_DIR_NAME, "run-b.md"), "utf8");
     expect(a).toBe("alpha\n");
     expect(b).toBe("beta\n");
   });
@@ -114,11 +114,11 @@ describe("appendReport", () => {
     // Dragnet install dir. See project_per_scan_artifacts_use_repo_path memory.
     await appendReport(sandbox, "run-x", "payload");
 
-    const inSandbox = await stat(join(sandbox, REPORTS_DIR_NAME, "run-x.log"));
+    const inSandbox = await stat(join(sandbox, REPORTS_DIR_NAME, "run-x.md"));
     expect(inSandbox.isFile()).toBe(true);
 
     // And NOT under process.cwd() (the Dragnet install's .dragnet/reports/).
-    const wrongPath = join(process.cwd(), REPORTS_DIR_NAME, "run-x.log");
+    const wrongPath = join(process.cwd(), REPORTS_DIR_NAME, "run-x.md");
     await expect(stat(wrongPath)).rejects.toThrow();
   });
 
@@ -126,7 +126,7 @@ describe("appendReport", () => {
     await appendReport("", "run-1", "nope");
     // Nothing to assert beyond no throw and no file written — empty repoPath
     // returns early. Verify by checking that no file was created in process.cwd().
-    const wrongPath = join(process.cwd(), REPORTS_DIR_NAME, "run-1.log");
+    const wrongPath = join(process.cwd(), REPORTS_DIR_NAME, "run-1.md");
     await expect(stat(wrongPath)).rejects.toThrow();
   });
 
@@ -134,7 +134,7 @@ describe("appendReport", () => {
     await appendReport(sandbox, "", "nope");
     // No file should exist in the sandbox's reports dir at all.
     const dir = join(sandbox, REPORTS_DIR_NAME);
-    await expect(stat(join(dir, ".log"))).rejects.toThrow();
+    await expect(stat(join(dir, ".md"))).rejects.toThrow();
   });
 
   it("swallows fs errors silently (best-effort contract)", async () => {
