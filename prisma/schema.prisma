@@ -196,6 +196,12 @@ model ReviewFinding {
   verificationNote   String?
   source             String?
   timestamp          String
+  fingerprint        String?     // symbol-anchored hash; stable across line shifts
+  firstSeenRunId     String?     // run that first detected this issue (plain ID, no FK to avoid cascade surprises)
+  lastSeenRunId      String?     // most recent run that still detected it
+  resolvedAtRunId    String?     // run where it stopped appearing AND code at anchor had changed
+  status             String?     // "open" | "resolved" | "wontfix"
+  sourceHashAtInsert String?     // snapshot of Symbol.sourceHash when this finding was last detected
   pullRequest        PullRequest @relation(fields: [prId], references: [id], onDelete: Cascade)
   reviewRun          ReviewRun?  @relation(fields: [reviewRunId], references: [id], onDelete: Cascade)
 
@@ -204,6 +210,7 @@ model ReviewFinding {
   @@index([prId])
   @@index([repoId])
   @@index([prId, reviewRunId])
+  @@index([prId, status])
   @@map("review_findings")
 }
 

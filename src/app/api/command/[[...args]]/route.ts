@@ -521,10 +521,12 @@ async function handleLegacyCommand(body: any, defRepo: string | null) {
         stale: latest.stale,
         rejectedCount: latest.rejectedCount,
         sizeProfile,
-        findingsCount: latest.findings.length,
-        findings: latest.findings.map((f: any) =>
-          `[${f.category} | ${f.severity}${f.exploitability ? ` | ${f.exploitability}` : ""}] ${f.filename}:${f.line} - ${f.explanation}`,
-        ),
+        findingsCount: latest.findings.filter((f: any) => f.status !== "resolved").length,
+        findings: latest.findings
+          .filter((f: any) => f.status !== "resolved")
+          .map((f: any) =>
+            `[${f.category} | ${f.severity}${f.exploitability ? ` | ${f.exploitability}` : ""}] ${f.filename}:${f.line} - ${f.explanation}`,
+          ),
       });
     }
     if (cmdName.endsWith("prlist") || cmdName.endsWith("list")) {

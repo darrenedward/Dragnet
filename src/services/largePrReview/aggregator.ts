@@ -1,5 +1,6 @@
 import { prisma } from "@/src/lib/prisma";
 import { buildFindingFingerprint, resolveSymbolsBatch } from "./fingerprint";
+import { reconcileFindingsAcrossRuns } from "./reconcile";
 import type { ReviewReliability } from "./types";
 
 export interface AggregatedReviewResult {
@@ -51,6 +52,7 @@ export async function aggregateResults(reviewRunId: string): Promise<AggregatedR
     : weightedRating(chunks);
 
   await dedupFindings(reviewRunId);
+  await reconcileFindingsAcrossRuns(run.prId, reviewRunId);
   const findings = await prisma.reviewFinding.findMany({
     where: {
       reviewRunId,
@@ -147,8 +149,8 @@ async function dedupFindings(reviewRunId: string): Promise<void> {
 
   const byFingerprint = new Map<string, typeof findings>();
   for (const finding of findings) {
-    const symbolId =
-      symbolMap.get(`${finding.filename}:${finding.line ?? "?"}`) ?? null;
+    const resolution = symbolMap.get(`${finding.filename}:${finding.line ?? "?"}`);
+    const symbolId = resolution?.symbolId ?? null;
     const fingerprint = buildFindingFingerprint({
       symbolId,
       filePath: finding.filename,

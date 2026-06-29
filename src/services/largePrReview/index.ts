@@ -3,5 +3,6 @@ export * from "./chunker";
 export * from "./fingerprint";
 export * from "./manifest";
 export * from "./orchestrator";
+export * from "./reconcile";
 export * from "./securitySensitive";
 export * from "./types";

@@ -51,24 +51,31 @@ export async function resolveSymbolForFinding(
   return symbol?.id ?? null;
 }
 
+export type SymbolResolution = {
+  symbolId: string | null;
+  sourceHash: string | null;
+};
+
 /**
  * Batched version of resolveSymbolForFinding. Fetches all symbols for the
  * given file paths in one query, then in-memory matches each point to its
  * tightest containing symbol. Avoids N+1 when deduping a run with many findings.
  *
- * Returns a Map keyed by `${filePath}:${line}` → symbolId | null.
+ * Returns a Map keyed by `${filePath}:${line}` → { symbolId, sourceHash }.
+ * `sourceHash` snapshots the symbol's content at resolve time so callers can
+ * detect "code at anchor changed since last run" without a separate query.
  */
 export async function resolveSymbolsBatch(
   repoId: string,
   points: Array<{ filePath: string; line: number | null }>,
-): Promise<Map<string, string | null>> {
-  const result = new Map<string, string | null>();
+): Promise<Map<string, SymbolResolution>> {
+  const result = new Map<string, SymbolResolution>();
   if (points.length === 0) return result;
 
   const filePaths = [...new Set(points.map((p) => p.filePath))];
   const symbols = await prisma.symbol.findMany({
     where: { repoId, filePath: { in: filePaths } },
-    select: { id: true, filePath: true, lineStart: true, lineEnd: true },
+    select: { id: true, sourceHash: true, filePath: true, lineStart: true, lineEnd: true },
   });
 
   const byFile = new Map<string, typeof symbols>();
@@ -81,7 +88,7 @@ export async function resolveSymbolsBatch(
   for (const point of points) {
     const mapKey = `${point.filePath}:${point.line ?? "?"}`;
     if (point.line == null) {
-      result.set(mapKey, null);
+      result.set(mapKey, { symbolId: null, sourceHash: null });
       continue;
     }
     const line = point.line;
@@ -90,11 +97,12 @@ export async function resolveSymbolsBatch(
       (s) => s.lineStart <= line && s.lineEnd >= line,
     );
     if (containing.length === 0) {
-      result.set(mapKey, null);
+      result.set(mapKey, { symbolId: null, sourceHash: null });
       continue;
     }
     containing.sort((a, b) => b.lineStart - a.lineStart);
-    result.set(mapKey, containing[0].id);
+    const winner = containing[0];
+    result.set(mapKey, { symbolId: winner.id, sourceHash: winner.sourceHash });
   }
 
   return result;

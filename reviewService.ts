@@ -7,6 +7,8 @@ import { verifyFindings, isDocumentationFile, type CandidateFinding } from "./sr
 import { completeReviewRun } from "./src/lib/reviewFreshness";
 import { safeReadFileSync, resolveSafePath } from "./src/lib/pathSafety";
 import { runDeterministicChecks, type DeterministicFinding } from "./src/services/deterministicChecks";
+import { buildFindingFingerprint, resolveSymbolsBatch } from "./src/services/largePrReview/fingerprint";
+import { reconcileFindingsAcrossRuns } from "./src/services/largePrReview/reconcile";
 
 export interface ScanResult {
   success: boolean;
@@ -1081,8 +1083,29 @@ ${diffPayload}${deterministicPayload}`;
     systemWarn = `LLM produced ${candidates.length} findings but all were rejected by the verifier (cited files missing, wrong, or documentation). Rating nulled — re-scan recommended.`;
   }
 
+  // Batch-resolve symbol IDs for all findings up front so each finding's
+  // fingerprint can anchor on Symbol.id (stable across line shifts) instead
+  // of positional filename:line. Single findMany — avoids N+1.
+  const symbolMapForFindings = await resolveSymbolsBatch(
+    pr.repoId,
+    withIds.map(({ finding }) => ({
+      filePath: finding.filename || "<unattributed>",
+      line: finding.line || null,
+    })),
+  );
+
   const findingsData = withIds.map(({ finding, id }) => {
     const v = verification.get(id);
+    const filename = finding.filename || "<unattributed>";
+    const line = finding.line || null;
+    const resolution = symbolMapForFindings.get(`${filename}:${line ?? "?"}`);
+    const symbolId = resolution?.symbolId ?? null;
+    const sourceHashAtInsert = resolution?.sourceHash ?? null;
+    const fingerprint = buildFindingFingerprint({
+      symbolId,
+      filePath: filename,
+      category: finding.category || "Style",
+    });
     return {
       id,
       prId: prId,
@@ -1093,8 +1116,8 @@ ${diffPayload}${deterministicPayload}`;
       severity: finding.severity || "suggestion",
       exploitability: finding.exploitability || "moderate",
       impact: finding.impact || "medium",
-      filename: finding.filename || "<unattributed>",
-      line: finding.line || 1,
+      filename,
+      line: line || 1,
       explanation: finding.explanation || "No explanation provided.",
       diffSuggestion: finding.diffSuggestion || null,
       evidenceChain: finding.evidenceChain ? JSON.stringify(finding.evidenceChain) : null,
@@ -1103,6 +1126,11 @@ ${diffPayload}${deterministicPayload}`;
       verificationNote: v?.note ?? null,
       source: finding.source ?? null,
       timestamp: new Date().toISOString(),
+      fingerprint,
+      firstSeenRunId: reviewRunId ?? null,
+      lastSeenRunId: reviewRunId ?? null,
+      status: "open",
+      sourceHashAtInsert,
     };
   });
 
@@ -1114,6 +1142,14 @@ ${diffPayload}${deterministicPayload}`;
   // completeReviewRun swallows errors. Await it so callers that immediately
   // refetch the latest completed run don't race the status write.
   if (reviewRunId && !reviewChunkId) {
+    // Reconcile against prior runs BEFORE completing so the skill sees a
+    // consistent view (matched findings deduped, resolved findings hidden).
+    // Best-effort: a reconcile failure shouldn't block run completion.
+    try {
+      await reconcileFindingsAcrossRuns(prId, reviewRunId);
+    } catch (err) {
+      console.error(`[scan] reconcileFindingsAcrossRuns failed for run ${reviewRunId}:`, err);
+    }
     await completeReviewRun(reviewRunId, {
       status: "completed",
       rating,
