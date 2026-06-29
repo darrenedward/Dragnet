@@ -9,6 +9,7 @@ import { acquireReviewLock, endReview } from "@/src/lib/reviewLocks";
 import { computePrSizeProfile } from "@/src/lib/prSizeProfile";
 import { readPrCommitCount } from "@/src/lib/prSizeProfile.server";
 import { assertTier, buildDiffManifest, runLargePrReview } from "@/src/services/largePrReview";
+import { readLimits } from "@/src/lib/prSizeConfig";
 import { authenticateSessionOrKey } from "@/src/lib/apiAuth";
 import {
   computeDiffHash,
@@ -103,7 +104,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
       files,
       readPrCommitCount(repoPath, baseBranch, pr.sourceBranch),
     );
-    const manifest = buildDiffManifest(files, sizeProfile.commitCount);
+    const limits = readLimits();
+    const manifest = buildDiffManifest(files, sizeProfile.commitCount, {
+      normalMaxLines: limits.normalMaxLines,
+      normalMaxCodeFiles: limits.normalMaxCodeFiles,
+      oversizedLines: limits.oversizedLines,
+      oversizedCodeFiles: limits.oversizedCodeFiles,
+    });
     const tier = assertTier(manifest);
 
     // Merged-branch short-circuit. If the branch is fully merged into base,

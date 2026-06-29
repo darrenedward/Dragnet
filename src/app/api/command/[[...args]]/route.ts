@@ -11,6 +11,7 @@ import { getChatChain } from "@/src/lib/llmClient";
 import { computePrSizeProfile, type PrSizeProfile } from "@/src/lib/prSizeProfile";
 import { readPrCommitCount } from "@/src/lib/prSizeProfile.server";
 import { assertTier, buildDiffManifest, runLargePrReview } from "@/src/services/largePrReview";
+import { readLimits } from "@/src/lib/prSizeConfig";
 import {
   computeDiffHash,
   computeReviewConfigHash,
@@ -45,7 +46,13 @@ async function startTrackedReview(pr: any, repo: any): Promise<
     }
   }
   const sizeProfile = await loadPrSizeProfile(pr, repo, files.length > 0 ? files : undefined);
-  const manifest = buildDiffManifest(files, sizeProfile.commitCount);
+  const limits = readLimits();
+  const manifest = buildDiffManifest(files, sizeProfile.commitCount, {
+    normalMaxLines: limits.normalMaxLines,
+    normalMaxCodeFiles: limits.normalMaxCodeFiles,
+    oversizedLines: limits.oversizedLines,
+    oversizedCodeFiles: limits.oversizedCodeFiles,
+  });
   const tier = assertTier(manifest);
   const diffHash = computeDiffHash(files);
   const configHash = chatChain.length > 0

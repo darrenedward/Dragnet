@@ -10,6 +10,7 @@ import { acquireReviewLock, endReview } from "@/src/lib/reviewLocks";
 import { computePrSizeProfile } from "@/src/lib/prSizeProfile";
 import { readPrCommitCount } from "@/src/lib/prSizeProfile.server";
 import { assertTier, buildDiffManifest, runLargePrReview } from "@/src/services/largePrReview";
+import { readLimits } from "@/src/lib/prSizeConfig";
 import {
   computeDiffHash,
   computeReviewConfigHash,
@@ -99,7 +100,13 @@ export async function POST(req: Request) {
       files,
       readPrCommitCount(repo.path, baseBranch, pr.sourceBranch),
     );
-    const manifest = buildDiffManifest(files, sizeProfile.commitCount);
+    const limits = readLimits();
+    const manifest = buildDiffManifest(files, sizeProfile.commitCount, {
+      normalMaxLines: limits.normalMaxLines,
+      normalMaxCodeFiles: limits.normalMaxCodeFiles,
+      oversizedLines: limits.oversizedLines,
+      oversizedCodeFiles: limits.oversizedCodeFiles,
+    });
     const tier = assertTier(manifest);
 
     // Merged-branch short-circuit. Pre-push shouldn't fire for a merged

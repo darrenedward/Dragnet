@@ -29,4 +29,42 @@ describe("largePrReview manifest", () => {
     expect(manifest.lockFileCount).toBe(1);
     expect(manifest.tier).toBe("normal");
   });
+
+  it("honors TierThresholds overrides from .dragnet/review-limits.json", () => {
+    // 3500-line PR is "oversized" under defaults (>3000), but "grouped"
+    // when the user has bumped oversizedLines to 5000.
+    const files = [{ filename: "src/a.ts", additions: 3500, deletions: 0 }];
+    expect(buildDiffManifest(files).tier).toBe("oversized");
+    expect(
+      buildDiffManifest(files, undefined, {
+        normalMaxLines: 800,
+        oversizedLines: 5000,
+      }).tier,
+    ).toBe("grouped");
+    // Same input is "normal" if the user bumped normalMaxLines above it.
+    expect(
+      buildDiffManifest(files, undefined, {
+        normalMaxLines: 4000,
+        oversizedLines: 5000,
+      }).tier,
+    ).toBe("normal");
+  });
+
+  it("honors file-count overrides", () => {
+    // 60 code files: oversized by default file cap (100) is not exceeded,
+    // but normal (40) is — tier is grouped. Under a custom oversized=50,
+    // it tips to oversized.
+    const files = Array.from({ length: 60 }, (_, i) => ({
+      filename: `src/file${i}.ts`,
+      additions: 5,
+      deletions: 0,
+    }));
+    expect(buildDiffManifest(files).tier).toBe("grouped");
+    expect(
+      buildDiffManifest(files, undefined, {
+        normalMaxCodeFiles: 40,
+        oversizedCodeFiles: 50,
+      }).tier,
+    ).toBe("oversized");
+  });
 });

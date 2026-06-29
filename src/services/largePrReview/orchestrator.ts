@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { prisma } from "@/src/lib/prisma";
+import { readLimits } from "@/src/lib/prSizeConfig";
 import { runPrScan, type ScanResult, type PrManifestEntry } from "@/reviewService";
 import { aggregateResults } from "./aggregator";
 import { chunkDiff } from "./chunker";
@@ -49,11 +50,21 @@ export async function runLargePrReview({
     where: { id: run.repoId },
     select: { securitySensitivePaths: true },
   });
-  const manifest = buildDiffManifest(files);
+  const limits = readLimits();
+  const manifest = buildDiffManifest(files, undefined, {
+    normalMaxLines: limits.normalMaxLines,
+    normalMaxCodeFiles: limits.normalMaxCodeFiles,
+    oversizedLines: limits.oversizedLines,
+    oversizedCodeFiles: limits.oversizedCodeFiles,
+  });
   const tierResult = assertTier(manifest);
   const effectiveTier = tier ?? tierResult.tier;
   const effectiveWarning = warning ?? ("message" in tierResult ? tierResult.message : null);
-  const plans = chunkDiff(manifest, repo?.securitySensitivePaths ?? []);
+  const plans = chunkDiff(
+    manifest,
+    repo?.securitySensitivePaths ?? [],
+    { chunkLineCap: limits.chunkLineCap, minUsefulChunkLines: limits.minUsefulChunkLines },
+  );
 
   await logRun(prId, reviewRunId, `Large PR Mode activated: ${plans.length} chunk${plans.length === 1 ? "" : "s"} (${manifest.codeLines.toLocaleString()} code lines)`, "info");
   if (effectiveWarning) await logRun(prId, reviewRunId, effectiveWarning, "warn");

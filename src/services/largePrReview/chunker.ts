@@ -14,6 +14,17 @@ export const CHUNK_LINE_CAP = 600;
 export const MIN_USEFUL_CHUNK_LINES = 100;
 
 /**
+ * Runtime overrides for chunk sizing. Callers pass these when they
+ * want to use values from `.dragnet/review-limits.json` instead of
+ * the constants above. Omitted fields fall back to the constants —
+ * so existing tests that don't pass options get the old behavior.
+ */
+export interface ChunkOptions {
+  chunkLineCap?: number;
+  minUsefulChunkLines?: number;
+}
+
+/**
  * Build a chunk plan from a diff manifest.
  *
  * Algorithm: sort + greedy fill.
@@ -26,8 +37,8 @@ export const MIN_USEFUL_CHUNK_LINES = 100;
  *      but with the crucial difference that spillover is allowed:
  *      a tiny file can ride along with a chunk that's already
  *      partially filled by its package-mates.
- *   3. Walk files greedily, filling each chunk up to CHUNK_LINE_CAP.
- *      A single file > CAP gets its own chunk (preserves existing
+ *   3. Walk files greedily, filling each chunk up to chunkLineCap.
+ *      A single file > cap gets its own chunk (preserves existing
  *      edge-case behavior for very large files).
  *
  * Previous implementation keyed chunks by `packageKey::typeBucket`,
@@ -44,7 +55,10 @@ export const MIN_USEFUL_CHUNK_LINES = 100;
 export function chunkDiff(
   manifest: DiffManifest,
   repoConfiguredSecurityPaths: string[] = [],
+  options: ChunkOptions = {},
 ): ChunkPlan[] {
+  const cap = options.chunkLineCap ?? CHUNK_LINE_CAP;
+  const minUseful = options.minUsefulChunkLines ?? MIN_USEFUL_CHUNK_LINES;
   const codeFiles = manifest.files
     .filter((file) => file.fileClass === "code")
     .sort(compareFiles);
@@ -54,7 +68,7 @@ export function chunkDiff(
   let currentLines = 0;
 
   for (const file of codeFiles) {
-    if (file.lineCount > CHUNK_LINE_CAP) {
+    if (file.lineCount > cap) {
       // Oversized single file — flush current then give it its own chunk.
       if (current.length > 0) {
         groups.push(current);
@@ -64,7 +78,7 @@ export function chunkDiff(
       groups.push([file]);
       continue;
     }
-    if (current.length > 0 && currentLines + file.lineCount > CHUNK_LINE_CAP) {
+    if (current.length > 0 && currentLines + file.lineCount > cap) {
       groups.push(current);
       current = [];
       currentLines = 0;
@@ -76,7 +90,7 @@ export function chunkDiff(
 
   const plans = groups.map((group, i) => toPlan(i + 1, group, repoConfiguredSecurityPaths));
 
-  const issues = verifyChunkPlan(plans, codeFiles);
+  const issues = verifyChunkPlan(plans, codeFiles, options);
   if (issues.length > 0) {
     console.warn(`[chunker] plan invariants violated: ${issues.join("; ")}`);
   }
@@ -90,10 +104,10 @@ export function chunkDiff(
  *
  * Invariants:
  *   1. Conservation: every input code file appears in exactly one chunk.
- *   2. Cap enforcement: no chunk exceeds CHUNK_LINE_CAP, unless the
+ *   2. Cap enforcement: no chunk exceeds chunkLineCap, unless the
  *      chunk contains a single oversized file.
  *   3. No waste: no chunk (except possibly the last, or a single
- *      oversized file) is smaller than MIN_USEFUL_CHUNK_LINES.
+ *      oversized file) is smaller than minUsefulChunkLines.
  *
  * Called at runtime from chunkDiff for dev-mode warnings. Used in
  * tests to lock in expectations and catch regressions.
@@ -101,7 +115,10 @@ export function chunkDiff(
 export function verifyChunkPlan(
   plans: ChunkPlan[],
   codeFiles: FileClassification[],
+  options: ChunkOptions = {},
 ): string[] {
+  const cap = options.chunkLineCap ?? CHUNK_LINE_CAP;
+  const minUseful = options.minUsefulChunkLines ?? MIN_USEFUL_CHUNK_LINES;
   const issues: string[] = [];
 
   // 1) Conservation — every code file appears exactly once.
@@ -128,21 +145,21 @@ export function verifyChunkPlan(
 
   // 2) Cap enforcement.
   for (const plan of plans) {
-    if (plan.lineCount <= CHUNK_LINE_CAP) continue;
+    if (plan.lineCount <= cap) continue;
     if (plan.files.length === 1) continue; // oversized single file — OK
     issues.push(
-      `chunk ${plan.id} exceeds cap: ${plan.lineCount} > ${CHUNK_LINE_CAP} across ${plan.files.length} files`,
+      `chunk ${plan.id} exceeds cap: ${plan.lineCount} > ${cap} across ${plan.files.length} files`,
     );
   }
 
   // 3) No tiny chunks (except last + single oversized).
   for (let i = 0; i < plans.length; i++) {
     const plan = plans[i];
-    if (plan.lineCount >= MIN_USEFUL_CHUNK_LINES) continue;
+    if (plan.lineCount >= minUseful) continue;
     if (i === plans.length - 1) continue; // last chunk is the remainder
-    if (plan.files.length === 1 && plan.files[0].lineCount > CHUNK_LINE_CAP) continue;
+    if (plan.files.length === 1 && plan.files[0].lineCount > cap) continue;
     issues.push(
-      `chunk ${plan.id} is wastefully small: ${plan.lineCount} lines (cap=${CHUNK_LINE_CAP}, min=${MIN_USEFUL_CHUNK_LINES})`,
+      `chunk ${plan.id} is wastefully small: ${plan.lineCount} lines (cap=${cap}, min=${minUseful})`,
     );
   }
 

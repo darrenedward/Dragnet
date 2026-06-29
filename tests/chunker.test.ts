@@ -282,3 +282,70 @@ describe("chunker constants", () => {
   it("CHUNK_LINE_CAP is 600", () => expect(CHUNK_LINE_CAP).toBe(600));
   it("MIN_USEFUL_CHUNK_LINES is 100", () => expect(MIN_USEFUL_CHUNK_LINES).toBe(100));
 });
+
+/**
+ * Configurable cap — when a caller passes ChunkOptions, the chunker
+ * honors them. Without options, the constants are the default (locked
+ * by the tests above). This locks in the wire-through from
+ * `.dragnet/review-limits.json` → orchestrator → chunker.
+ */
+describe("chunker honors ChunkOptions overrides", () => {
+  function manifestOf(files: Array<{ filename: string; additions: number; deletions?: number }>) {
+    return buildDiffManifest(
+      files.map((f) => ({
+        filename: f.filename,
+        additions: f.additions,
+        deletions: f.deletions ?? 0,
+      })) as ReviewFileInput[],
+    );
+  }
+
+  it("bigger cap fits the same files into fewer chunks", () => {
+    const files = [
+      { filename: "src/a.ts", additions: 250 },
+      { filename: "src/b.ts", additions: 250 },
+      { filename: "src/c.ts", additions: 250 },
+    ];
+    // Default 600-line cap: first two files fit (500), third overflows → 2 chunks.
+    const defaultPlans = chunkDiff(manifestOf(files));
+    expect(defaultPlans).toHaveLength(2);
+    // 1500-line cap: everything fits in one chunk.
+    const bigCapPlans = chunkDiff(manifestOf(files), [], { chunkLineCap: 1500 });
+    expect(bigCapPlans).toHaveLength(1);
+    expect(bigCapPlans[0].lineCount).toBe(750);
+  });
+
+  it("smaller cap splits more aggressively", () => {
+    const files = [
+      { filename: "src/a.ts", additions: 200 },
+      { filename: "src/b.ts", additions: 200 },
+    ];
+    // 300-line cap: each file gets its own chunk.
+    const plans = chunkDiff(manifestOf(files), [], { chunkLineCap: 300 });
+    expect(plans).toHaveLength(2);
+  });
+
+  it("verifyChunkPlan enforces the overridden cap, not the constant", () => {
+    const files = [
+      { filename: "src/a.ts", additions: 250 },
+      { filename: "src/b.ts", additions: 250 },
+    ];
+    const manifest = manifestOf(files);
+    // Force a plan where two 250-line files share a chunk — legal under
+    // default 600 cap, illegal under a 300 cap.
+    const plan = {
+      id: "chunk-001",
+      label: "src",
+      files: manifest.files.filter((f) => f.fileClass === "code"),
+      filePaths: ["src/a.ts", "src/b.ts"],
+      lineCount: 500,
+      touchesSecuritySensitive: false,
+    };
+    const issues = verifyChunkPlan(
+      [plan],
+      manifest.files.filter((f) => f.fileClass === "code"),
+      { chunkLineCap: 300 },
+    );
+    expect(issues.some((s) => s.includes("exceeds cap: 500 > 300"))).toBe(true);
+  });
+});

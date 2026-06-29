@@ -14,6 +14,18 @@ export const NORMAL_MAX_CODE_FILES = 40;
 export const OVERSIZED_LINES = 3000;
 export const OVERSIZED_CODE_FILES = 100;
 
+/**
+ * Runtime overrides for tier thresholds. Callers pass these when they
+ * want values from `.dragnet/review-limits.json` instead of the
+ * constants. Omitted fields fall back to the constants.
+ */
+export interface TierThresholds {
+  normalMaxLines?: number;
+  normalMaxCodeFiles?: number;
+  oversizedLines?: number;
+  oversizedCodeFiles?: number;
+}
+
 const LOCKFILE_NAMES = new Set([
   "bun.lock",
   "bun.lockb",
@@ -30,7 +42,11 @@ const LOCKFILE_NAMES = new Set([
 const DOC_EXTENSIONS = new Set([".adoc", ".markdown", ".md", ".mdx", ".rst", ".txt"]);
 const CODE_WORKFLOW_EXTENSIONS = new Set([".yml", ".yaml"]);
 
-export function buildDiffManifest(files: ReviewFileInput[], commitCount?: number | null): DiffManifest {
+export function buildDiffManifest(
+  files: ReviewFileInput[],
+  commitCount?: number | null,
+  thresholds?: TierThresholds,
+): DiffManifest {
   try {
     const classifications = files
       .map(classifyFile)
@@ -38,7 +54,7 @@ export function buildDiffManifest(files: ReviewFileInput[], commitCount?: number
     const totalLines = classifications.reduce((sum, f) => sum + f.lineCount, 0);
     const codeFiles = classifications.filter((f) => f.fileClass === "code");
     const codeLines = codeFiles.reduce((sum, f) => sum + f.lineCount, 0);
-    const tierResult = assertTierValues(codeLines, codeFiles.length);
+    const tierResult = assertTierValues(codeLines, codeFiles.length, thresholds);
     return {
       files: classifications,
       totalLines,
@@ -69,8 +85,8 @@ export function buildDiffManifest(files: ReviewFileInput[], commitCount?: number
   }
 }
 
-export function assertTier(manifest: DiffManifest): TierResult {
-  return assertTierValues(manifest.codeLines, manifest.codeFileCount);
+export function assertTier(manifest: DiffManifest, thresholds?: TierThresholds): TierResult {
+  return assertTierValues(manifest.codeLines, manifest.codeFileCount, thresholds);
 }
 
 export function classifyFile(file: ReviewFileInput): FileClassification {
@@ -141,15 +157,23 @@ export function typeBucket(filename: string): string {
   return ext ? ext.slice(1) : "other";
 }
 
-function assertTierValues(codeLines: number, codeFileCount: number): TierResult {
-  if (codeLines > OVERSIZED_LINES || codeFileCount > OVERSIZED_CODE_FILES) {
+function assertTierValues(
+  codeLines: number,
+  codeFileCount: number,
+  thresholds?: TierThresholds,
+): TierResult {
+  const oversizedLines = thresholds?.oversizedLines ?? OVERSIZED_LINES;
+  const oversizedCodeFiles = thresholds?.oversizedCodeFiles ?? OVERSIZED_CODE_FILES;
+  const normalMaxLines = thresholds?.normalMaxLines ?? NORMAL_MAX_LINES;
+  const normalMaxCodeFiles = thresholds?.normalMaxCodeFiles ?? NORMAL_MAX_CODE_FILES;
+  if (codeLines > oversizedLines || codeFileCount > oversizedCodeFiles) {
     return {
       ok: true,
       tier: "oversized",
       message: `Oversized PR (${codeLines.toLocaleString()} code lines, ${codeFileCount.toLocaleString()} code files). Split recommended; review will run best-effort in chunks.`,
     };
   }
-  if (codeLines > NORMAL_MAX_LINES || codeFileCount > NORMAL_MAX_CODE_FILES) {
+  if (codeLines > normalMaxLines || codeFileCount > normalMaxCodeFiles) {
     return { ok: true, tier: "grouped" };
   }
   return { ok: true, tier: "normal" };
