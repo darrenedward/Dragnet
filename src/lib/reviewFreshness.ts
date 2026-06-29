@@ -34,8 +34,12 @@ import { prisma } from "./prisma";
  *
  * Layer 2 (assertNoActiveScan) reaps on demand when a new scan would trip
  * on the orphan; Layer 3 (src/services/runReaper.ts) reaps on cold start.
+ *
+ * 5 min (was 30): dev-server restarts are common in this project, and a
+ * 30-min wait before the UI's Force-restart path becomes useful was too
+ * patient. Users reported "stuck scan, can't restart" inside that window.
  */
-export const SCAN_STALE_AFTER_MS = 30 * 60 * 1000;
+export const SCAN_STALE_AFTER_MS = 5 * 60 * 1000;
 
 /** Minimal shape of what refreshPrFiles returns. Avoids a circular import. */
 export interface DiffHashInput {

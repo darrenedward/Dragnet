@@ -31,7 +31,7 @@ interface ScanResult {
 interface Props {
   activePR: PullRequest | undefined;
   isScanning: boolean;
-  onTriggerScan: () => void;
+  onTriggerScan: (opts?: { force?: boolean }) => void;
   onExportMarkdown: (format: "file" | "download") => void;
   exportStatus: { kind: "file" | "download"; success: boolean; message: string } | null;
   scanResult: ScanResult | null;
@@ -206,7 +206,7 @@ function PrHeader({
 }: {
   activePR: PullRequest | undefined;
   isScanning: boolean;
-  onTriggerScan: () => void;
+  onTriggerScan: (opts?: { force?: boolean }) => void;
   onExportMarkdown: (format: "file" | "download") => void;
   exportStatus: { kind: "file" | "download"; success: boolean; message: string } | null;
   hasFindings: boolean;
@@ -270,7 +270,7 @@ function PrHeader({
         <div className="flex gap-2">
           <button
             disabled={scanning || !repoIndexedAt}
-            onClick={onTriggerScan}
+            onClick={() => onTriggerScan()}
             title={
               !repoIndexedAt
                 ? "Index the codebase first — reviews without an index produce only diff-only guesses."
@@ -285,6 +285,16 @@ function PrHeader({
             <Zap size={14} className="fill-black" />
             <span>{scanning ? "AI Pipeline Working..." : !repoIndexedAt ? "Index Required" : "Trigger AI Review Scan"}</span>
           </button>
+          {scanning && (
+            <button
+              onClick={() => onTriggerScan({ force: true })}
+              title="Reap the current run (orphaned or stuck) and start a fresh scan. Use when a scan appears hung after a dev-server restart."
+              className="px-3 py-2 bg-rose-500/15 border border-rose-500/30 text-rose-300 hover:bg-rose-500/25 text-xs font-mono font-bold rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer"
+            >
+              <AlertTriangle size={13} />
+              <span>Force Restart</span>
+            </button>
+          )}
           {hasFindings && (
             <>
               <button

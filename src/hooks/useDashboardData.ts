@@ -480,11 +480,12 @@ export function useDashboardData() {
   };
 
   // ===== PR scan =====
-  const handleTriggerPrScan = async () => {
+  const handleTriggerPrScan = async (opts?: { force?: boolean }) => {
     if (!selectedPrId) return;
     const scanningPrId = selectedPrId;
     const scanningRepoId = selectedRepoId;
-    console.log(`[scan] handleTriggerPrScan: starting scan for prId=${scanningPrId}`);
+    const force = opts?.force === true;
+    console.log(`[scan] handleTriggerPrScan: starting scan for prId=${scanningPrId}${force ? " (force=true)" : ""}`);
     scanInFlightRef.current = true;
     setIsScanning(true);
     setScanResult(null);
@@ -515,8 +516,9 @@ export function useDashboardData() {
     const activeRepoName = repos.find((r) => r.id === scanningRepoId)?.name || scanningRepoId;
 
     try {
-      console.log(`[scan] handleTriggerPrScan: POST /api/prs/${scanningPrId}/scan`);
-      const res = await fetchJson(`/api/prs/${scanningPrId}/scan`, {
+      const url = `/api/prs/${scanningPrId}/scan${force ? "?force=true" : ""}`;
+      console.log(`[scan] handleTriggerPrScan: POST ${url}`);
+      const res = await fetchJson(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -553,6 +555,22 @@ export function useDashboardData() {
           result.message ||
             "Codebase not indexed. Open the Codebase AST graph tab and run the indexer before reviewing.",
         );
+      } else if (res.status === 409 && result.error === "SCAN_IN_PROGRESS") {
+        // Active or stale-but-not-yet-reaped scan is holding the lock.
+        // If the user didn't already opt into force, offer it; otherwise
+        // surface the message verbatim (race: another scan grabbed the
+        // lock between our force=true POST and acquireReviewLock).
+        setPrs((prev) =>
+          prev.map((p) => (p.id === scanningPrId ? { ...p, status: "In Progress" } : p)),
+        );
+        const msg =
+          result.message ||
+          `Scan already in progress (runId=${result.runId?.slice(0, 8) ?? "?"}).`;
+        if (force) {
+          alert(msg);
+        } else if (window.confirm(`${msg}\n\nForce restart? This will reap the existing run and start a fresh one.`)) {
+          await handleTriggerPrScan({ force: true });
+        }
       } else {
         setPrs((prev) =>
           prev.map((p) => (p.id === scanningPrId ? { ...p, status: "Failed" } : p)),
