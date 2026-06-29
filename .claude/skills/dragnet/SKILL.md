@@ -2,6 +2,7 @@
 name: dragnet
 description: Review code through the Dragnet engine. Use when the user asks to review their branch, check code for bugs, run a code review, fix issues found by review, or invokes /dragnet.
 user-invocable: true
+allowed-tools: Bash, Read, Grep, Glob
 ---
 
 # Dragnet (`/dragnet`)
