@@ -1,5 +1,6 @@
 export * from "./aggregator";
 export * from "./chunker";
+export * from "./fingerprint";
 export * from "./manifest";
 export * from "./orchestrator";
 export * from "./securitySensitive";

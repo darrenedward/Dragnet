@@ -1,4 +1,5 @@
 import { prisma } from "@/src/lib/prisma";
+import { buildFindingFingerprint, resolveSymbolsBatch } from "./fingerprint";
 import type { ReviewReliability } from "./types";
 
 export interface AggregatedReviewResult {
@@ -128,6 +129,7 @@ async function dedupFindings(reviewRunId: string): Promise<void> {
     orderBy: [{ filename: "asc" }, { line: "asc" }, { timestamp: "asc" }],
     select: {
       id: true,
+      repoId: true,
       filename: true,
       line: true,
       category: true,
@@ -135,14 +137,31 @@ async function dedupFindings(reviewRunId: string): Promise<void> {
       timestamp: true,
     },
   });
-  const byKey = new Map<string, typeof findings>();
+  if (findings.length === 0) return;
+
+  const repoId = findings[0].repoId;
+  const symbolMap = await resolveSymbolsBatch(
+    repoId,
+    findings.map((f) => ({ filePath: f.filename, line: f.line })),
+  );
+
+  const byFingerprint = new Map<string, typeof findings>();
   for (const finding of findings) {
-    const key = `${finding.filename}:${finding.line ?? "?"}:${finding.category}`;
-    byKey.set(key, [...(byKey.get(key) || []), finding]);
+    const symbolId =
+      symbolMap.get(`${finding.filename}:${finding.line ?? "?"}`) ?? null;
+    const fingerprint = buildFindingFingerprint({
+      symbolId,
+      filePath: finding.filename,
+      category: finding.category,
+    });
+    byFingerprint.set(fingerprint, [
+      ...(byFingerprint.get(fingerprint) || []),
+      finding,
+    ]);
   }
 
   const duplicateIds: string[] = [];
-  for (const group of byKey.values()) {
+  for (const group of byFingerprint.values()) {
     if (group.length < 2) continue;
     const [keep, ...dupes] = [...group].sort((a, b) => {
       const confidenceDelta = (b.confidence ?? -1) - (a.confidence ?? -1);
