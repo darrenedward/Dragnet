@@ -64,6 +64,10 @@ export async function PUT(req: Request) {
         apiKey,
         chatModel: p.chatModel,
         embeddingModel: p.embeddingModel,
+        // Optional — keep legacy presets unchanged when the field is absent.
+        ...(typeof p.maxIterations === "number"
+          ? { maxIterations: Math.floor(p.maxIterations) }
+          : {}),
       };
     });
 

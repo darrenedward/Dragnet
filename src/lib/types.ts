@@ -116,6 +116,8 @@ export interface LlmPresetView {
   hasApiKey: boolean;
   chatModel: string;
   embeddingModel: string;
+  /** Agentic-loop cap for this preset's chat model. Undefined = server default (16). */
+  maxIterations?: number;
 }
 
 export interface LlmPresetsState {

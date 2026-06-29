@@ -1,7 +1,7 @@
 "use client";
 
 import { Eye, EyeOff, RefreshCw, Terminal } from "lucide-react";
-import { DEFAULT_ENDPOINT, type WorkingPreset } from "./shared";
+import { DEFAULT_ENDPOINT, MAX_ITERATIONS_BOUNDS, type WorkingPreset } from "./shared";
 
 /**
  * Provider-level config: name, endpoint, api key, and a Fetch Models
@@ -65,6 +65,32 @@ export default function ProviderConfig({
           </div>
         </FieldLabel>
       </div>
+
+      <FieldLabel label="Max Iterations (agentic loop cap)">
+        <input
+          type="number"
+          min={MAX_ITERATIONS_BOUNDS.min}
+          max={MAX_ITERATIONS_BOUNDS.max}
+          step={1}
+          value={preset.maxIterations ?? 16}
+          onChange={(e) => {
+            const raw = e.target.value;
+            if (raw === "") {
+              onUpdate({ maxIterations: undefined });
+              return;
+            }
+            const n = Number(raw);
+            if (Number.isFinite(n)) {
+              onUpdate({ maxIterations: Math.floor(n) });
+            }
+          }}
+          placeholder="16 (server default)"
+          className="w-full bg-slate-900 border border-white/10 rounded-lg px-3 py-2 text-xs text-slate-100 font-mono focus:border-cyan-500 outline-none"
+        />
+        <p className="text-[10px] text-slate-500 mt-1 font-mono">
+          {MAX_ITERATIONS_BOUNDS.min}–{MAX_ITERATIONS_BOUNDS.max} tool calls per review. Lower for fast models (GPT-5: 8), higher for reasoning models (NVIDIA Nemotron: 10).
+        </p>
+      </FieldLabel>
 
       <div className="flex items-center gap-3">
         <button

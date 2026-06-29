@@ -631,7 +631,7 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
   if (chain.length === 0) {
     systemWarn = "No LLM endpoint or chat model configured. Open the LLM Settings tab and configure at least one provider.";
   } else {
-    providerLoop: for (const { client, model, name } of chain) {
+    providerLoop: for (const { client, model, name, maxIterations } of chain) {
       usedModel = model;
       try {
         const initialPrompt = `Your mission: audit this PR with maximum prejudice. Assume the author is hiding something. Trace every changed function across the codebase — check its callers, its callees, its error handling, its edge cases. Use \`searchCodebase\`, \`getCallers\`, and \`findSimilar\` to validate that nothing is overlooked.
@@ -655,11 +655,10 @@ ${diffPayload}${deterministicPayload}`;
         let loopCount = 0;
         let lastHadToolCalls = false;
         let consecutiveEmptyResponses = 0;
-        // Iteration budget. 8 was too tight — observed Minimax-M3 spend all
-        // 8 iterations exploring files (readFile × 7) and never reach
-        // submitReview. 16 leaves headroom for exploration + synthesis on
-        // mid-tier models; strong models (Claude/GPT-4) finish in 3-5.
-        const ITERATION_BUDGET = 16;
+        // Iteration budget comes from the active chat preset (per-preset
+        // maxIterations field, default 16). Strong models can be capped at
+        // 8 to save tokens; weaker models keep the full 16.
+        const ITERATION_BUDGET = maxIterations;
 
         while (loopCount < ITERATION_BUDGET && !finalReview) {
           loopCount++;

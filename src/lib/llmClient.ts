@@ -6,6 +6,7 @@ import {
   getFallbackEmbeddingPreset,
   apiKeyHash,
   migrateFromEnvLocalIfNeeded,
+  resolveMaxIterations,
   type Preset,
 } from "@/src/lib/llmPresets";
 
@@ -110,6 +111,12 @@ export interface ChainEntry {
   client: OpenAI;
   model: string;
   name: string;
+  /**
+   * Agentic-loop iteration cap for this provider. Resolved from the
+   * preset's optional maxIterations field; falls back to
+   * DEFAULT_MAX_ITERATIONS when absent.
+   */
+  maxIterations: number;
 }
 
 /**
@@ -128,13 +135,23 @@ export function getChatChain(): ChainEntry[] {
 
   const primary = getPrimaryChatPreset();
   if (primary && primary.chatModel) {
-    chain.push({ client: clientFor(primary), model: primary.chatModel, name: primary.name });
+    chain.push({
+      client: clientFor(primary),
+      model: primary.chatModel,
+      name: primary.name,
+      maxIterations: resolveMaxIterations(primary),
+    });
     seen.add(primary.id);
   }
 
   const fallback = getFallbackChatPreset();
   if (fallback && fallback.chatModel && !seen.has(fallback.id)) {
-    chain.push({ client: clientFor(fallback), model: fallback.chatModel, name: fallback.name });
+    chain.push({
+      client: clientFor(fallback),
+      model: fallback.chatModel,
+      name: fallback.name,
+      maxIterations: resolveMaxIterations(fallback),
+    });
   }
 
   return chain;
@@ -154,6 +171,7 @@ export function getEmbeddingChain(): ChainEntry[] {
       client: clientFor(primary),
       model: primary.embeddingModel,
       name: primary.name,
+      maxIterations: resolveMaxIterations(primary),
     });
     seen.add(primary.id);
   }
@@ -164,6 +182,7 @@ export function getEmbeddingChain(): ChainEntry[] {
       client: clientFor(fallback),
       model: fallback.embeddingModel,
       name: fallback.name,
+      maxIterations: resolveMaxIterations(fallback),
     });
   }
 

@@ -34,6 +34,33 @@ export interface Preset {
   apiKey: string;
   chatModel: string;
   embeddingModel: string;
+  /**
+   * Agentic-loop iteration cap for this preset's chat model. Strong
+   * models (Claude/GPT-4) converge in 3–5 iterations; weaker models
+   * may use the full 16. Optional — defaults to 16 when absent for
+   * back-compat with presets written before this field existed.
+   */
+  maxIterations?: number;
+}
+
+/** Default iteration budget when a preset doesn't specify one. */
+export const DEFAULT_MAX_ITERATIONS = 16;
+
+/** Bounds for the per-preset maxIterations field. */
+export const MAX_ITERATIONS_BOUNDS = { min: 4, max: 32 } as const;
+
+/**
+ * Resolve a preset's effective iteration cap. Falls back to
+ * DEFAULT_MAX_ITERATIONS when the field is absent or out of bounds.
+ */
+export function resolveMaxIterations(preset: Pick<Preset, "maxIterations">): number {
+  const v = preset.maxIterations;
+  if (typeof v !== "number" || !Number.isFinite(v)) return DEFAULT_MAX_ITERATIONS;
+  const clamped = Math.floor(v);
+  if (clamped < MAX_ITERATIONS_BOUNDS.min || clamped > MAX_ITERATIONS_BOUNDS.max) {
+    return DEFAULT_MAX_ITERATIONS;
+  }
+  return clamped;
 }
 
 export interface PresetView {
@@ -49,6 +76,8 @@ export interface PresetView {
   hasApiKey: boolean;
   chatModel: string;
   embeddingModel: string;
+  /** Agentic-loop cap; absent on legacy presets (defaults to 16). */
+  maxIterations?: number;
 }
 
 export interface PresetsFile {
@@ -215,6 +244,7 @@ function toView(p: Preset): PresetView {
     hasApiKey: Boolean(p.apiKey),
     chatModel: p.chatModel,
     embeddingModel: p.embeddingModel,
+    maxIterations: p.maxIterations,
   };
 }
 
@@ -449,6 +479,17 @@ export function validatePresetsInput(input: unknown): asserts input is PresetsFi
     if (typeof preset.apiKey !== "string") throw new Error("preset.apiKey must be a string.");
     if (typeof preset.chatModel !== "string") throw new Error("preset.chatModel must be a string.");
     if (typeof preset.embeddingModel !== "string") throw new Error("preset.embeddingModel must be a string.");
+    if (
+      preset.maxIterations !== undefined &&
+      (typeof preset.maxIterations !== "number" ||
+        !Number.isFinite(preset.maxIterations) ||
+        preset.maxIterations < MAX_ITERATIONS_BOUNDS.min ||
+        preset.maxIterations > MAX_ITERATIONS_BOUNDS.max)
+    ) {
+      throw new Error(
+        `preset.maxIterations must be between ${MAX_ITERATIONS_BOUNDS.min} and ${MAX_ITERATIONS_BOUNDS.max} when provided.`,
+      );
+    }
   }
 
   if (obj.primaryChatPresetId && !ids.has(obj.primaryChatPresetId as string)) {

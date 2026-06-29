@@ -1,4 +1,8 @@
 import type { LlmPresetsState } from "../../../lib/types";
+import {
+  MAX_ITERATIONS_BOUNDS,
+  DEFAULT_MAX_ITERATIONS,
+} from "../../../lib/llmPresets";
 
 /**
  * Shared types and helpers for the two-tab LLM config UI.
@@ -10,6 +14,8 @@ import type { LlmPresetsState } from "../../../lib/types";
  */
 
 export const DEFAULT_ENDPOINT = "https://openrouter.ai/api/v1";
+
+export { MAX_ITERATIONS_BOUNDS, DEFAULT_MAX_ITERATIONS };
 
 /**
  * Sidebar / other tabs listen on this event so they refresh immediately
@@ -65,6 +71,8 @@ export interface WorkingPreset {
   hasApiKey: boolean;
   chatModel: string;
   embeddingModel: string;
+  /** Agentic-loop cap for this preset's chat model. Undefined = use server default (16). */
+  maxIterations?: number;
   modelsCache: RemoteModel[] | null;
   showApiKey: boolean;
   fetchResult: FetchResult | null;
@@ -80,6 +88,7 @@ export function newPreset(): WorkingPreset {
     hasApiKey: false,
     chatModel: "",
     embeddingModel: "",
+    maxIterations: 16,
     modelsCache: null,
     showApiKey: false,
     fetchResult: null,
@@ -114,6 +123,7 @@ export function fromViewState(data: LlmPresetsState): {
       hasApiKey: p.hasApiKey,
       chatModel: p.chatModel,
       embeddingModel: p.embeddingModel,
+      maxIterations: p.maxIterations,
       modelsCache: null,
       showApiKey: false,
       fetchResult: null,
@@ -144,6 +154,9 @@ export function toPutBody(presets: WorkingPreset[], slots: SlotState) {
       apiKey: p.apiKey,
       chatModel: p.chatModel,
       embeddingModel: p.embeddingModel,
+      ...(typeof p.maxIterations === "number"
+        ? { maxIterations: Math.floor(p.maxIterations) }
+        : {}),
     })),
     primaryChatPresetId: slots.primaryChat,
     fallbackChatPresetId: slots.fallbackChat,
