@@ -6,6 +6,7 @@ import { AlertCircle, ChevronDown, ChevronRight, Cpu, RefreshCw, Save, Sparkles 
 import type { LlmPresetsState } from "../../../lib/types";
 import RolePanel from "./RolePanel";
 import ApiKeysPanel from "./ApiKeysPanel";
+import ReviewLimitsPanel from "./ReviewLimitsPanel";
 import {
   LLM_PRESETS_CHANGED_EVENT,
   EMPTY_SLOT_STATE,
@@ -19,7 +20,7 @@ import {
   type WorkingPreset,
 } from "./shared";
 
-type Tab = "chat" | "embedding" | "api";
+type Tab = "chat" | "embedding" | "api" | "limits";
 type RoleTab = "chat" | "embedding";
 
 /**
@@ -248,10 +249,13 @@ export default function LlmConfigTabs() {
           <TabButton active={tab === "chat"} onClick={() => setTab("chat")} accent="cyan" label="PR Reviewer (Chat)" />
           <TabButton active={tab === "embedding"} onClick={() => setTab("embedding")} accent="indigo" label="Semantic Search (Embedding)" />
           <TabButton active={tab === "api"} onClick={() => setTab("api")} accent="amber" label="API Keys" />
+          <TabButton active={tab === "limits"} onClick={() => setTab("limits")} accent="emerald" label="Review Limits" />
         </div>
 
         {tab === "api" ? (
           <ApiKeysPanel />
+        ) : tab === "limits" ? (
+          <ReviewLimitsPanel />
         ) : (
           <>
             <RolePanel
@@ -316,13 +320,14 @@ function TabButton({
 }: {
   active: boolean;
   onClick: () => void;
-  accent: "cyan" | "indigo" | "amber";
+  accent: "cyan" | "indigo" | "amber" | "emerald";
   label: string;
 }) {
   const accentColors: Record<string, { text: string; border: string }> = {
     cyan: { text: "text-cyan-400", border: "border-cyan-500" },
     indigo: { text: "text-indigo-400", border: "border-indigo-500" },
     amber: { text: "text-amber-400", border: "border-amber-500" },
+    emerald: { text: "text-emerald-400", border: "border-emerald-500" },
   };
   const { text: accentText, border: accentBorder } = accentColors[accent];
   return (
