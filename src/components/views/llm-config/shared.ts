@@ -1,8 +1,4 @@
 import type { LlmPresetsState } from "../../../lib/types";
-import {
-  MAX_ITERATIONS_BOUNDS,
-  DEFAULT_MAX_ITERATIONS,
-} from "../../../lib/llmPresets";
 
 /**
  * Shared types and helpers for the two-tab LLM config UI.
@@ -15,7 +11,15 @@ import {
 
 export const DEFAULT_ENDPOINT = "https://openrouter.ai/api/v1";
 
-export { MAX_ITERATIONS_BOUNDS, DEFAULT_MAX_ITERATIONS };
+/**
+ * Agentic-loop iteration cap bounds. Mirrors the source-of-truth values
+ * in `src/lib/llmPresets.ts` (MAX_ITERATIONS_BOUNDS + DEFAULT_MAX_ITERATIONS).
+ * Duplicated here as plain constants so the client bundle doesn't have to
+ * pull `llmPresets.ts` (which imports `node:fs/promises`) into a
+ * "use client" component. Keep in sync with the server constants.
+ */
+export const MAX_ITERATIONS_BOUNDS = { min: 4, max: 32 } as const;
+export const DEFAULT_MAX_ITERATIONS = 16;
 
 /**
  * Sidebar / other tabs listen on this event so they refresh immediately
