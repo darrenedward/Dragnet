@@ -85,24 +85,48 @@ async function assertReviewRunStillActive(reviewRunId?: string): Promise<void> {
 /**
  * Build provider-specific request options for chat.completions.create.
  *
- * GPT-5 family (gpt-5, gpt-5.1, gpt-5.2, gpt-5.4, gpt-5-pro) is OpenAI's
- * reasoning line. Per OpenAI's migration guide, reasoning models require
- * `max_completion_tokens` instead of `max_tokens` and accept a top-level
- * `reasoning_effort` (NOT the nested `reasoning: {effort}` form — that's
- * Responses API only). Non-OpenAI providers (OpenRouter, MiniMax, Z.ai,
- * Ollama) stay on the universal `max_tokens` form and would 400 on
- * `reasoning_effort`.
+ * Three reasoning-model families, each with its OWN top tier — they are
+ * NOT interchangeable. Sending the wrong tier (e.g. `xhigh` to a Claude
+ * model) 400s instantly.
  *
- * "xhigh" is the deepest tier. gpt-5.2 supports none/low/medium/high/xhigh;
- * gpt-5-pro only supports "high" and silently coerces; gpt-5.1 defaults to
- * "none" so MUST be set explicitly. Tradeoff: ~2x latency + cost vs deeper
- * chain-of-thought — for a code reviewer that's the right default.
+ * - GPT-5 family (gpt-5, gpt-5.1, gpt-5.2, gpt-5.4, gpt-5-pro):
+ *     requires `max_completion_tokens` (NOT `max_tokens`) + top-level
+ *     `reasoning_effort`. "xhigh" is the deepest tier. gpt-5.2 supports
+ *     none/low/medium/high/xhigh; gpt-5-pro only supports "high" and
+ *     silently coerces; gpt-5.1 defaults to "none" so MUST be set
+ *     explicitly. ~2x latency + cost vs baseline.
+ * - Anthropic Claude 4 family via OpenAI-compat endpoint (claude-sonnet-4,
+ *     claude-opus-4, claude-haiku-4): `reasoning_effort` accepts
+ *     low/medium/high. "high" is the top tier — there is no xhigh.
+ * - Zhipu GLM 4.5+ (glm-4.5, glm-4.5-flash, glm-4.6, glm-5.x):
+ *     `reasoning_effort` accepts low/medium/high/max. "max" is GLM's top
+ *     tier — distinct from OpenAI's xhigh and Anthropic's high.
+ *
+ * Non-reasoning providers (OpenRouter non-reasoning routes, MiniMax,
+ * Ollama, LM Studio) stay on the universal `max_tokens` form and would
+ * 400 on `reasoning_effort`.
+ *
+ * Tradeoff across all three: ~2x latency + cost vs deeper chain-of-
+ * thought — for a code reviewer that's the right default. Override per
+ * preset via `reasoningEffort` field if we expose it later.
  */
-function gpt5ChatOptions(model: string, maxTokens: number): Record<string, unknown> {
+function reasoningOptions(model: string, maxTokens: number): Record<string, unknown> {
   if (/^gpt-5/i.test(model)) {
     return {
       reasoning_effort: "xhigh" as const,
       max_completion_tokens: maxTokens,
+    };
+  }
+  if (/^claude-(sonnet|opus|haiku)-4/i.test(model)) {
+    return {
+      reasoning_effort: "high" as const,
+      max_tokens: maxTokens,
+    };
+  }
+  if (/^glm-(4\.[5-9]|[5-9])/i.test(model)) {
+    return {
+      reasoning_effort: "max" as const,
+      max_tokens: maxTokens,
     };
   }
   return { max_tokens: maxTokens };
@@ -691,7 +715,7 @@ ${diffPayload}${deterministicPayload}`;
               // introduces ~5% drift) but this is the difference between
               // "occasionally differs" and "always differs."
               temperature: 0,
-              ...gpt5ChatOptions(model, 16_384),
+              ...reasoningOptions(model, 16_384),
             } as any),
             `${name} chat completion`,
           );
@@ -920,7 +944,7 @@ ${diffPayload}${deterministicPayload}`;
                 messages: finalizerMessages,
                 temperature: 0.1,
                 response_format: { type: "json_object" },
-                ...gpt5ChatOptions(model, 16_384),
+                ...reasoningOptions(model, 16_384),
               } as any),
               `${name} JSON finalizer`,
               LLM_FINALIZER_TIMEOUT_MS,
@@ -933,7 +957,7 @@ ${diffPayload}${deterministicPayload}`;
                 model,
                 messages: finalizerMessages,
                 temperature: 0.1,
-                ...gpt5ChatOptions(model, 16_384),
+                ...reasoningOptions(model, 16_384),
               } as any),
               `${name} fallback finalizer`,
               LLM_FINALIZER_TIMEOUT_MS,
@@ -1018,7 +1042,7 @@ ${diffPayload}${deterministicPayload}`;
               ],
               response_format: { type: "json_object" },
               temperature: 0,
-              ...gpt5ChatOptions(usedModel, 500),
+              ...reasoningOptions(usedModel, 500),
             } as any);
             const raw = refusalRes.choices?.[0]?.message?.content ?? "";
             const parsed = JSON.parse(stripThinkBlocks(raw));
