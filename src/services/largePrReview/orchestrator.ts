@@ -22,6 +22,33 @@ type ChunkRunner = (
   prManifest?: PrManifestEntry[],
 ) => Promise<ScanResult>;
 
+/**
+ * Cheap run-state probe. Returns true iff the ReviewRun row is still
+ * `in_progress`. Used at the top of each chunk-loop iteration to bail
+ * out early when something else (concurrent scan with force=true,
+ * aggregateResults from a parallel call, manual DB intervention) has
+ * already closed the run. Without this, every remaining chunk burns
+ * the full provider chain (~10 min on a hung NVIDIA finalizer) before
+ * discovering via assertReviewRunStillActive that the run is over.
+ */
+async function isRunStillActive(reviewRunId: string): Promise<boolean> {
+  const run = await prisma.reviewRun.findUnique({
+    where: { id: reviewRunId },
+    select: { status: true },
+  });
+  return run?.status === "in_progress";
+}
+
+/**
+ * Match the error message thrown by `assertReviewRunStillActive` in
+ * reviewService.ts. String-match rather than instanceof because the
+ * sentinel lives in a different module and we don't want to couple the
+ * orchestrator to reviewService's error taxonomy.
+ */
+function isRunClosedError(err: Error): boolean {
+  return /Review run is no longer active/i.test(err.message);
+}
+
 export interface RunLargePrReviewOptions {
   reviewRunId: string;
   prId: string;
@@ -136,6 +163,15 @@ export async function runLargePrReview({
 
   for (const plan of plans) {
     const chunkId = chunkDbId(reviewRunId, plan.id);
+    // Bail out if a concurrent path (force=true scan, manual DB write,
+    // parallel retry call) has already closed this run. Without this,
+    // every remaining chunk burns the full provider chain (~10 min per
+    // chunk on a hung provider) before discovering via the runner's
+    // assertReviewRunStillActive that the run is over.
+    if (!(await isRunStillActive(reviewRunId))) {
+      await logRun(prId, reviewRunId, repoPath, `Aborting chunk loop: run ${reviewRunId} is no longer in_progress`, "warn");
+      break;
+    }
     if (consecutiveErrorKey && consecutiveErrorCount >= 3) {
       await markSkipped(reviewRunId, chunkId, `Circuit breaker: repeated ${consecutiveErrorKey}`);
       continue;
@@ -262,6 +298,14 @@ export async function retryFailedChunks(
   });
 
   for (const chunk of resumableChunks) {
+    // Same bail-out as orchestrate(). The retry path is especially
+    // vulnerable to this race because the user may have triggered a
+    // fresh scan (force=true) while this retry was iterating, and the
+    // new scan's aggregateResults closes this run out from under us.
+    if (!(await isRunStillActive(reviewRunId))) {
+      await logRun(run.prId, reviewRunId, repoPath, `Aborting retry chunk loop: run ${reviewRunId} is no longer in_progress`, "warn");
+      break;
+    }
     const files = prFiles.filter((file) => chunk.filePaths.includes(file.filename));
     await prisma.reviewChunk.update({
       where: { id: chunk.id },
@@ -349,6 +393,11 @@ async function runChunkWithRetry({
     } catch (err: any) {
       lastError = err instanceof Error ? err : new Error(String(err));
       await logRun(prId, reviewRunId, repoPath, `Chunk ${plan.id}: attempt ${attempt} failed — ${lastError.message}`, attempt === 1 ? "warn" : "error", chunkId);
+      // If the run is no longer active, retrying is pointless — the
+      // second attempt will hit the same wall after another full
+      // provider-chain cycle (~10 min on a hung finalizer). Bail now
+      // and let the orchestrator's loop-level check skip remaining chunks.
+      if (isRunClosedError(lastError)) break;
     }
   }
   return { ok: false, error: lastError || new Error("Chunk scan failed.") };

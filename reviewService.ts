@@ -236,6 +236,17 @@ const VALID_IMPACT = ["critical", "high", "medium", "low"];
 // Override per-deployment via env if you need longer (e.g. for very large
 // diffs or slower models): LLM_CALL_TIMEOUT_MS=600000 in .env.local.
 const LLM_CALL_TIMEOUT_MS = Number(process.env.LLM_CALL_TIMEOUT_MS) || 300_000;
+// Per-call timeout for the JSON-only finalizer turn. The finalizer is a
+// single-shot "give me JSON now" follow-up — it does NOT do tool calls or
+// multi-iteration reasoning, so 300s (sized for the main agentic loop) is
+// wildly too patient. A hung provider here blocks the chunk for 300s × 2
+// (response_format + fallback) × 2 (retry attempts) × 2 (provider chain) =
+// up to 40 min per chunk before the orchestrator's loop-level bail-out
+// kicks in. 90s is ample for a model that's actually responding; a model
+// that takes longer than that is hung and should be failed fast.
+//
+// Override per-deployment: LLM_FINALIZER_TIMEOUT_MS=120000 in .env.local.
+const LLM_FINALIZER_TIMEOUT_MS = Number(process.env.LLM_FINALIZER_TIMEOUT_MS) || 90_000;
 // How many consecutive empty responses from the same provider we tolerate
 // before giving up. Some OpenAI-compatible providers occasionally return
 // choices[0] with no `message` field on transient failures (network glitch,
@@ -251,12 +262,12 @@ const LLM_CALL_TIMEOUT_MS = Number(process.env.LLM_CALL_TIMEOUT_MS) || 300_000;
 // Override per-deployment: EMPTY_RESPONSE_RETRIES=3 in .env.local.
 const EMPTY_RESPONSE_RETRIES = Number(process.env.EMPTY_RESPONSE_RETRIES) || 2;
 
-async function withTimeout<T>(promise: Promise<T>, label: string): Promise<T> {
+async function withTimeout<T>(promise: Promise<T>, label: string, ms: number = LLM_CALL_TIMEOUT_MS): Promise<T> {
   let timeout: ReturnType<typeof setTimeout> | undefined;
   const timeoutPromise = new Promise<never>((_, reject) => {
     timeout = setTimeout(() => {
-      reject(new Error(`${label} timed out after ${Math.round(LLM_CALL_TIMEOUT_MS / 1000)}s`));
-    }, LLM_CALL_TIMEOUT_MS);
+      reject(new Error(`${label} timed out after ${Math.round(ms / 1000)}s`));
+    }, ms);
   });
   try {
     return await Promise.race([promise, timeoutPromise]);
@@ -912,6 +923,7 @@ ${diffPayload}${deterministicPayload}`;
                 ...gpt5ChatOptions(model, 16_384),
               } as any),
               `${name} JSON finalizer`,
+              LLM_FINALIZER_TIMEOUT_MS,
             );
           } catch (err: any) {
             console.warn(`[review] JSON response_format finalizer failed provider=${name}: ${err.message}`);
@@ -924,6 +936,7 @@ ${diffPayload}${deterministicPayload}`;
                 ...gpt5ChatOptions(model, 16_384),
               } as any),
               `${name} fallback finalizer`,
+              LLM_FINALIZER_TIMEOUT_MS,
             );
           }
           await assertReviewRunStillActive(reviewRunId);
