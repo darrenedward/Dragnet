@@ -90,9 +90,10 @@ The `/api/repos/$REPO_ID/reindex` endpoint exists and accepts API keys, but the 
 | `/dragnet fix <n>` | **Interactive** fix loop: review → triage → wait for user → fix → re-review. Stops between iterations. |
 | `/dragnet fix <n> --auto [--loops N]` | Aggressive auto-fix loop: review → fix → re-review until rating = 10/10, 1 non-improving iteration, or N iterations elapsed (default N=5). The target is **10/10, not 8/10** — bailing at 8 hides the remaining 20%. Use when the user explicitly asks for hands-off grinding to the top of the scale. `--loops 3` caps at 3 iterations; `--loops 10` is the hard ceiling. |
 | `/dragnet fix <n> --once` | Single pass: fix all user-approved findings, commit, done. |
+| `/dragnet report` | Read the newest scan report at `.dragnet/reports/*.log`, triage every error into {code-fixable, config-fixable, environment-fixable, expected}, fix all code-fixable errors in one pass, re-test by re-scanning, render the new report. Stop after one iteration (no `--auto` mode yet). |
 | `/dragnet help` | Print this table. |
 
-Typical workflow: `/dragnet` → pick a PR → `/dragnet 1` → see rating → `/dragnet fix 1` → triage with user → fix → re-review.
+Typical workflow: `/dragnet` → pick a PR → `/dragnet 1` → see rating → `/dragnet fix 1` → triage with user → fix → re-review. Debug a failed scan with `/dragnet report`.
 
 ## Behavioral rules (apply to ALL subcommands)
 
@@ -264,6 +265,42 @@ The `message` field contains markdown; missing `reviewRun` field means no review
 8. **In `--once` mode:** render the table, then STOP. The user invoked `--once` to see the triage and decide; they will say what to do next.
 9. **Loop continuation (interactive only):** after the user approves fixes and they're applied + committed + pushed, run cache-aware review again. Render the new triage table regardless of rating. STOP again. The loop ends when the user says "done"/"exit", OR when rule 5 trips (new rating ≤ old rating), OR when there are no `real` findings left to triage.
 10. **`--auto` loop continuation:** re-run cache-aware review after each commit. If new rating = 10 → report PERFECT, exit. If new rating > old rating AND iterations < maxLoops → next iteration. If new rating ≤ old rating (1 non-improving iteration, per rule 5) → STOP. If maxLoops reached without hitting 10/10 → STOP, surface final state. **maxLoops defaults to 5** and is overridable via `--loops N` (e.g. `--loops 3`, `--loops 10`). Hard ceiling at 10 iterations even if user passes a higher N — prevents runaway token spend when the LLM plateaus.
+
+### `/dragnet report`
+
+Reads the newest scan report from `.dragnet/reports/*.log` and triages every error into one of four categories. Fixes only the code-fixable ones, then re-tests by re-scanning. One iteration per invocation.
+
+1. **Resolve repo root + locate newest report.**
+   ```bash
+   ROOT=$(git rev-parse --show-toplevel)
+   NEWEST=$(ls -t "$ROOT/.dragnet/reports/"*.log 2>/dev/null | head -1)
+   ```
+   If `$NEWEST` is empty: tell the user *"No scan report found at `$ROOT/.dragnet/reports/`. Run a scan from the Dragnet UI first."* Stop. Do NOT call the API.
+2. **Read the report.** Use `Read` on `$NEWEST`. Lines look like `<ISO> [<level>] [<chunkId>?] <message>`.
+3. **Extract error lines.** Pull every line where `[level]` is `error` OR `warn`, plus lines matching known failure patterns:
+   - `All chat providers failed`
+   - `failed after retry`
+   - `circuit breaker`
+   - `Failed to generate embedding`
+   - `no grammar yet`
+   - `llama-server binary not found`
+4. **Triage each error into one of four categories.** Render a table to the user before fixing anything:
+   - `code-fixable` — error names a specific file/symbol/route that the AI can edit. e.g. `TypeError` in `src/foo.ts:42`, missing import, JSON parse failure on a known payload.
+   - `config-fixable` — error is a missing/misconfigured Dragnet preset or model. e.g. `All chat providers failed`, embedding endpoint returns wrong dimensions, 401 from provider. **Tell the user to open LLM Settings and fix it; do NOT try to code around it.**
+   - `environment-fixable` — error is the host machine. e.g. `llama-server binary not found`, port already in use, missing system dep. **Tell the user the remediation (e.g. `curl -fsSL https://ollama.com/install.sh | sh`); do NOT code around it.**
+   - `expected` — error is by-design. e.g. `no grammar yet for .py` (v1 ships TS/JS grammars only). **Note it and move on.**
+5. **Render the triage table.** Columns: `#`, `level`, `category`, `message`. Always render — even when nothing is code-fixable. If nothing is code-fixable, skip to step 8.
+6. **Apply fixes for code-fixable rows only.** Wait for user confirmation first (interactive). Commit with message `fix: address N code-fixable errors from /dragnet report`. Skip config/env/expected rows — those get surfaced in the table for the user to handle.
+7. **Re-test by re-scanning.** Identify the PR id from the report's runId (or ask the user which PR to re-scan), then:
+   ```bash
+   curl -s -X POST "$URL/api/command" \
+     -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
+     -d "{\"command\":\"prcheck $PR_ID\",\"repoId\":\"$REPO_ID\"}"
+   ```
+   Poll `prcheckstatus` at the size-tiered interval until `status === "Success"`. Then re-read the newest report and compare error counts before/after.
+8. **Render the after state.** Show old error count vs new error count, plus any new errors introduced. If new errors are also code-fixable, suggest re-running `/dragnet report` (don't loop automatically — v1 is single-iteration).
+
+**Forbidden in `/dragnet report`:** writing any code change for config/env/expected errors; auto-retrying in a loop; calling `prcheck` before reading the report (the report file is the trigger, not a guess).
 
 ## Polling timing
 
