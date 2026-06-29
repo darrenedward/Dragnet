@@ -23,14 +23,19 @@ export async function GET(req: Request) {
 
     const where = reviewRunId ? { reviewRunId } : { prId };
 
+    // Fetch the NEWEST 200 (desc), then reverse in memory so the response
+    // stays chronological (asc) for the UI. The previous asc+take returned
+    // the OLDEST 200 — once a scan crossed 200 log rows the polling
+    // signature never changed and the UI froze, hiding live errors like
+    // 429s that landed in rows 201+.
     const logs = await prisma.reviewLog.findMany({
       where,
-      orderBy: { createdAt: "asc" },
+      orderBy: { createdAt: "desc" },
       take: 200,
       select: { id: true, message: true, level: true, createdAt: true, reviewRunId: true, reviewChunkId: true },
     });
 
-    return NextResponse.json(logs);
+    return NextResponse.json(logs.reverse());
   } catch (err: any) {
     console.error("Failed to fetch review logs:", err);
     return NextResponse.json({ error: err.message }, { status: 500 });
