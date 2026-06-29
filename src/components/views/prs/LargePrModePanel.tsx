@@ -36,6 +36,13 @@ export default function LargePrModePanel({
   iterationsByChunk,
 }: Props) {
   const failedCount = reviewRun.chunksFailed ?? chunks.filter((chunk) => chunk.status === "failed").length;
+  // Resumable: any chunk not in a terminal state (completed/skipped). Covers
+  // the dangling-running case where a dev-server crash left a chunk stuck in
+  // "running" with no process actually working on it — retryFailedChunks
+  // handles all three non-terminal statuses.
+  const resumableCount = chunks.filter((chunk) =>
+    chunk.status === "failed" || chunk.status === "pending" || chunk.status === "running",
+  ).length;
   const reliability = reviewRun.reliability || "pending";
   const cfg = reliabilityConfig(reliability);
   const ReliabilityIcon = cfg.Icon;
@@ -64,15 +71,16 @@ export default function LargePrModePanel({
           </div>
         </div>
 
-        {failedCount > 0 && onRetryFailedChunks && (
+        {resumableCount > 0 && onRetryFailedChunks && (
           <button
             type="button"
             disabled={isRetrying}
             onClick={onRetryFailedChunks}
             className="px-2.5 py-1 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/25 rounded text-[10px] font-mono font-bold text-amber-300 transition-colors flex items-center gap-1.5 disabled:opacity-50"
+            title="Resume pending/failed/dangling-running chunks"
           >
             {isRetrying ? <Loader2 size={12} className="animate-spin" /> : <RotateCcw size={12} />}
-            <span>{isRetrying ? "Retrying" : "Retry Failed"}</span>
+            <span>{isRetrying ? "Resuming" : failedCount > 0 ? "Retry Failed" : "Resume Scan"}</span>
           </button>
         )}
       </div>
