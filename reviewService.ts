@@ -1135,7 +1135,23 @@ ${diffPayload}${deterministicPayload}`;
   });
 
   if (findingsData.length > 0) {
-    await prisma.reviewFinding.createMany({ data: findingsData });
+    try {
+      await prisma.reviewFinding.createMany({ data: findingsData });
+    } catch (err: any) {
+      const msg = err?.message ?? String(err);
+      if (msg.includes("Unknown argument")) {
+        // Schema-client drift: a column exists in prisma/schema.prisma (and
+        // the DB) but the Prisma client in memory doesn't know about it.
+        // Almost always means the dev server was running when `npx prisma
+        // generate` should have re-run. A restart picks up the new client.
+        throw new Error(
+          `Prisma client is out of sync with schema: ${msg.split(".")[0]}. ` +
+            `Run \`npx prisma generate\` (if not already) and restart the dev server — ` +
+            `the client was likely loaded before the schema migration landed.`,
+        );
+      }
+      throw new Error(`Failed to persist ${findingsData.length} findings: ${msg}`);
+    }
   }
 
   // 6b. Mark the ReviewRun complete with the final rating. Best-effort —
