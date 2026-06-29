@@ -5,6 +5,7 @@ import { runPrScan, type ScanResult, type PrManifestEntry } from "@/reviewServic
 import { aggregateResults } from "./aggregator";
 import { chunkDiff } from "./chunker";
 import { assertTier, buildDiffManifest } from "./manifest";
+import { appendReport, formatReportLine } from "./reportLogger";
 import type {
   ChunkPlan,
   DiffManifest,
@@ -49,8 +50,9 @@ export async function runLargePrReview({
 
   const repo = await prisma.repository.findUnique({
     where: { id: run.repoId },
-    select: { securitySensitivePaths: true },
+    select: { securitySensitivePaths: true, path: true },
   });
+  const repoPath = repo?.path ?? "";
   const limits = readLimits();
   let manifest = buildDiffManifest(files, undefined, {
     normalMaxLines: limits.normalMaxLines,
@@ -79,8 +81,8 @@ export async function runLargePrReview({
     { chunkLineCap: limits.chunkLineCap, minUsefulChunkLines: limits.minUsefulChunkLines },
   );
 
-  await logRun(prId, reviewRunId, `Large PR Mode activated: ${plans.length} chunk${plans.length === 1 ? "" : "s"} (${manifest.codeLines.toLocaleString()} code lines)`, "info");
-  if (effectiveWarning) await logRun(prId, reviewRunId, effectiveWarning, "warn");
+  await logRun(prId, reviewRunId, repoPath, `Large PR Mode activated: ${plans.length} chunk${plans.length === 1 ? "" : "s"} (${manifest.codeLines.toLocaleString()} code lines)`, "info");
+  if (effectiveWarning) await logRun(prId, reviewRunId, repoPath, effectiveWarning, "warn");
 
   await prisma.reviewChunk.deleteMany({ where: { reviewRunId } });
   if (plans.length > 0) {
@@ -144,9 +146,9 @@ export async function runLargePrReview({
       data: { status: "running", startedAt: new Date(), errorMessage: null, skipReason: null },
     });
     await updateChunkCounters(reviewRunId);
-    await logRun(prId, reviewRunId, `Chunk ${plan.id}: scanning ${plan.label} (${plan.lineCount} lines)`, "info", chunkId);
+    await logRun(prId, reviewRunId, repoPath, `Chunk ${plan.id}: scanning ${plan.label} (${plan.lineCount} lines)`, "info", chunkId);
 
-    const result = await runChunkWithRetry({ prId, reviewRunId, chunkId, plan, runner, prManifest: buildPrManifest(files) });
+    const result = await runChunkWithRetry({ prId, reviewRunId, repoPath, chunkId, plan, runner, prManifest: buildPrManifest(files) });
     if (result.ok === true) {
       consecutiveErrorKey = null;
       consecutiveErrorCount = 0;
@@ -160,7 +162,7 @@ export async function runLargePrReview({
           errorMessage: null,
         },
       });
-      await logRun(prId, reviewRunId, `Chunk ${plan.id}: completed rating=${result.scan.rating ?? "null"}`, "info", chunkId);
+      await logRun(prId, reviewRunId, repoPath, `Chunk ${plan.id}: completed rating=${result.scan.rating ?? "null"}`, "info", chunkId);
     } else {
       const errorKey = normalizeError(result.error.message);
       consecutiveErrorCount = consecutiveErrorKey === errorKey ? consecutiveErrorCount + 1 : 1;
@@ -173,7 +175,7 @@ export async function runLargePrReview({
           errorMessage: result.error.message,
         },
       });
-      await logRun(prId, reviewRunId, `Chunk ${plan.id}: failed after retry — ${result.error.message}`, "error", chunkId);
+      await logRun(prId, reviewRunId, repoPath, `Chunk ${plan.id}: failed after retry — ${result.error.message}`, "error", chunkId);
     }
     await updateChunkCounters(reviewRunId);
   }
@@ -182,6 +184,7 @@ export async function runLargePrReview({
   await logRun(
     prId,
     reviewRunId,
+    repoPath,
     `Large PR Mode completed: ${aggregated.reliability}, rating=${aggregated.rating ?? "null"}, chunks ${aggregated.chunksCompleted}/${aggregated.chunksTotal}`,
     aggregated.reliability === "complete" ? "info" : "warn",
   );
@@ -216,6 +219,12 @@ export async function retryFailedChunks(
     select: { id: true, prId: true, repoId: true },
   });
   if (!run) throw new Error(`ReviewRun ${reviewRunId} not found.`);
+
+  const repo = await prisma.repository.findUnique({
+    where: { id: run.repoId },
+    select: { path: true },
+  });
+  const repoPath = repo?.path ?? "";
 
   // Resume scope: any chunk not in a terminal state. Covers failed retries,
   // pending chunks that never started, and `running` chunks left dangling
@@ -262,6 +271,7 @@ export async function retryFailedChunks(
     const result = await runChunkWithRetry({
       prId: run.prId,
       reviewRunId,
+      repoPath,
       chunkId: chunk.id,
       plan: {
         id: chunk.id,
@@ -317,6 +327,7 @@ export async function retryFailedChunks(
 async function runChunkWithRetry({
   prId,
   reviewRunId,
+  repoPath,
   chunkId,
   plan,
   runner,
@@ -324,6 +335,7 @@ async function runChunkWithRetry({
 }: {
   prId: string;
   reviewRunId: string;
+  repoPath: string;
   chunkId: string;
   plan: ChunkPlan;
   runner: ChunkRunner;
@@ -336,7 +348,7 @@ async function runChunkWithRetry({
       return { ok: true, scan };
     } catch (err: any) {
       lastError = err instanceof Error ? err : new Error(String(err));
-      await logRun(prId, reviewRunId, `Chunk ${plan.id}: attempt ${attempt} failed — ${lastError.message}`, attempt === 1 ? "warn" : "error", chunkId);
+      await logRun(prId, reviewRunId, repoPath, `Chunk ${plan.id}: attempt ${attempt} failed — ${lastError.message}`, attempt === 1 ? "warn" : "error", chunkId);
     }
   }
   return { ok: false, error: lastError || new Error("Chunk scan failed.") };
@@ -385,6 +397,7 @@ async function updateChunkCounters(reviewRunId: string): Promise<void> {
 async function logRun(
   prId: string,
   reviewRunId: string,
+  repoPath: string,
   message: string,
   level = "info",
   reviewChunkId?: string,
@@ -403,6 +416,14 @@ async function logRun(
   } catch {
     // best-effort progress log
   }
+  // Disk mirror to <repoPath>/.dragnet/reports/<reviewRunId>.log so the
+  // /dragnet report skill command can read the scan's history from inside
+  // the scanned repo. Best-effort — appendReport swallows fs errors.
+  await appendReport(
+    repoPath,
+    reviewRunId,
+    formatReportLine({ message, level, chunkId: reviewChunkId }),
+  );
 }
 
 function chunkDbId(reviewRunId: string, planId: string): string {
