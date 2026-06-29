@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { toast } from '../lib/toast';
 import {
   Network,
   Search,
@@ -119,14 +120,13 @@ export default function CodebaseGraph({ repoId, repoName, onIndexComplete }: Cod
       } else if (res.status === 409 && data.error === "ALREADY_INDEXING") {
         // Already running — keep the in-progress banner visible.
       } else {
-        alert(
-          `Indexing failed (${res.status}): ${data.error || res.statusText}\n` +
-          `Check the dev server console for details.`,
+        toast.error(
+          `Indexing failed (${res.status}): ${data.error || res.statusText}. Check the dev server console for details.`,
         );
         setIsIndexing(false);
       }
     } catch (err: any) {
-      alert("Error parsing AST structure: " + err.message);
+      toast.error("Failed to parse AST structure: " + (err?.message ?? "unknown error"));
       setIsIndexing(false);
     }
   };

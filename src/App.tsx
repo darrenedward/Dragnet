@@ -13,6 +13,9 @@ import {
   Cpu,
 } from "lucide-react";
 import PRDTracker from "./components/PRDTracker";
+import ErrorBoundary from "./components/ErrorBoundary";
+import Toaster from "./components/Toaster";
+import { toast } from "./lib/toast";
 import GitWatcher from "./components/GitWatcher";
 import CodebaseGraph from "./components/CodebaseGraph";
 import DbConfigView from "./components/views/DbConfigView";
@@ -55,6 +58,7 @@ export default function App() {
   const activeFile = d.prFiles.find((f) => f.filename === d.selectedFilename) || d.prFiles[0];
 
   return (
+    <ErrorBoundary>
     <div className="flex flex-col h-screen w-full bg-[#0B0E14] text-slate-300 font-sans select-none overflow-hidden relative">
       {/* 1. Header Bar */}
       <header className="flex items-center justify-between px-4 sm:px-6 py-4 border-b border-white/10 bg-[#0B0E14] shrink-0">
@@ -333,7 +337,7 @@ export default function App() {
             <div className="flex items-center gap-2">
               <button
                 onClick={() => {
-                  alert(`Direct Workspace Diff View: Displaying changes from base path for ${activeRepo ? activeRepo.name : d.selectedRepoId}`);
+                  toast.info(`Direct Workspace Diff View: showing changes from base path for ${activeRepo ? activeRepo.name : d.selectedRepoId}`);
                 }}
                 className="px-3 py-1.5 text-xs font-semibold bg-cyan-500 text-black rounded hover:bg-cyan-400 transition-colors cursor-pointer"
               >
@@ -450,5 +454,7 @@ export default function App() {
         )}
       </AnimatePresence>
     </div>
+    <Toaster />
+    </ErrorBoundary>
   );
 }

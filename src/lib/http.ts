@@ -15,6 +15,22 @@
 const LOGIN_PATH = "/login";
 
 /**
+ * Error thrown when the underlying `fetch()` rejects — i.e. the server is
+ * unreachable (down, DNS failure, CORS preflight rejected, offline).
+ * Distinct from a 5xx response, which means the server IS reachable but
+ * the request failed server-side.
+ *
+ * Friendly `message` so callers can render it directly without re-formatting.
+ * Callers can also branch on `instanceof NetworkError` for custom handling.
+ */
+export class NetworkError extends Error {
+  constructor(message = "Lost connection to the Dragnet server.") {
+    super(message);
+    this.name = "NetworkError";
+  }
+}
+
+/**
  * Redirect the browser to /login, preserving the current path+search as
  * `callbackURL` so the login page can send the user back where they were.
  *
@@ -46,9 +62,24 @@ export function redirectToLogin(fromPath?: string): void {
  * Only triggers on same-origin requests — a 401 from a third-party API
  * (e.g. an OpenRouter or GitHub call proxied through the client) is the
  * remote service's problem, not a session issue.
+ *
+ * Throws `NetworkError` (not raw `TypeError`) when the underlying fetch
+ * rejects — that's the "server down / offline" path. Callers can render
+ * the friendly `.message` directly or branch via `instanceof NetworkError`.
  */
 export async function fetchJson(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
-  const response = await fetch(input, init);
+  let response: Response;
+  try {
+    response = await fetch(input, init);
+  } catch (err) {
+    // Browsers raise a TypeError "Failed to fetch" for: server down, DNS
+    // failure, CORS preflight rejection, navigator offline. Re-throw as
+    // NetworkError so callers don't have to string-match the message.
+    if (err instanceof TypeError && /fetch/i.test(err.message)) {
+      throw new NetworkError();
+    }
+    throw err;
+  }
   if (response.status === 401 && isSameOrigin(input)) {
     redirectToLogin();
   }

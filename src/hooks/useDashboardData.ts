@@ -10,7 +10,8 @@ import {
   type ReviewChunk,
   type ReviewFinding,
 } from "../lib/types";
-import { fetchJson } from "../lib/http";
+import { fetchJson, NetworkError } from "../lib/http";
+import { toast } from "../lib/toast";
 
 /**
  * Single source of truth for the dashboard's data state, polling, and
@@ -551,7 +552,7 @@ export function useDashboardData() {
         setPrs((prev) =>
           prev.map((p) => (p.id === scanningPrId ? { ...p, status: "Pending" } : p)),
         );
-        alert(
+        toast.warn(
           result.message ||
             "Codebase not indexed. Open the Codebase AST graph tab and run the indexer before reviewing.",
         );
@@ -567,7 +568,7 @@ export function useDashboardData() {
           result.message ||
           `Scan already in progress (runId=${result.runId?.slice(0, 8) ?? "?"}).`;
         if (force) {
-          alert(msg);
+          toast.warn(msg);
         } else if (window.confirm(`${msg}\n\nForce restart? This will reap the existing run and start a fresh one.`)) {
           await handleTriggerPrScan({ force: true });
         }
@@ -575,14 +576,21 @@ export function useDashboardData() {
         setPrs((prev) =>
           prev.map((p) => (p.id === scanningPrId ? { ...p, status: "Failed" } : p)),
         );
-        alert("Pipeline Scan Error: " + (result.error || "Execution timeout"));
+        toast.error("Scan failed: " + (result.error || "execution timeout"));
       }
     } catch (e: any) {
       console.error("Scan dispatch crash", e);
       setPrs((prev) =>
         prev.map((p) => (p.id === scanningPrId ? { ...p, status: "Failed" } : p)),
       );
-      alert("Pipeline Dispatch Crashed: " + e.message);
+      if (e instanceof NetworkError) {
+        // Server down / unreachable — friendly copy + extended dedup so
+        // concurrent pollers firing during the outage collapse into one
+        // toast instead of stacking alerts.
+        toast.networkError();
+      } else {
+        toast.error("Scan failed to start: " + (e?.message ?? "unknown error"));
+      }
     } finally {
       // Clear the in-flight ref BEFORE re-syncing so the isScanning
       // useEffect (which reads scanInFlightRef.current) is allowed to
@@ -610,7 +618,7 @@ export function useDashboardData() {
       });
       const result = await res.json();
       if (!res.ok) {
-        alert("Retry Failed Chunks Error: " + (result.error || "Execution timeout"));
+        toast.error("Retry failed chunks: " + (result.error || "execution timeout"));
         return;
       }
       setScanResult({
@@ -623,7 +631,11 @@ export function useDashboardData() {
       await fetchRepos();
       await fetchLogs();
     } catch (err: any) {
-      alert("Retry Failed Chunks Crashed: " + err.message);
+      if (err instanceof NetworkError) {
+        toast.networkError();
+      } else {
+        toast.error("Retry failed chunks: " + (err?.message ?? "unknown error"));
+      }
     } finally {
       setIsRetryingChunks(false);
     }

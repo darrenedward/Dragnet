@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
+import { NetworkError } from '../lib/http';
+import { toast } from '../lib/toast';
 import { 
   GitBranch, 
   Play, 
@@ -358,7 +360,7 @@ export default function GitWatcher({ onTriggerReviewPass, activeRepoId, onRepoCh
   const handleRegisterRepo = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newRepoName.trim() || !newRepoPath.trim()) {
-      alert('Repo name and absolute disk path are required.');
+      toast.warn('Repo name and absolute disk path are required.');
       return;
     }
 
@@ -402,7 +404,11 @@ export default function GitWatcher({ onTriggerReviewPass, activeRepoId, onRepoCh
     })
     .catch(err => {
       console.error(err);
-      alert('Failed to register repository');
+      if (err instanceof NetworkError) {
+        toast.networkError();
+      } else {
+        toast.error('Failed to register repository: ' + (err?.message ?? 'unknown error'));
+      }
     });
 
     // reset fields
@@ -416,7 +422,7 @@ export default function GitWatcher({ onTriggerReviewPass, activeRepoId, onRepoCh
 
   const deleteRepo = (id: string) => {
     if (repos.length <= 1) {
-      alert('Cannot delete the last registered repository.');
+      toast.warn('Cannot delete the last registered repository.');
       return;
     }
     const repoToDelete = repos.find(r => r.id === id);

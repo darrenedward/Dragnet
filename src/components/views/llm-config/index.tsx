@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { motion } from "motion/react";
 import { AlertCircle, ChevronDown, ChevronRight, Cpu, RefreshCw, Save, Sparkles } from "lucide-react";
 import type { LlmPresetsState } from "../../../lib/types";
+import { toast } from "../../../lib/toast";
 import RolePanel from "./RolePanel";
 import ApiKeysPanel from "./ApiKeysPanel";
 import ReviewLimitsPanel from "./ReviewLimitsPanel";
@@ -109,7 +110,7 @@ export default function LlmConfigTabs() {
       (k) => k !== slotKey && slots[k] === id,
     );
     if (inUse.length > 0) {
-      alert("This preset is still in use by another slot. Clear that slot first.");
+      toast.warn("This preset is still in use by another slot. Clear that slot first.");
       return;
     }
 
