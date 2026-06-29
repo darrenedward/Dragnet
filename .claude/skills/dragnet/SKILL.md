@@ -191,6 +191,11 @@ The `<arg>` is a PR `id` (preferred) or `branch` — both accepted. Numeric ordi
     "refused": false,        // true if reviewer flagged it skipped/declined part of the PR
     "refusalNote": null      // string when refused=true: topics the reviewer skipped
   },
+  "ratingTrend": [           // last 5 completed runs, oldest first; may be empty
+    { "runId": "r1...", "rating": 3, "completedAt": "...", "commitHash": "..." },
+    { "runId": "r2...", "rating": 5, "completedAt": "...", "commitHash": "..." },
+    { "runId": "r3...", "rating": 7, "completedAt": "...", "commitHash": "..." }
+  ],
   "stale": false,            // true if diff has changed since this run
   "rejectedCount": 0,        // findings filtered by verifier
   "findingsCount": 4,
@@ -200,6 +205,17 @@ The `<arg>` is a PR `id` (preferred) or `branch` — both accepted. Numeric ordi
   ]
 }
 ```
+
+**Rating trend rendering:** when `ratingTrend` has 2+ entries, render it above the findings list so the user sees progress across scan rounds. Format (omit if `ratingTrend.length < 2`):
+
+```
+📈 Trend:   R1: 3/10 → R2: 5/10 → R3: 7/10 ← current
+```
+
+- One arrow-separated entry per run, prefixed `R<N>:` (1-indexed).
+- The last entry is the current run — append `← current`.
+- Skip null ratings (failed runs) silently — they don't belong in the trend line.
+- Findings list below should distinguish new vs carried-over once the backend tags them; for now treat the entire list as "open" (resolved findings are already filtered server-side).
 
 **No completed run yet:**
 ```json

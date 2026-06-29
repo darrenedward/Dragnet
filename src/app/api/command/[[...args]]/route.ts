@@ -19,6 +19,7 @@ import {
   createReviewRun,
   completeReviewRun,
   getLatestCompletedReview,
+  getRecentRuns,
   getActiveScan,
 } from "@/src/lib/reviewFreshness";
 
@@ -513,11 +514,13 @@ async function handleLegacyCommand(body: any, defRepo: string | null) {
       // Re-fetch so we pick up any rating update from the async runPrScan.
       const freshPr = await prisma.pullRequest.findUnique({ where: { id: pr.id } });
       const latest = await getLatestCompletedReview(pr.id);
+      const ratingTrend = await getRecentRuns(pr.id, 5);
       return NextResponse.json({
         status: latest.reviewRun ? "Success" : (freshPr?.rating != null ? "Success" : "Pending"),
         type: "status",
         productionScore: latest.reviewRun?.rating != null ? `${latest.reviewRun.rating}/10` : (freshPr?.rating != null ? `${freshPr.rating}/10` : "Not scanned yet"),
         reviewRun: latest.reviewRun,
+        ratingTrend,
         stale: latest.stale,
         rejectedCount: latest.rejectedCount,
         sizeProfile,

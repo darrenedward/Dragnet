@@ -455,6 +455,7 @@ export async function getLatestCompletedReview(
 export async function getActiveScan(prId: string): Promise<{
   reviewRun: {
     id: string;
+    prId: string;
     commitHash: string;
     diffHash: string;
     startedAt: Date;
@@ -498,6 +499,7 @@ export async function getActiveScan(prId: string): Promise<{
     orderBy: { startedAt: "desc" },
     select: {
       id: true,
+      prId: true,
       commitHash: true,
       diffHash: true,
       startedAt: true,
@@ -584,4 +586,35 @@ function parseIterationLogs(
     }
   }
   return out;
+}
+
+/**
+ * Recent completed runs for a PR, ascending order (oldest first, current last).
+ * Drives the rating-trend rendering in `/dragnet status`: R1: 3/10 → R2: 5/10 → R3: 7/10.
+ */
+export async function getRecentRuns(
+  prId: string,
+  limit = 5,
+): Promise<
+  Array<{
+    runId: string;
+    rating: number | null;
+    completedAt: Date | null;
+    commitHash: string;
+  }>
+> {
+  const runs = await prisma.reviewRun.findMany({
+    where: { prId, status: "completed" },
+    orderBy: { completedAt: "desc" },
+    take: limit,
+    select: { id: true, rating: true, completedAt: true, commitHash: true },
+  });
+  return runs
+    .reverse()
+    .map((r) => ({
+      runId: r.id,
+      rating: r.rating,
+      completedAt: r.completedAt,
+      commitHash: r.commitHash,
+    }));
 }
