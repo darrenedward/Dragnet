@@ -68,7 +68,7 @@ export async function POST(
     }
     const repo = await prisma.repository.findUnique({
       where: { id: run.repoId },
-      select: { name: true },
+      select: { name: true, path: true },
     });
     if (!repo) {
       return NextResponse.json({ error: "Repository not found." }, { status: 404 });
@@ -124,8 +124,12 @@ export async function POST(
       });
     }
 
-    // file path: .dragnet/reviews/<slug>/<runId>.md
-    const reviewsDir = join(process.cwd(), ".dragnet", "reviews", slug);
+    // Write into the SCANNED repo's .dragnet/, not the Dragnet install's.
+    // process.cwd() here is the Dragnet server's working directory; using it
+    // would land DevWorld reviews under /home/curryman/Websites/Dragnet/.dragnet/
+    // instead of /home/curryman/Websites/DevWorld/.dragnet/. repo.path is the
+    // absolute path of the project being scanned.
+    const reviewsDir = join(repo.path, ".dragnet", "reviews", slug);
     const finalPath = join(reviewsDir, filename);
     const tmpPath = `${finalPath}.tmp`;
     await mkdir(reviewsDir, { recursive: true });
