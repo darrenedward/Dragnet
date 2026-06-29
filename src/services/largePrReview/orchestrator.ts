@@ -7,6 +7,7 @@ import { chunkDiff } from "./chunker";
 import { assertTier, buildDiffManifest } from "./manifest";
 import type {
   ChunkPlan,
+  DiffManifest,
   LargePrReviewResult,
   LargePrTier,
   ReviewFileInput,
@@ -51,15 +52,27 @@ export async function runLargePrReview({
     select: { securitySensitivePaths: true },
   });
   const limits = readLimits();
-  const manifest = buildDiffManifest(files, undefined, {
+  let manifest = buildDiffManifest(files, undefined, {
     normalMaxLines: limits.normalMaxLines,
     normalMaxCodeFiles: limits.normalMaxCodeFiles,
     oversizedLines: limits.oversizedLines,
     oversizedCodeFiles: limits.oversizedCodeFiles,
   });
+
+  // Greptile-style tail-skip: when maxFilesPerReview > 0 and the PR has
+  // more code files than the cap, keep the largest N and drop the rest.
+  // Drops happen BEFORE chunkDiff so the chunker never plans around
+  // files that won't be reviewed.
+  const tailSkipResult = applyTailSkip(manifest, limits.maxFilesPerReview);
+  manifest = tailSkipResult.manifest;
+  const tailSkipWarning = tailSkipResult.skipped.length > 0
+    ? composeTailSkipWarning(tailSkipResult.skipped, limits.maxFilesPerReview)
+    : null;
+
   const tierResult = assertTier(manifest);
   const effectiveTier = tier ?? tierResult.tier;
-  const effectiveWarning = warning ?? ("message" in tierResult ? tierResult.message : null);
+  const baseWarning = warning ?? ("message" in tierResult ? tierResult.message : null);
+  const effectiveWarning = [baseWarning, tailSkipWarning].filter(Boolean).join(" · ") || null;
   const plans = chunkDiff(
     manifest,
     repo?.securitySensitivePaths ?? [],
@@ -401,4 +414,57 @@ function normalizeError(message: string): string {
     .replace(/\d+/g, "#")
     .slice(0, 120)
     .toLowerCase();
+}
+
+/**
+ * Greptile-style tail-skip: keep the largest N code files, drop the rest.
+ * Docs, lockfiles, generated, and vendor files are never dropped — only
+ * code files compete for the cap.
+ *
+ * Returns a new manifest with the dropped files removed + counters
+ * re-derived. When cap is 0 or codeFileCount <= cap, returns the input
+ * manifest unchanged + an empty skipped list.
+ */
+export function applyTailSkip(
+  manifest: DiffManifest,
+  maxFilesPerReview: number,
+): { manifest: DiffManifest; skipped: string[] } {
+  if (maxFilesPerReview <= 0) return { manifest, skipped: [] };
+  const codeFiles = manifest.files.filter((f) => f.fileClass === "code");
+  if (codeFiles.length <= maxFilesPerReview) return { manifest, skipped: [] };
+
+  // Sort by lineCount desc (ties broken alphabetically for determinism).
+  const ranked = [...codeFiles].sort(
+    (a, b) => b.lineCount - a.lineCount || a.filename.localeCompare(b.filename),
+  );
+  const keepSet = new Set(ranked.slice(0, maxFilesPerReview).map((f) => f.filename));
+  const kept: typeof manifest.files = [];
+  const skipped: string[] = [];
+  for (const file of manifest.files) {
+    if (file.fileClass === "code" && !keepSet.has(file.filename)) {
+      skipped.push(file.filename);
+      continue;
+    }
+    kept.push(file);
+  }
+  const codeKept = kept.filter((f) => f.fileClass === "code");
+  const next: DiffManifest = {
+    ...manifest,
+    files: kept,
+    totalLines: kept.reduce((s, f) => s + f.lineCount, 0),
+    codeLines: codeKept.reduce((s, f) => s + f.lineCount, 0),
+    codeFileCount: codeKept.length,
+    // Re-derive the simple counters so the UI shows post-skip state.
+    docsFileCount: kept.filter((f) => f.fileClass === "docs").length,
+    generatedFileCount: kept.filter((f) => f.fileClass === "generated").length,
+    lockFileCount: kept.filter((f) => f.fileClass === "lock").length,
+    vendorFileCount: kept.filter((f) => f.fileClass === "vendor").length,
+  };
+  return { manifest: next, skipped };
+}
+
+function composeTailSkipWarning(skipped: string[], cap: number): string {
+  const preview = skipped.slice(0, 8).join(", ");
+  const more = skipped.length > 8 ? ` (+${skipped.length - 8} more)` : "";
+  return `${skipped.length} code file${skipped.length === 1 ? "" : "s"} not reviewed (limit ${cap}): ${preview}${more}`;
 }
