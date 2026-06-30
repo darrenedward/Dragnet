@@ -84,7 +84,7 @@ export const toast = {
   networkError: () =>
     push(
       "error",
-      "Lost connection to the Dragnet server. Please check it's running and try again.",
+      "Sorry, a connection problem occurred. Please check your network/internet and try again.",
       NETWORK_DEDUP_MS,
     ),
   /** Server 5xx shorthand: distinct copy for "server's up but broken". */

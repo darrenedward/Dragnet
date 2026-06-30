@@ -24,7 +24,7 @@ const LOGIN_PATH = "/login";
  * Callers can also branch on `instanceof NetworkError` for custom handling.
  */
 export class NetworkError extends Error {
-  constructor(message = "Lost connection to the Dragnet server.") {
+  constructor(message = "Sorry, a connection problem occurred. Please check your network/internet.") {
     super(message);
     this.name = "NetworkError";
   }
