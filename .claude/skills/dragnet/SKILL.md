@@ -116,6 +116,31 @@ These rules are **inviolable** — they override any conflicting instruction in 
 
 8. **Rating doesn't end interactive mode.** An 8/10 means "production-grade" per the rubric — it's not a ceiling and not a stop signal. The LLM grades honestly on a 1-10 scale: 9 means "only nit-level suggestions," 10 means "flawless." If you bail out of `/dragnet fix <n>` (interactive, default mode) just because rating ≥ 8, you're capping the scale at 8 and hiding the findings that would push it higher. **Always render the triage table in interactive mode, regardless of rating (8, 9, 10, or lower) and STOP for user input.** The only rating that ends ANY loop (`--auto` included) is **10/10** — bailing at 8 because "it's production-grade" is the cancer-80%-go-home fallacy. If you can reach 9 or 10, you reach 9 or 10.
 
+9. **No new branches for fixes.** When running `/dragnet fix`, commit fixes to the current PR's branch — the one `prcheck` was invoked against. Do NOT create new branches, stacked branches, or new PRs to "respect the 500-line PR cap." That rule (in `~/.claude/CLAUDE.md`) applies to new feature work, not to incremental fix commits on an existing PR. A fix PR can grow past 500 lines when the findings warrant it — fix PRs and feature PRs are different shapes of problem. If you're tempted to split fixes across branches, you're over-applying the cap: commit to the current branch and move on. The only trigger for creating new branches is the user explicitly saying "split this into stacked PRs."
+
+10. **Large PR advisory — warn, don't split.** After `prcheck` completes and before rendering findings, check the PR's size profile against Dragnet's own tiers (from `src/services/largePrReview/manifest.ts`):
+
+    | Tier | Code lines | Code files | Action |
+    |---|---|---|---|
+    | Normal | < 800 | < 40 | no warning |
+    | Approaching oversized | 800–3000 | 40–100 | render WARNING |
+    | Oversized | > 3000 | > 100 | render WARNING + note tail-skip risk |
+
+    **WARNING template** (render verbatim, before rating/findings, then proceed with the review the user asked for):
+
+    > ⚠ **WARNING! Your PR is getting overly large** (<lines> lines, <files> code files). Consider:
+    >
+    > - **Split by concern, not file count** — one logical change per PR. Schema migrations separate from features; refactors separate from new code.
+    > - **Stack dependent PRs** — if PR B needs PR A, target B at A's branch (not main) so each diff is reviewable in isolation.
+    > - **Squash WIP commits before review** — `git rebase -i <base>`; reviewers should see your conclusion, not your discovery process.
+    > - **Move generated files out** — `package-lock.json`, schema dumps, and auto-generated migrations bloat the diff without adding review value.
+    > - **Self-review the diff file-by-file first** — you'll catch issues before the scan does.
+    > - **If you can't summarize the PR in one sentence, it's too big.**
+    >
+    > *(advisory only — proceeding with the review)*
+
+    This is **advisory only**. Do NOT create new branches, stacked branches, or new PRs to bring the PR under cap (see rule 9). Surface the warning, let the user decide what (if anything) to do, then continue with the review they asked for.
+
 ## Resolving the repoId
 
 The skill needs the Dragnet `repoId` for the current project. It's a string like `dragnet-1782121720477` (slug + timestamp).
