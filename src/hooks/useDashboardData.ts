@@ -113,6 +113,13 @@ export function useDashboardData() {
 
   // ===== Scan / UI feedback =====
   const [isScanning, setIsScanning] = useState(false);
+  // The PR a UI-triggered scan is in flight against (null when no scan is
+  // running). Gates `isScanning` so the spinning "Review Progress" UI stays
+  // scoped to the actually-scanning PR — without this, switching PRs
+  // mid-scan leaks the spinner onto the new PR because scanInFlightRef
+  // holds isScanning=true until the request returns. Set in
+  // handleTriggerPrScan, cleared in its finally block.
+  const [scanningPrId, setScanningPrId] = useState<string | null>(null);
   const [isRetryingChunks, setIsRetryingChunks] = useState(false);
   const [scanResult, setScanResult] = useState<{ count: number; model: string; notice?: string | null } | null>(null);
   const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
@@ -356,11 +363,24 @@ export function useDashboardData() {
   // new view. fetchPrDetails/fetchPrsForSelectedRepo also clear this state
   // on the server side, but they're async + debounced; this effect runs
   // synchronously on selection change so the UI never renders stale data.
+  //
+  // scanResult + exportStatus are also cleared here — those hold transient
+  // "scan completed / export finished" feedback scoped to ONE PR. Without
+  // this, scanning PR-A then switching to PR-B shows PR-A's success banner
+  // on PR-B's view.
+  //
+  // scanningPrId is NOT cleared here: it has to persist across selection
+  // changes so the isScanning gate (scanningPrId === selectedPrId) correctly
+  // evaluates to false on a foreign PR and true when the user switches
+  // back to the actually-scanning PR. handleTriggerPrScan's finally block
+  // owns the clear.
   useEffect(() => {
     setActiveScan(null);
     setActiveScanChunks([]);
     setActiveFindings([]);
     setActiveIterations({});
+    setScanResult(null);
+    setExportStatus(null);
   }, [selectedRepoId, selectedPrId]);
 
   // Fetch PRs + details immediately when selection changes (no polling reset).
@@ -414,14 +434,19 @@ export function useDashboardData() {
   // activeScan as soon as the ReviewRun row exists, so checking both
   // catches scans that the PR.status alone would miss.
   //
-  // scanInFlightRef: while the user's own POST /scan is pending, ignore
-  // stale server state. Without this, the 15s poller races the request
-  // and flips isScanning=false mid-prep, the UI flips back to "ready"
-  // with the previous findings, the user re-clicks, and the second
-  // request 409s on the still-running first one.
+  // scanInFlightRef + scanningPrId gate: while the user's own POST /scan
+  // is pending on THIS PR, hold isScanning=true so the 15s poller can't
+  // race the request and flip isScanning=false mid-prep (which used to
+  // cause re-click → 409). The scanningPrId === selectedPrId check is the
+  // leak fix: when the user switches to a DIFFERENT PR mid-scan, we DON'T
+  // want isScanning held true on the foreign PR — let it derive from that
+  // PR's own state. Switching back to the scanning PR re-asserts true.
   useEffect(() => {
     if (!selectedPrId) return;
-    if (scanInFlightRef.current) return;
+    if (scanInFlightRef.current && scanningPrId === selectedPrId) {
+      setIsScanning(true);
+      return;
+    }
     const activePR = prs.find((p) => p.id === selectedPrId);
     if (!activePR) return;
     // Scope the activeScan check to the selected PR. The /findings endpoint
@@ -431,7 +456,7 @@ export function useDashboardData() {
     // that, so isScanning can't be forced true by a foreign run.
     const activeScanIsForSelectedPr = !!activeScan && activeScan.prId === selectedPrId;
     setIsScanning(activePR.status === "In Progress" || activeScanIsForSelectedPr);
-  }, [selectedPrId, prs, activeScan]);
+  }, [selectedPrId, prs, activeScan, scanningPrId]);
 
   // ===== DB actions =====
   const handleTestDbConnection = async () => {
@@ -483,11 +508,12 @@ export function useDashboardData() {
   // ===== PR scan =====
   const handleTriggerPrScan = async (opts?: { force?: boolean }) => {
     if (!selectedPrId) return;
-    const scanningPrId = selectedPrId;
+    const targetPrId = selectedPrId;
     const scanningRepoId = selectedRepoId;
     const force = opts?.force === true;
-    console.log(`[scan] handleTriggerPrScan: starting scan for prId=${scanningPrId}${force ? " (force=true)" : ""}`);
+    console.log(`[scan] handleTriggerPrScan: starting scan for prId=${targetPrId}${force ? " (force=true)" : ""}`);
     scanInFlightRef.current = true;
+    setScanningPrId(targetPrId);
     setIsScanning(true);
     setScanResult(null);
     setStale(false);
@@ -511,13 +537,13 @@ export function useDashboardData() {
     setRejectedFindings([]);
 
     setPrs((prev) =>
-      prev.map((p) => (p.id === scanningPrId ? { ...p, status: "In Progress" } : p)),
+      prev.map((p) => (p.id === targetPrId ? { ...p, status: "In Progress" } : p)),
     );
 
     const activeRepoName = repos.find((r) => r.id === scanningRepoId)?.name || scanningRepoId;
 
     try {
-      const url = `/api/prs/${scanningPrId}/scan${force ? "?force=true" : ""}`;
+      const url = `/api/prs/${targetPrId}/scan${force ? "?force=true" : ""}`;
       console.log(`[scan] handleTriggerPrScan: POST ${url}`);
       const res = await fetchJson(url, {
         method: "POST",
@@ -532,7 +558,7 @@ export function useDashboardData() {
       if (res.ok) {
         if (result.sizeProfile) {
           setPrs((prev) =>
-            prev.map((p) => (p.id === scanningPrId ? { ...p, sizeProfile: result.sizeProfile } : p)),
+            prev.map((p) => (p.id === targetPrId ? { ...p, sizeProfile: result.sizeProfile } : p)),
           );
         }
         setScanResult({
@@ -542,15 +568,15 @@ export function useDashboardData() {
         });
         console.log(`[scan] handleTriggerPrScan: refetching PR details, PRs, repos, logs`);
         setSelectedRepoId(scanningRepoId);
-        setSelectedPrId(scanningPrId);
-        await fetchPrDetails(scanningPrId, false);
+        setSelectedPrId(targetPrId);
+        await fetchPrDetails(targetPrId, false);
         if (scanningRepoId) await fetchPrsForSelectedRepo(scanningRepoId, true);
         await fetchRepos();
         await fetchLogs();
         console.log(`[scan] handleTriggerPrScan: refetch complete`);
       } else if (res.status === 409 && result.error === "INDEX_REQUIRED") {
         setPrs((prev) =>
-          prev.map((p) => (p.id === scanningPrId ? { ...p, status: "Pending" } : p)),
+          prev.map((p) => (p.id === targetPrId ? { ...p, status: "Pending" } : p)),
         );
         toast.warn(
           result.message ||
@@ -562,7 +588,7 @@ export function useDashboardData() {
         // surface the message verbatim (race: another scan grabbed the
         // lock between our force=true POST and acquireReviewLock).
         setPrs((prev) =>
-          prev.map((p) => (p.id === scanningPrId ? { ...p, status: "In Progress" } : p)),
+          prev.map((p) => (p.id === targetPrId ? { ...p, status: "In Progress" } : p)),
         );
         const msg =
           result.message ||
@@ -574,14 +600,14 @@ export function useDashboardData() {
         }
       } else {
         setPrs((prev) =>
-          prev.map((p) => (p.id === scanningPrId ? { ...p, status: "Failed" } : p)),
+          prev.map((p) => (p.id === targetPrId ? { ...p, status: "Failed" } : p)),
         );
         toast.error("Scan failed: " + (result.error || "execution timeout"));
       }
     } catch (e: any) {
       console.error("Scan dispatch crash", e);
       setPrs((prev) =>
-        prev.map((p) => (p.id === scanningPrId ? { ...p, status: "Failed" } : p)),
+        prev.map((p) => (p.id === targetPrId ? { ...p, status: "Failed" } : p)),
       );
       if (e instanceof NetworkError) {
         // Server down / unreachable — friendly copy + extended dedup so
@@ -597,6 +623,7 @@ export function useDashboardData() {
       // run again — otherwise we'd suppress the post-request re-sync
       // we're about to trigger by touching prs.
       scanInFlightRef.current = false;
+      setScanningPrId(null);
       setIsScanning(false);
     }
   };
