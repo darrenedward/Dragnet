@@ -493,10 +493,13 @@ export async function getActiveScan(prId: string): Promise<{
    * Max iteration number seen per chunkId. Chunked scans key this by the
    * chunk's DB id; non-chunked scans key it under "__run" (the sentinel
    * used when ReviewLog.reviewChunkId is null). Value shape:
-   * { current: N, max: M } where M comes from the "Iteration N/M" log
-   * format written by reviewService.ts.
+   * { current: N, max: M, provider?: string } where M comes from the
+   * "Iteration N/M — Provider" log format written by reviewService.ts.
+   * Provider is the chat preset that wrote the line — lets the UI
+   * distinguish "8/8 on NVIDIA" from "8/8 on Minimax-fallback" when
+   * chunks in a single scan use different chain entries.
    */
-  iterationsByChunk: Record<string, { current: number; max: number }>;
+  iterationsByChunk: Record<string, { current: number; max: number; provider?: string }>;
 }> {
   const reviewRun = await prisma.reviewRun.findFirst({
     where: { prId, status: "in_progress" },
@@ -566,27 +569,36 @@ export async function getActiveScan(prId: string): Promise<{
 }
 
 /**
- * Parse "Iteration N/M — …" log messages into a per-chunk map of the
- * highest iteration number seen. ReviewService writes one such line per
- * agentic-loop iteration, so the max N is the current round for that
- * chunk. Logs without a chunkId fall under the "__run" sentinel key
- * (used by non-chunked scans).
+ * Parse "Iteration N/M — Provider" log messages into a per-chunk map of
+ * the highest iteration number seen. ReviewService writes one such line
+ * per agentic-loop iteration, so the max N is the current round for
+ * that chunk. The provider name (chat preset that wrote the line) is
+ * captured so the UI can show which model each chunk is running on —
+ * critical when chunks in one scan use different chain entries with
+ * different maxIterations caps. Logs without a chunkId fall under the
+ * "__run" sentinel key (used by non-chunked scans).
  */
 function parseIterationLogs(
   logs: Array<{ message: string; reviewChunkId: string | null }>,
-): Record<string, { current: number; max: number }> {
-  const ITER_RE = /^Iteration (\d+)\/(\d+)\b/;
-  const out: Record<string, { current: number; max: number }> = {};
+): Record<string, { current: number; max: number; provider?: string }> {
+  // Current format: "Iteration N/M — Provider" (em-dash separator).
+  const ITER_RE_WITH_PROVIDER = /^Iteration (\d+)\/(\d+)\s+—\s+(.+)$/;
+  // Legacy format: "Iteration N/M" (pre-provider logs, kept for back-compat).
+  const ITER_RE_LEGACY = /^Iteration (\d+)\/(\d+)\b/;
+  const out: Record<string, { current: number; max: number; provider?: string }> = {};
   for (const log of logs) {
-    const match = log.message.match(ITER_RE);
+    const withProvider = log.message.match(ITER_RE_WITH_PROVIDER);
+    const legacy = !withProvider ? log.message.match(ITER_RE_LEGACY) : null;
+    const match = withProvider ?? legacy;
     if (!match || !match[1] || !match[2]) continue;
     const current = Number.parseInt(match[1], 10);
     const max = Number.parseInt(match[2], 10);
     if (!Number.isFinite(current) || !Number.isFinite(max)) continue;
+    const provider = withProvider ? withProvider[3]?.trim() : undefined;
     const key = log.reviewChunkId ?? "__run";
     const prev = out[key];
     if (!prev || current > prev.current) {
-      out[key] = { current, max };
+      out[key] = { current, max, provider };
     }
   }
   return out;

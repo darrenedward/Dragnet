@@ -19,12 +19,14 @@ interface Props {
   isRetrying?: boolean;
   onRetryFailedChunks?: () => void;
   /**
-   * Per-chunk agentic-loop progress: {current, max} keyed by chunkId.
-   * Only populated for active scans — completed runs don't need this
-   * because every chunk is done. Lets the grid show "iter N/M" next to
-   * running chunks so users can see the loop making progress.
+   * Per-chunk agentic-loop progress: {current, max, provider?} keyed by
+   * chunkId. Only populated for active scans — completed runs don't need
+   * this because every chunk is done. Lets the grid show "Provider ·
+   * iter N/M" next to running chunks so users can see the loop making
+   * progress AND which model each chunk is on (critical when chunks in
+   * one scan use different chain entries with different caps).
    */
-  iterationsByChunk?: Record<string, { current: number; max: number }>;
+  iterationsByChunk?: Record<string, { current: number; max: number; provider?: string }>;
 }
 
 export default function LargePrModePanel({
@@ -112,8 +114,8 @@ export default function LargePrModePanel({
                   <span>{chunk.lineCount.toLocaleString()} lines · {chunk.filePaths.length} files</span>
                   <div className="flex items-center gap-2">
                     {showIter && iter && (
-                      <span className="text-cyan-400" title="Agentic loop iteration">
-                        iter {iter.current}/{iter.max}
+                      <span className="text-cyan-400" title="Agentic loop iteration · chat provider">
+                        {iter.provider ? `${iter.provider} · ` : ""}iter {iter.current}/{iter.max}
                       </span>
                     )}
                     {chunk.rating !== null && chunk.rating !== undefined && (
