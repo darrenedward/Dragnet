@@ -188,7 +188,6 @@ export async function GET(req: Request, { params }: { params: Promise<{ prIdOrNu
     });
   } catch (err: any) {
     console.error("[prcheck error]:", err);
-    if (acquired && prIdForCleanup) endReview(prIdForCleanup);
     if (reviewRunId) {
       try {
         await completeReviewRun(reviewRunId, { status: "failed" });
@@ -197,5 +196,10 @@ export async function GET(req: Request, { params }: { params: Promise<{ prIdOrNu
       }
     }
     return NextResponse.json({ status: "Error", message: err.message }, { status: 500 });
+  } finally {
+    // Release on BOTH success and error paths — the success return above
+    // used to skip endReview, leaving the in-memory lock held until the
+    // 5-min TTL evicted it (blocked re-reviews / force=false scans).
+    if (acquired && prIdForCleanup) endReview(prIdForCleanup);
   }
 }
