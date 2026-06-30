@@ -23,12 +23,20 @@ import { assertNoActiveScan } from "./reviewFreshness";
 // reloads in dev unless this file is edited. To force-clear (e.g. after
 // a successful scan that leaked the lock), edit this comment + save.
 const activeReviews = new Map<string, number>();
-// Aligned with SCAN_STALE_AFTER_MS (30 min) in reviewFreshness.ts. The
-// previous 5 min TTL was shorter than a legitimate 16-iteration agentic
-// scan, causing duplicate scans to start while the original was still
-// running. The DB-backed assertNoActiveScan is the authoritative check;
-// this in-memory map is only a fast-path optimization.
-const REVIEW_TTL_MS = 30 * 60 * 1000;
+// MUST stay aligned with SCAN_STALE_AFTER_MS in reviewFreshness.ts. Both
+// layers must agree on when an orphaned scan is stale — if the in-memory
+// TTL is longer than the DB stale threshold, a hot-reloaded scan leaves
+// an entry that blocks new scans via 409 SCAN_IN_PROGRESS long after the
+// DB row has been reaped. acquireReviewLock checks this Map BEFORE the
+// DB, so a stale entry here is authoritative until it expires.
+//
+// 5 min (was 30): aligned with the DB threshold after commit 852ea5b
+// lowered SCAN_STALE_AFTER_MS to 5 min for faster dev-server-restart
+// recovery. The duplicate-scan risk on legitimate >5 min chunked scans
+// is the same at both layers — fixable downstream with a partial unique
+// index on ReviewRun(prId) WHERE status='in_progress' (P2006) or a
+// heartbeat, not by re-divorcing these two constants.
+const REVIEW_TTL_MS = 5 * 60 * 1000;
 
 export function isReviewActive(prId: string): boolean {
   const startedAt = activeReviews.get(prId);
