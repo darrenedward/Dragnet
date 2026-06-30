@@ -254,12 +254,12 @@ function PrHeader({
             {activePR.rating !== undefined && activePR.rating !== null && (
               <span
                 className={`px-2 py-0.5 rounded uppercase font-mono text-[9px] font-bold border ${
-                  activePR.rating >= 9
+                  activePR.rating >= 8
                     ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/25"
                     : "bg-rose-500/10 text-rose-400 border-rose-500/20"
                 }`}
               >
-                PROD GRADE: {activePR.rating}/10 ({activePR.rating >= 9 ? "APPROVED" : "REJECTED"})
+                PROD GRADE: {activePR.rating}/10 ({activePR.rating >= 8 ? "APPROVED" : "REJECTED"})
               </span>
             )}
           </div>

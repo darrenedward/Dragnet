@@ -354,11 +354,11 @@ function PrRow({ pr, isPrSelected, onSelect }: { pr: PullRequest; isPrSelected: 
             {pr.rating !== undefined && pr.rating !== null && (
               <span
                 className={`px-1 py-0.2 rounded font-extrabold text-[7.5px] border leading-none shrink-0 ${
-                  pr.rating >= 9
+                  pr.rating >= 8
                     ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/25"
                     : "bg-rose-500/10 text-rose-400 border-rose-500/20"
                 }`}
-                title={pr.rating >= 9 ? "Production Ready" : "Requires Improvements"}
+                title={pr.rating >= 8 ? "Production Ready" : "Requires Improvements"}
               >
                 {pr.rating}/10
               </span>

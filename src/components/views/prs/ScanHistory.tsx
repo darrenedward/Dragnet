@@ -79,7 +79,7 @@ function ratingChip(rating: number | null): { label: string; className: string }
       className: "bg-amber-500/10 text-amber-400 border-amber-500/25",
     };
   }
-  if (rating >= 9) {
+  if (rating >= 8) {
     return {
       label: `${rating}/10`,
       className: "bg-emerald-500/10 text-emerald-400 border-emerald-500/25",
