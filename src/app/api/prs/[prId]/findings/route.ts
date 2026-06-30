@@ -91,6 +91,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ prId: st
     const activeScanView = activeScan.reviewRun
       ? {
           id: activeScan.reviewRun.id,
+          prId: activeScan.reviewRun.prId,
           commitHash: activeScan.reviewRun.commitHash,
           diffHash: activeScan.reviewRun.diffHash,
           startedAt: activeScan.reviewRun.startedAt,
