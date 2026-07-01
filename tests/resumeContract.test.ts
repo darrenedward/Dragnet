@@ -461,4 +461,50 @@ describe("Phase 7 — scan route resume contract", () => {
     const cpPath = path.join(tmpRepo, ".dragnet", "checkpoints", runId, "__run.json");
     expect(fs.existsSync(cpPath)).toBe(false);
   });
+
+  // Phase 9.9 — verifies the second arm of the resume-reject contract.
+  // The CODE_CHANGED variant is covered above; this one ensures the
+  // CONFIG_CHANGED arm produces the correct 409 + error code so the UI
+  // can show "config drifted" rather than the generic "code drifted"
+  // message when the user changes model/limits/prompt after interrupt.
+  it("?resume=true returns 409 with RESUME_REJECTED_CONFIG_CHANGED when config differs", async () => {
+    await resetRuns();
+    const runId = await seedStaleRun({ reviewConfigHash: "config-old" });
+    await writeRunCheckpoint(runId, { reviewConfigHash: "config-old" });
+
+    const { POST } = await import("../src/app/api/prs/[prId]/scan/route");
+    const req = new Request("http://localhost/api/prs/pr-resume/scan?resume=true", {
+      method: "POST",
+    });
+    const res = await POST(req, { params: Promise.resolve({ prId: "pr-resume" }) });
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.error).toBe("RESUME_REJECTED_CONFIG_CHANGED");
+  });
+
+  // Phase 9.8 — verifies resume actually loads the checkpoint's loopCount
+  // and passes it forward as startLoopCount (so iteration N+1, not 1).
+  // The route logs `resuming run <id> from iteration <loopCount + 1>` at
+  // the boundary; spy on console.log to capture it. Mocked chat.completions
+  // returns submitReview on iteration 1 so the resumed run terminates.
+  it("?resume=true loads checkpoint loopCount and logs resumption from iteration N+1", async () => {
+    await resetRuns();
+    const runId = await seedStaleRun();
+    // Seed checkpoint at loopCount=3 — resume should log "iteration 4".
+    await writeRunCheckpoint(runId, { loopCount: 3 });
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const { POST } = await import("../src/app/api/prs/[prId]/scan/route");
+    const req = new Request("http://localhost/api/prs/pr-resume/scan?resume=true", {
+      method: "POST",
+    });
+    const res = await POST(req, { params: Promise.resolve({ prId: "pr-resume" }) });
+    expect(res.status).toBe(200);
+
+    const calls = logSpy.mock.calls.map((args) => String(args[0]));
+    expect(calls).toContainEqual(
+      expect.stringContaining(`resuming run ${runId} from iteration 4`),
+    );
+    logSpy.mockRestore();
+  });
 });
