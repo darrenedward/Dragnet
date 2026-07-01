@@ -9,6 +9,7 @@ import { safeReadFileSync, resolveSafePath } from "./src/lib/pathSafety";
 import { runDeterministicChecks, type DeterministicFinding } from "./src/services/deterministicChecks";
 import { buildFindingFingerprint, resolveSymbolsBatch } from "./src/services/largePrReview/fingerprint";
 import { reconcileFindingsAcrossRuns } from "./src/services/largePrReview/reconcile";
+import { classifyProviderOutcome, type OutcomeClass } from "./src/lib/failureClassifier";
 
 export interface ScanResult {
   success: boolean;
@@ -16,6 +17,22 @@ export interface ScanResult {
   findings: any[];
   usedModel: string;
   systemWarn?: string | null;
+}
+
+/**
+ * Per-provider attempt record. One entry per provider tried in a scan,
+ * classified by `classifyProviderOutcome()`. Phase 1 logs the array;
+ * Phase 2 persists it to `ReviewRun.tokensUsed`.
+ */
+export interface ProviderAttempt {
+  provider: string;
+  model: string;
+  iterationsUsed: number;
+  maxIterations: number;
+  submitReviewCalled: boolean;
+  rating: number | null;
+  error: unknown;
+  outcome: OutcomeClass;
 }
 
 /**
@@ -80,6 +97,32 @@ async function assertReviewRunStillActive(reviewRunId?: string): Promise<void> {
   if (run && run.status !== "in_progress") {
     throw new Error(`Review run is no longer active (status: ${run.status}).`);
   }
+}
+
+function isRetryableProviderFailure(err: any): boolean {
+  const status = Number(err?.status ?? err?.response?.status);
+  if (Number.isFinite(status)) {
+    return status === 408 || status === 409 || status === 425 || status === 429 || status >= 500;
+  }
+
+  const code = String(err?.code ?? err?.cause?.code ?? "");
+  if (
+    [
+      "ECONNABORTED",
+      "ECONNREFUSED",
+      "ECONNRESET",
+      "ENETDOWN",
+      "ENETUNREACH",
+      "ETIMEDOUT",
+      "EAI_AGAIN",
+      "ENOTFOUND",
+    ].includes(code)
+  ) {
+    return true;
+  }
+
+  const message = String(err?.message ?? err);
+  return /\b(429|rate limit|timeout|timed out|connection (error|lost|closed|reset|refused)|network|socket|fetch failed)\b/i.test(message);
 }
 
 /**
@@ -654,22 +697,28 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
       ).join("\n")
     : "";
 
-  // 6. Run agentic review loop, iterating providers in the chain.
-  //    Primary first, then fallback if configured. If every provider
-  //    fails or all loops end without a submitReview, we surface an
-  //    honest empty-failings + null-rating result with an actionable
-  //    systemWarn. Never fabricate templated findings — three months
-  //    of solarplanner "reviews" were that template silently masking
-  //    LLM failures.
+  // 6. Run agentic review loop, trying fallback providers only when the
+  //    active provider fails at the API/transport layer. If the primary
+  //    model uses its full iteration budget without submitReview, that is
+  //    a model-behavior result, not a provider outage; do not spend a second
+  //    provider's budget as a continuation reviewer. Never fabricate
+  //    templated findings — three months of solarplanner "reviews" were
+  //    that template silently masking LLM failures.
   const chain = getChatChain();
   let agenticError: string | null = null;
   let finalReview: any = null;
+  const providerAttempts: ProviderAttempt[] = [];
 
   if (chain.length === 0) {
     systemWarn = "No LLM endpoint or chat model configured. Open the LLM Settings tab and configure at least one provider.";
   } else {
     providerLoop: for (const { client, model, name, maxIterations } of chain) {
       usedModel = model;
+      // Per-attempt state — visible to catch/finally for classification.
+      // Reset at the top of each provider iteration.
+      let attemptIterations = 0;
+      let attemptMalformedStreak = 0;
+      let attemptError: unknown = null;
       try {
         const initialPrompt = `Your mission: audit this PR with maximum prejudice. Assume the author is hiding something. Trace every changed function across the codebase — check its callers, its callees, its error handling, its edge cases. Use \`searchCodebase\`, \`getCallers\`, and \`findSimilar\` to validate that nothing is overlooked.
 When you are satisfied (or outraged), call \`submitReview\` exactly once.
@@ -699,6 +748,7 @@ ${diffPayload}${deterministicPayload}`;
 
         while (loopCount < ITERATION_BUDGET && !finalReview) {
           loopCount++;
+          attemptIterations = loopCount;
           console.log(`[review] iteration ${loopCount}/${ITERATION_BUDGET} provider=${name}`);
           void logReview(prId, `Iteration ${loopCount}/${ITERATION_BUDGET} — ${name}`, "info", reviewRunId, reviewChunkId);
           const response = await withTimeout(
@@ -759,6 +809,7 @@ ${diffPayload}${deterministicPayload}`;
                 fnArgs = call.function?.arguments ? JSON.parse(stripThinkBlocks(call.function.arguments)) : {};
               } catch (e) {
                 console.warn(`[review] Invalid JSON in tool call arguments for ${fnName}`);
+                attemptMalformedStreak++;
                 messages.push({
                   role: "tool",
                   tool_call_id: call.id,
@@ -771,6 +822,7 @@ ${diffPayload}${deterministicPayload}`;
                 const normalized = normalizeFinalReview(fnArgs);
                 if (!normalized) {
                   console.warn(`[review] submitReview had invalid shape provider=${name}`);
+                  attemptMalformedStreak++;
                   messages.push({
                     role: "tool",
                     tool_call_id: call.id,
@@ -789,6 +841,10 @@ ${diffPayload}${deterministicPayload}`;
                 finalReview = normalized;
                 break;
               }
+
+              // Valid call shape (passed JSON parse, not malformed submitReview)
+              // resets the consecutive-malformed streak.
+              attemptMalformedStreak = 0;
 
               let toolResult = "No results.";
               let resultSummary = "no results";
@@ -991,14 +1047,60 @@ ${diffPayload}${deterministicPayload}`;
           break providerLoop;
         }
         // Else: provider ran without exception but produced no submitReview.
-        // Fall through to the next provider (if any).
+        // Do not fall through to fallback here; fallback is reserved for
+        // provider/API failures such as 429s, timeouts, and connection errors.
+        break providerLoop;
       } catch (err: any) {
+        attemptError = err;
         console.warn(`[review] chat provider ${name} failed: ${err.message}`);
         void logReview(prId, `Provider ${name} failed: ${err.message}`, "error", reviewRunId, reviewChunkId);
         agenticError = `${name}: ${err.message}`;
-        // try next provider
+        if (!isRetryableProviderFailure(err)) {
+          console.warn(`[review] not trying fallback after non-retryable provider failure provider=${name}`);
+          void logReview(prId, `Fallback skipped after non-retryable ${name} failure`, "warn", reviewRunId, reviewChunkId);
+          break providerLoop;
+        }
+        // Retryable provider/API failure: try next provider if configured.
+      } finally {
+        // Always record this provider's outcome. Covers success break,
+        // quality-failure break (no submitReview), thrown errors, and
+        // retryable-transport-failure fall-through to next provider.
+        // Phase 1: console log only. Phase 2 persists to ReviewRun.tokensUsed.
+        const successThisAttempt = finalReview !== null;
+        const ratingThisAttempt: number | null = successThisAttempt
+          ? (finalReview as any)?.rating ?? null
+          : null;
+        const outcome = classifyProviderOutcome({
+          error: attemptError,
+          submitReviewCalled: successThisAttempt,
+          rating: ratingThisAttempt,
+          iterationsUsed: attemptIterations,
+          maxIterations,
+          malformedStreak: attemptMalformedStreak,
+          interrupted: false,
+          refusalDetected: false,
+          emptyFindings: false,
+        });
+        providerAttempts.push({
+          provider: name,
+          model,
+          iterationsUsed: attemptIterations,
+          maxIterations,
+          submitReviewCalled: successThisAttempt,
+          rating: ratingThisAttempt,
+          error: attemptError,
+          outcome,
+        });
+        console.log(
+          `[review] provider ${name} outcome=${outcome} iterations=${attemptIterations}/${maxIterations} submitReview=${successThisAttempt} malformed=${attemptMalformedStreak}` +
+            (attemptError ? ` error=${(attemptError as any)?.message ?? String(attemptError)}` : ""),
+        );
       }
     }
+
+    console.log(
+      `[review] providerAttempts summary: ${providerAttempts.map((a) => `${a.provider}=${a.outcome}`).join(", ") || "(no attempts)"}`,
+    );
 
     if (finalReview) {
       // Clamp severity/category to the known enums so both the returned and
