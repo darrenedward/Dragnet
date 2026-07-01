@@ -60,6 +60,26 @@ export type ActiveScanCheck =
       startedAt: Date;
       triggerReason: string | null;
       model: string | null;
+    }
+  | {
+      /**
+       * Phase 7 — stale in_progress run WITH a valid checkpoint. The
+       * scan route returns HTTP 200 with this shape so the UI can offer
+       * Continue / Start fresh. Resume is gated on the hash trio
+       * matching; mismatches fall through to Start fresh.
+       */
+      ok: false;
+      kind: "stale_inspectable";
+      runId: string;
+      startedAt: Date;
+      commitHash: string;
+      diffHash: string;
+      reviewConfigHash: string;
+      checkpointId: string;
+      completedIterations: number;
+      totalIterations: number;
+      lastProvider: string | null;
+      lastModel: string | null;
     };
 
 export interface LatestReviewResult {
@@ -292,26 +312,61 @@ export async function createReviewRun(opts: {
  * creation); this DB check catches races where two requests slip past the
  * lock in quick succession, or where a scan was started by a different
  * process entirely (separate Next.js worker, manual DB write, etc.).
+ *
+ * Phase 7: stale runs (older than SCAN_STALE_AFTER_MS) used to be auto-
+ * reaped. Now they're inspected first — if a valid checkpoint exists,
+ * return `kind: "stale_inspectable"` so the scan route can surface a
+ * Continue / Start fresh affordance. Runs with no checkpoint still fall
+ * through to the existing reap-and-proceed behavior.
  */
 export async function assertNoActiveScan(
   prId: string,
   force: boolean,
+  repoPath?: string | null,
 ): Promise<ActiveScanCheck> {
   if (force) return { ok: true };
   const inProgress = await prisma.reviewRun.findFirst({
     where: { prId, status: "in_progress" },
     orderBy: { startedAt: "desc" },
-    select: { id: true, startedAt: true, triggerReason: true, model: true },
+    select: {
+      id: true,
+      startedAt: true,
+      triggerReason: true,
+      model: true,
+      commitHash: true,
+      diffHash: true,
+      reviewConfigHash: true,
+    },
   });
   if (!inProgress) return { ok: true };
 
-  // Layer 2: stale-run auto-recover. If the in_progress run is older than
-  // SCAN_STALE_AFTER_MS, the process that owned it is gone — reap it and
-  // let this scan proceed. Without this, a crashed/killed dev server
-  // permanently bricks the PR (the operator would need `?force=true` or
-  // manual DB intervention to recover).
+  // Layer 2: stale-run inspection. If the in_progress run is older than
+  // SCAN_STALE_AFTER_MS, the process that owned it is gone. Before reaping,
+  // check whether a valid checkpoint exists — if so, surface it to the
+  // scan route so the user can resume instead of losing the partial work.
   const ageMs = Date.now() - inProgress.startedAt.getTime();
   if (ageMs > SCAN_STALE_AFTER_MS) {
+    const inspectable = repoPath
+      ? await inspectStaleRun(repoPath, inProgress)
+      : null;
+    if (inspectable) {
+      return {
+        ok: false,
+        kind: "stale_inspectable",
+        runId: inProgress.id,
+        startedAt: inProgress.startedAt,
+        commitHash: inProgress.commitHash,
+        diffHash: inProgress.diffHash,
+        reviewConfigHash: inProgress.reviewConfigHash,
+        checkpointId: inspectable.checkpointId,
+        completedIterations: inspectable.completedIterations,
+        totalIterations: inspectable.totalIterations,
+        lastProvider: inspectable.lastProvider,
+        lastModel: inspectable.lastModel,
+      };
+    }
+    // No checkpoint — fall through to the existing reap-and-proceed path
+    // so the user isn't blocked on an orphaned in_progress row.
     try {
       await prisma.reviewRun.update({
         where: { id: inProgress.id },
@@ -324,9 +379,6 @@ export async function assertNoActiveScan(
           `so the new scan can proceed.`,
       );
     } catch (err) {
-      // Reap failed (DB write error, concurrent reaper, etc.). Don't block
-      // the new scan — fall through to the 409 path so the operator sees
-      // the original run ID and can investigate manually.
       console.error(
         `[reviewFreshness] failed to reap stale run ${inProgress.id}:`,
         err,
@@ -341,6 +393,47 @@ export async function assertNoActiveScan(
     startedAt: inProgress.startedAt,
     triggerReason: inProgress.triggerReason,
     model: inProgress.model,
+  };
+}
+
+/**
+ * Phase 7 — inspect a stale in_progress run for recoverable checkpoint
+ * state. Returns null when no valid checkpoint is found (caller falls
+ * through to reap). When checkpoints exist, prefers the run-level
+ * `__run` checkpoint over per-chunk ones (chunked scans resume via the
+ * large-PR orchestrator's retryFailedChunk, not the scan route).
+ */
+async function inspectStaleRun(
+  repoPath: string,
+  run: {
+    id: string;
+    commitHash: string;
+    diffHash: string;
+    reviewConfigHash: string;
+  },
+): Promise<{
+  checkpointId: string;
+  completedIterations: number;
+  totalIterations: number;
+  lastProvider: string | null;
+  lastModel: string | null;
+} | null> {
+  // Lazy import — checkpointStore pulls in fs/node and we don't want to
+  // pay that cost on every assertNoActiveScan call when no stale run exists.
+  const { listRunCheckpoints, RUN_CHECKPOINT_ID } = await import("../services/checkpointStore");
+  const checkpoints = await listRunCheckpoints(repoPath, run.id);
+  if (checkpoints.length === 0) return null;
+  // Prefer the run-level checkpoint for normal scans; if only chunk
+  // checkpoints exist, return the first one (the UI can offer chunk-
+  // specific resume via retryFailedChunk).
+  const preferred =
+    checkpoints.find((c) => c.checkpointId === RUN_CHECKPOINT_ID) ?? checkpoints[0];
+  return {
+    checkpointId: preferred.checkpointId,
+    completedIterations: preferred.loopCount,
+    totalIterations: preferred.maxIterations,
+    lastProvider: preferred.provider,
+    lastModel: preferred.model,
   };
 }
 

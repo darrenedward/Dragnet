@@ -777,6 +777,39 @@ export interface RunPrScanOptions {
     diffHash: string;
     reviewConfigHash: string;
   };
+  /**
+   * Phase 7 resume — pre-seed the agentic loop with messages loaded from
+   * a prior run's checkpoint. When provided, the loop skips the system +
+   * initial user prompt construction and starts iterating from these
+   * messages directly. Paired with `startLoopCount` so the iteration
+   * counter resumes at the right step (e.g. loopCount=3 → next iteration
+   * is 4, not 1).
+   *
+   * The hash trio in `checkpointMetadata` MUST match the corresponding
+   * fields on the checkpoint; the resume route validates this before
+   * calling runPrScan so the runner can trust the seed.
+   */
+  initialMessages?: CheckpointMessageLike[];
+  /**
+   * Phase 7 resume — iteration counter to resume from. The next iteration
+   * is `startLoopCount + 1`. Without this, the loop restarts at 1 and
+   * the caller pays for the same iterations again (defeating the resume).
+   */
+  startLoopCount?: number;
+}
+
+/**
+ * Phase 7 — minimal shape of a checkpoint message. Mirrors the OpenAI
+ * chat-completions `{role, content}` shape but stays permissive about
+ * extra fields (tool_call_id, tool_calls, name) so we don't tie the
+ * runner to a specific SDK version. The index signature is what makes
+ * the on-disk CheckpointMessage assignable to this type without forcing
+ * every caller to spread/copy.
+ */
+export interface CheckpointMessageLike {
+  role: string;
+  content: unknown;
+  [key: string]: unknown;
 }
 
 export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunId?: string, reviewChunkId?: string, prManifest?: PrManifestEntry[], options?: RunPrScanOptions): Promise<ScanResult> {
@@ -1003,12 +1036,14 @@ ${codebaseContext ? `=== PRE-FETCHED AST SYMBOLS & CALL-GRAPH LINKAGES ===\n${co
 === CHANGED FILES & CONTEXT ===
 ${diffPayload}${deterministicPayload}`;
 
-        const messages: any[] = [
-          { role: "system", content: SYSTEM_INSTRUCTION },
-          { role: "user", content: initialPrompt },
-        ];
+        const messages: any[] = options?.initialMessages && options.initialMessages.length > 0
+          ? [...options.initialMessages]
+          : [
+              { role: "system", content: SYSTEM_INSTRUCTION },
+              { role: "user", content: initialPrompt },
+            ];
 
-        let loopCount = 0;
+        let loopCount = options?.startLoopCount ?? 0;
         let lastHadToolCalls = false;
         let consecutiveEmptyResponses = 0;
         // Iteration budget comes from the active chat preset (per-preset

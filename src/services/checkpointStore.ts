@@ -65,6 +65,12 @@ export const RUN_CHECKPOINT_ID = "__run";
 export interface CheckpointMessage {
   role: string;
   content: unknown;
+  // Index signature lets callers spread checkpoint-loaded messages
+  // straight into chat.completions.create({ messages }) without a copy,
+  // and lets CheckpointMessage satisfy CheckpointMessageLike in
+  // reviewService.ts (which mirrors this shape for the runPrScan
+  // options). Extra fields like tool_calls/tool_call_id pass through.
+  [key: string]: unknown;
 }
 
 export interface CheckpointState {

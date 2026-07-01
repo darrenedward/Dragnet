@@ -95,6 +95,23 @@ export function useDashboardData() {
     chunksSkipped?: number;
   } | null>(null);
   const [activeScanChunks, setActiveScanChunks] = useState<ReviewChunk[]>([]);
+  // Phase 7 — when a scan comes back as `status: "interrupted"`, store
+  // the resume metadata so the UI can render a Continue / Start fresh
+  // banner. Cleared on any fresh scan, on Continue, or on PR switch.
+  const [interruptedScan, setInterruptedScan] = useState<{
+    prId: string;
+    runId: string;
+    checkpointId: string;
+    completedIterations: number;
+    totalIterations: number;
+    reachedPercent: number;
+    lastProvider: string | null;
+    lastModel: string | null;
+    resumeAllowed: boolean;
+    codeChanged: boolean;
+    configChanged: boolean;
+    message: string;
+  } | null>(null);
   // Partial findings persisted from completed chunks of the active scan.
   // Lets the UI render "found so far" while the scan is still running.
   const [activeFindings, setActiveFindings] = useState<ReviewFinding[]>([]);
@@ -381,6 +398,7 @@ export function useDashboardData() {
     setActiveIterations({});
     setScanResult(null);
     setExportStatus(null);
+    setInterruptedScan(null);
   }, [selectedRepoId, selectedPrId]);
 
   // Fetch PRs + details immediately when selection changes (no polling reset).
@@ -554,7 +572,39 @@ export function useDashboardData() {
       });
 
       const result = await res.json();
-      console.log(`[scan] handleTriggerPrScan: response status=${res.status}, findings=${result.findings?.length}, rating=${result.rating}, model=${result.usedModel}`);
+      console.log(`[scan] handleTriggerPrScan: response status=${res.status}, findings=${result.findings?.length}, rating=${result.rating}, model=${result.usedModel}, status=${result.status ?? "(none)"}`);
+      // Phase 7 — interrupted scan with valid checkpoint. Don't treat
+      // as success or failure; store the resume metadata and let the
+      // banner drive Continue / Start fresh.
+      if (res.ok && result.status === "interrupted") {
+        setInterruptedScan({
+          prId: targetPrId,
+          runId: result.runId,
+          checkpointId: result.checkpointId,
+          completedIterations: result.completedIterations,
+          totalIterations: result.totalIterations,
+          reachedPercent: result.reachedPercent,
+          lastProvider: result.lastProvider,
+          lastModel: result.lastModel,
+          resumeAllowed: result.resumeAllowed,
+          codeChanged: result.codeChanged,
+          configChanged: result.configChanged,
+          message: result.message,
+        });
+        setPrs((prev) =>
+          prev.map((p) => (p.id === targetPrId ? { ...p, status: "In Progress" } : p)),
+        );
+        if (result.resumeAllowed) {
+          toast.info(result.message);
+        } else {
+          toast.warn(result.message);
+        }
+        return;
+      }
+      // Any successful non-interrupted response clears the banner.
+      if (res.ok) {
+        setInterruptedScan(null);
+      }
       if (res.ok) {
         if (result.sizeProfile) {
           setPrs((prev) =>
@@ -626,6 +676,74 @@ export function useDashboardData() {
       setScanningPrId(null);
       setIsScanning(false);
     }
+  };
+
+  // Phase 7 — Continue an interrupted scan from its last checkpoint.
+  // Hits POST /scan?resume=true, which the route validates against the
+  // stored hash trio before replaying the checkpoint into runPrScan.
+  // Backend rejects with 409 RESUME_REJECTED_* when commit/config drifted;
+  // surface as a warn toast and refresh the interrupted banner so the
+  // user sees the new verdict instead of a stale "resumeAllowed=true".
+  const handleContinueScan = async (prId: string) => {
+    if (!prId) return;
+    setIsScanning(true);
+    setScanningPrId(prId);
+    scanInFlightRef.current = true;
+    try {
+      const res = await fetchJson(`/api/prs/${prId}/scan?resume=true`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const result = await res.json();
+      if (res.status === 409 && (result.error === "RESUME_REJECTED_CODE_CHANGED" || result.error === "RESUME_REJECTED_CONFIG_CHANGED")) {
+        setInterruptedScan((prev) => prev && prev.prId === prId ? {
+          ...prev,
+          resumeAllowed: false,
+          codeChanged: result.error === "RESUME_REJECTED_CODE_CHANGED",
+          configChanged: result.error === "RESUME_REJECTED_CONFIG_CHANGED",
+          message: result.message || "Resume rejected — underlying code or review config changed.",
+        } : prev);
+        toast.warn(result.message || "Resume rejected — code or review config changed since the checkpoint.");
+        return;
+      }
+      if (!res.ok) {
+        toast.error("Resume failed: " + (result.error || "execution timeout"));
+        return;
+      }
+      setInterruptedScan(null);
+      setPrs((prev) =>
+        prev.map((p) => (p.id === prId ? { ...p, status: "In Progress" } : p)),
+      );
+      setSelectedPrId(prId);
+      await fetchPrDetails(prId, false);
+      toast.info("Resuming scan from last checkpoint…");
+    } catch (e: any) {
+      if (e instanceof NetworkError) {
+        toast.networkError();
+      } else {
+        toast.error("Resume failed to start: " + (e?.message ?? "unknown error"));
+      }
+    } finally {
+      scanInFlightRef.current = false;
+      setScanningPrId(null);
+      setIsScanning(false);
+    }
+  };
+
+  // Phase 7 — Discard the interrupted checkpoint and start a brand-new
+  // scan. Backend deletes every checkpoint file for the run and marks
+  // the old ReviewRun as failed before createReviewRun flips a new row
+  // to in_progress. We reuse handleTriggerPrScan({ force: true }) so the
+  // optimistic UI + scanning-state plumbing matches the normal path.
+  const handleStartFreshScan = async (prId: string) => {
+    if (!prId) return;
+    setInterruptedScan(null);
+    const prevSelected = selectedPrId;
+    if (prevSelected !== prId) {
+      setSelectedPrId(prId);
+    }
+    await handleTriggerPrScan({ force: true });
   };
 
   const handleRetryFailedChunks = async () => {
@@ -868,6 +986,10 @@ export function useDashboardData() {
     exportStatus,
     handleCopyCode,
     copyFeedback,
+    // Phase 7 — interrupted-scan banner
+    interruptedScan,
+    handleContinueScan,
+    handleStartFreshScan,
     // add repo modal
     showAddRepoModal,
     setShowAddRepoModal,

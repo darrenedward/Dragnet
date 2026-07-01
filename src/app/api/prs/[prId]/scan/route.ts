@@ -19,6 +19,12 @@ import {
   createReviewRun,
   completeReviewRun,
 } from "@/src/lib/reviewFreshness";
+import {
+  readCheckpoint,
+  deleteRunCheckpoints,
+  RUN_CHECKPOINT_ID,
+  type CheckpointState,
+} from "@/src/services/checkpointStore";
 
 export async function POST(req: Request, { params }: { params: Promise<{ prId: string }> }) {
   // Route-level auth: this is the UI scan trigger (the API-key path is
@@ -30,6 +36,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
   console.log(`[scan] route: POST received for prId=${prId}`);
 
   const force = new URL(req.url).searchParams.get("force") === "true";
+  // Phase 7 resume parameters. `resume=true` loads the prior run's
+  // checkpoint and continues at the saved iteration. `fresh=true` marks
+  // the prior run failed/interrupted, deletes its checkpoints, and
+  // starts a brand new scan. Both are mutually exclusive with each
+  // other and with plain `force=true` (which is the legacy "abort and
+  // restart" semantics — no checkpoint inspection).
+  const resume = new URL(req.url).searchParams.get("resume") === "true";
+  const fresh = new URL(req.url).searchParams.get("fresh") === "true";
 
   // Tracks whether THIS request acquired the review lock, so a failure
   // before acquisition never clears a concurrent scan's lock.
@@ -178,7 +192,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
     // DB-backed assertNoActiveScan + beginReview in one call. The other
     // three scan entry points (prcheck, prepush, command) use the same
     // helper so they all share identical guard semantics.
-    const lock = await acquireReviewLock(prId, force);
+    //
+    // Phase 7: pass repoPath so assertNoActiveScan can inspect stale runs
+    // for recoverable checkpoint state. Resume and Start fresh both act
+    // like force=true at the lock layer (they replace the stale run) —
+    // the route layer decides whether to load the checkpoint (resume) or
+    // delete it (fresh) before calling runPrScan.
+    const lock = await acquireReviewLock(prId, force || resume || fresh, repo.path);
     if (lock.status === "busy") {
       console.log(`[scan] route: lock acquisition failed for ${prId} — 409 (runId=${lock.runId})`);
       return NextResponse.json(
@@ -191,6 +211,42 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
         { status: 409 },
       );
     }
+    // Phase 7 — stale_inspectable: a stale in_progress run has a valid
+    // checkpoint. Don't acquire the lock; surface the resume info so the
+    // UI can prompt the user to Continue or Start fresh. The stale run
+    // row stays in_progress; the next call with ?resume=true or ?fresh=true
+    // will replace it (both pass force=true at the lock layer).
+    if (lock.status === "stale_inspectable") {
+      console.log(`[scan] route: stale run ${lock.runId} has checkpoint ${lock.checkpointId} — surfacing resume affordance`);
+      // Validate hashes BEFORE advertising resume — if code or config
+      // already moved, the checkpoint is useless and the caller should
+      // just start fresh. This is the same gate the resume path enforces,
+      // but running it here lets the UI render the right CTA.
+      const codeChanged = lock.commitHash !== pr.commitHash || lock.diffHash !== currentDiffHash;
+      const configChanged = lock.reviewConfigHash !== currentConfigHash;
+      return NextResponse.json({
+        status: "interrupted",
+        runId: lock.runId,
+        checkpointId: lock.checkpointId,
+        completedIterations: lock.completedIterations,
+        totalIterations: lock.totalIterations,
+        reachedPercent: lock.totalIterations > 0
+          ? Math.round((lock.completedIterations / lock.totalIterations) * 100)
+          : 0,
+        lastProvider: lock.lastProvider,
+        lastModel: lock.lastModel,
+        startedAt: lock.startedAt,
+        resumeAllowed: !codeChanged && !configChanged,
+        codeChanged,
+        configChanged,
+        message: codeChanged
+          ? "Cannot resume — the PR's code has changed since the checkpoint."
+          : configChanged
+            ? "Cannot resume — the review configuration (model, prompt, or limits) has changed since the checkpoint."
+            : "Scan was interrupted. Continue from iteration " +
+              `${lock.completedIterations + 1}/${lock.totalIterations} or start fresh.`,
+      });
+    }
     acquired = true;
     const releaseLock = lock.release;
     // Phase 4: signal lets force-restart abort the in-flight scan at the
@@ -198,10 +254,80 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
     // chat.completions.create call receives it as a request option.
     const scanSignal = lock.signal;
 
+    // Phase 7 resume — load the checkpoint from the prior stale run.
+    // AcquireReviewLock with force=true already cleared the in-memory
+    // lock and aborted the prior scan's controller; the prior run row
+    // is still in_progress in the DB. We re-use that row's id instead
+    // of creating a new one so resume telemetry, lastCheckpointAt, etc.
+    // attach to the same run the user is resuming.
+    let resumeRunId: string | null = null;
+    let resumeSeed: { messages: CheckpointState["messages"]; loopCount: number } | null = null;
+    if (resume || fresh) {
+      const staleRun = await prisma.reviewRun.findFirst({
+        where: { prId, status: "in_progress" },
+        orderBy: { startedAt: "desc" },
+        select: { id: true, commitHash: true, diffHash: true, reviewConfigHash: true },
+      });
+      if (staleRun) {
+        if (fresh) {
+          // Delete checkpoints and mark the old run interrupted — clean
+          // slate for the new scan.
+          if (repo.path) {
+            try {
+              deleteRunCheckpoints(repo.path, staleRun.id);
+            } catch (err: any) {
+              console.warn(`[scan] route: failed to delete checkpoints for ${staleRun.id}: ${err?.message ?? err}`);
+            }
+          }
+          try {
+            await prisma.reviewRun.update({
+              where: { id: staleRun.id },
+              data: {
+                status: "failed",
+                completedAt: new Date(),
+              },
+            });
+            console.log(`[scan] route: Start fresh — marked prior run ${staleRun.id} failed`);
+          } catch (err: any) {
+            console.warn(`[scan] route: failed to mark prior run ${staleRun.id} failed: ${err?.message ?? err}`);
+          }
+        } else {
+          // Resume path — validate hashes before loading.
+          const codeChanged = staleRun.commitHash !== pr.commitHash
+            || staleRun.diffHash !== currentDiffHash;
+          const configChanged = staleRun.reviewConfigHash !== currentConfigHash;
+          if (codeChanged || configChanged) {
+            return NextResponse.json(
+              {
+                error: codeChanged ? "RESUME_REJECTED_CODE_CHANGED" : "RESUME_REJECTED_CONFIG_CHANGED",
+                message: codeChanged
+                  ? "Cannot resume — the PR's code has changed since the checkpoint."
+                  : "Cannot resume — the review configuration has changed since the checkpoint.",
+              },
+              { status: 409 },
+            );
+          }
+          if (repo.path) {
+            const cp = readCheckpoint(repo.path, staleRun.id, RUN_CHECKPOINT_ID);
+            if (cp) {
+              resumeRunId = staleRun.id;
+              resumeSeed = { messages: cp.messages, loopCount: cp.loopCount };
+              console.log(`[scan] route: resuming run ${staleRun.id} from iteration ${cp.loopCount + 1}`);
+            } else {
+              console.log(`[scan] route: resume requested but no __run checkpoint found for ${staleRun.id} — starting fresh`);
+            }
+          }
+        }
+      }
+    }
+
     await prisma.pullRequest.updateMany({ where: { id: prId }, data: { status: 'In Progress' } });
     console.log(`[scan] route: status set to In Progress`);
 
-    reviewRunId = await createReviewRun({
+    // Phase 7 resume — re-use the prior run id instead of creating a new
+    // row when the user chose Continue. This keeps the run's telemetry,
+    // checkpoints, and reviewLogs coherent across the interruption.
+    reviewRunId = resumeRunId ?? await createReviewRun({
       prId,
       repoId: pr.repoId,
       commitHash: pr.commitHash,
@@ -211,7 +337,19 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
       triggerReason: "manual",
       forced: force,
     });
-    console.log(`[scan] route: created in_progress ReviewRun ${reviewRunId}`);
+    if (resumeRunId) {
+      // Resume re-uses the prior run row — flip it back to in_progress
+      // so isRunStillActive / assertReviewRunStillActive let the loop run.
+      try {
+        await prisma.reviewRun.update({
+          where: { id: resumeRunId },
+          data: { status: "in_progress", completedAt: null },
+        });
+      } catch (err: any) {
+        console.warn(`[scan] route: failed to reset run ${resumeRunId} to in_progress: ${err?.message ?? err}`);
+      }
+    }
+    console.log(`[scan] route: ${resumeRunId ? `resuming` : `created in_progress`} ReviewRun ${reviewRunId}`);
 
     console.log(`[scan] route: calling ${tier.tier === "normal" ? "runPrScan" : "runLargePrReview"} with ${files.length} files`);
     // Phase 5 resume — pass the hash trio so every iteration checkpoint
@@ -222,7 +360,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
       reviewConfigHash: currentConfigHash,
     };
     const result = tier.tier === "normal"
-      ? await runPrScan(prId, files, reviewRunId, undefined, undefined, { signal: scanSignal, checkpointMetadata })
+      ? await runPrScan(prId, files, reviewRunId, undefined, undefined, {
+          signal: scanSignal,
+          checkpointMetadata,
+          ...(resumeSeed ? { initialMessages: resumeSeed.messages, startLoopCount: resumeSeed.loopCount } : {}),
+        })
       : await runLargePrReview({
           reviewRunId,
           prId,

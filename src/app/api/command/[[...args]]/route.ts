@@ -73,6 +73,17 @@ async function startTrackedReview(pr: any, repo: any): Promise<
       startedAt: lock.startedAt,
     };
   }
+  // Phase 7: programmatic entry point can't surface Continue/Start fresh
+  // UI, so a stale_inspectable result (only returned when repoPath is
+  // passed, which we don't here) is treated as busy. Defensive — narrows
+  // the union so the next line's `.release` access type-checks.
+  if (lock.status === "stale_inspectable") {
+    return {
+      conflict: true,
+      runId: lock.runId,
+      startedAt: lock.startedAt,
+    };
+  }
   const releaseLock = lock.release;
 
   const reviewRunId = await createReviewRun({

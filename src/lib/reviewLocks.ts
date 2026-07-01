@@ -118,11 +118,32 @@ export function getActiveReviewSignal(prId: string): AbortSignal | undefined {
  */
 export type ReviewLockResult =
   | { status: "acquired"; release: () => void; signal: AbortSignal }
-  | { status: "busy"; runId: string; startedAt: Date; message: string };
+  | { status: "busy"; runId: string; startedAt: Date; message: string }
+  | {
+      /**
+       * Phase 7 — stale in_progress run WITH a valid checkpoint. The
+       * scan route surfaces this as HTTP 200 with the checkpoint metadata
+       * so the UI can offer Continue / Start fresh. Lock is NOT acquired;
+       * the caller decides whether to resume (which calls acquireReviewLock
+       * with force=true to clear the stale run) or start fresh (same).
+       */
+      status: "stale_inspectable";
+      runId: string;
+      startedAt: Date;
+      commitHash: string;
+      diffHash: string;
+      reviewConfigHash: string;
+      checkpointId: string;
+      completedIterations: number;
+      totalIterations: number;
+      lastProvider: string | null;
+      lastModel: string | null;
+    };
 
 export async function acquireReviewLock(
   prId: string,
   force: boolean,
+  repoPath?: string | null,
 ): Promise<ReviewLockResult> {
   if (force) {
     // Abort the in-flight scan BEFORE the DB check, so the old scan's
@@ -150,8 +171,23 @@ export async function acquireReviewLock(
       message: "A review is already in progress for this PR (in-memory lock).",
     };
   }
-  const dbCheck = await assertNoActiveScan(prId, force);
+  const dbCheck = await assertNoActiveScan(prId, force, repoPath);
   if (dbCheck.ok === false) {
+    if ("kind" in dbCheck && dbCheck.kind === "stale_inspectable") {
+      return {
+        status: "stale_inspectable",
+        runId: dbCheck.runId,
+        startedAt: dbCheck.startedAt,
+        commitHash: dbCheck.commitHash,
+        diffHash: dbCheck.diffHash,
+        reviewConfigHash: dbCheck.reviewConfigHash,
+        checkpointId: dbCheck.checkpointId,
+        completedIterations: dbCheck.completedIterations,
+        totalIterations: dbCheck.totalIterations,
+        lastProvider: dbCheck.lastProvider,
+        lastModel: dbCheck.lastModel,
+      };
+    }
     return {
       status: "busy",
       runId: dbCheck.runId,

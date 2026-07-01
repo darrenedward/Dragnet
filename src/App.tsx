@@ -321,6 +321,9 @@ export default function App() {
                   repoIndexedAt={activeRepo?.indexedAt ?? null}
                   repoId={d.selectedRepoId}
                   onIndexComplete={d.handleTriggerReviewPass}
+                  interruptedScan={d.interruptedScan}
+                  onContinueScan={d.handleContinueScan}
+                  onStartFreshScan={d.handleStartFreshScan}
                 />
               )}
             </AnimatePresence>

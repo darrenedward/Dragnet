@@ -17,6 +17,7 @@ import {
 import type { PRFile, PullRequest, ReviewChunk, ReviewFinding } from "../../lib/types";
 import { getStatusBadgeStyle } from "../../lib/types";
 import IndexNowBanner from "./prs/IndexNowBanner";
+import InterruptedScanBanner, { type InterruptedScan } from "./prs/InterruptedScanBanner";
 import ReviewProgress from "./prs/ReviewProgress";
 import ReviewCard from "./prs/ReviewCard";
 import ScanHistory from "./prs/ScanHistory";
@@ -96,6 +97,11 @@ interface Props {
   repoIndexedAt?: string | null;
   repoId?: string;
   onIndexComplete?: () => void;
+  // Phase 7 — interrupted-scan resume banner. Present only when the scan
+  // endpoint returned `status: "interrupted"` for the active PR.
+  interruptedScan?: InterruptedScan | null;
+  onContinueScan?: (prId: string) => void;
+  onStartFreshScan?: (prId: string) => void;
 }
 
 export default function PrsView({
@@ -127,6 +133,9 @@ export default function PrsView({
   repoIndexedAt,
   repoId,
   onIndexComplete,
+  interruptedScan,
+  onContinueScan,
+  onStartFreshScan,
 }: Props) {
   const scanSettings = useScanSettingsSummary();
 
@@ -153,6 +162,9 @@ export default function PrsView({
           repoId={repoId}
           repoIndexedAt={repoIndexedAt}
           onIndexComplete={onIndexComplete}
+          interruptedScan={interruptedScan}
+          onContinueScan={onContinueScan}
+          onStartFreshScan={onStartFreshScan}
         />
 
         <div className="space-y-4 min-w-0 mt-4 flex-1 overflow-y-auto overflow-x-hidden min-h-0 pr-1">
@@ -215,6 +227,9 @@ function PrHeader({
   repoId,
   repoIndexedAt,
   onIndexComplete,
+  interruptedScan,
+  onContinueScan,
+  onStartFreshScan,
 }: {
   activePR: PullRequest | undefined;
   isScanning: boolean;
@@ -228,6 +243,9 @@ function PrHeader({
   repoId?: string;
   repoIndexedAt?: string | null;
   onIndexComplete?: () => void;
+  interruptedScan?: InterruptedScan | null;
+  onContinueScan?: (prId: string) => void;
+  onStartFreshScan?: (prId: string) => void;
 }) {
   const scanning = isScanning || activePR?.status === "In Progress";
 
@@ -347,6 +365,15 @@ function PrHeader({
         indexedAt={repoIndexedAt}
         onIndexComplete={onIndexComplete}
       />
+
+      {interruptedScan && activePR && onContinueScan && onStartFreshScan && (
+        <InterruptedScanBanner
+          scan={interruptedScan}
+          isScanning={isScanning}
+          onContinue={() => onContinueScan(activePR.id)}
+          onStartFresh={() => onStartFreshScan(activePR.id)}
+        />
+      )}
 
       <ScanSettingsStrip settings={scanSettings} />
 
