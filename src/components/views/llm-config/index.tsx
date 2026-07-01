@@ -8,6 +8,7 @@ import { toast } from "../../../lib/toast";
 import RolePanel from "./RolePanel";
 import ApiKeysPanel from "./ApiKeysPanel";
 import ReviewLimitsPanel from "./ReviewLimitsPanel";
+import ProviderHealthPanel from "./ProviderHealthPanel";
 import {
   LLM_PRESETS_CHANGED_EVENT,
   EMPTY_SLOT_STATE,
@@ -21,7 +22,7 @@ import {
   type WorkingPreset,
 } from "./shared";
 
-type Tab = "chat" | "embedding" | "api" | "limits";
+type Tab = "chat" | "embedding" | "api" | "limits" | "health";
 type RoleTab = "chat" | "embedding";
 
 /**
@@ -251,12 +252,15 @@ export default function LlmConfigTabs() {
           <TabButton active={tab === "embedding"} onClick={() => setTab("embedding")} accent="indigo" label="Semantic Search (Embedding)" />
           <TabButton active={tab === "api"} onClick={() => setTab("api")} accent="amber" label="API Keys" />
           <TabButton active={tab === "limits"} onClick={() => setTab("limits")} accent="emerald" label="Review Limits" />
+          <TabButton active={tab === "health"} onClick={() => setTab("health")} accent="rose" label="Provider Health" />
         </div>
 
         {tab === "api" ? (
           <ApiKeysPanel />
         ) : tab === "limits" ? (
           <ReviewLimitsPanel />
+        ) : tab === "health" ? (
+          <ProviderHealthPanel />
         ) : (
           <>
             <RolePanel
@@ -321,7 +325,7 @@ function TabButton({
 }: {
   active: boolean;
   onClick: () => void;
-  accent: "cyan" | "indigo" | "amber" | "emerald";
+  accent: "cyan" | "indigo" | "amber" | "emerald" | "rose";
   label: string;
 }) {
   const accentColors: Record<string, { text: string; border: string }> = {
@@ -329,6 +333,7 @@ function TabButton({
     indigo: { text: "text-indigo-400", border: "border-indigo-500" },
     amber: { text: "text-amber-400", border: "border-amber-500" },
     emerald: { text: "text-emerald-400", border: "border-emerald-500" },
+    rose: { text: "text-rose-400", border: "border-rose-500" },
   };
   const { text: accentText, border: accentBorder } = accentColors[accent];
   return (
