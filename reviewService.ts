@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { prisma } from "./src/lib/prisma";
 import { getChatChain, getChatClient } from "./src/lib/llmClient";
+import { getPrimaryChatPreset } from "./src/lib/llmPresets";
 import { randomUUID } from "node:crypto";
 import { verifyFindings, isDocumentationFile, type CandidateFinding } from "./src/services/findingVerifier";
 import { completeReviewRun, setReviewRunTokens } from "./src/lib/reviewFreshness";
@@ -11,6 +12,7 @@ import { buildFindingFingerprint, resolveSymbolsBatch } from "./src/services/lar
 import { reconcileFindingsAcrossRuns } from "./src/services/largePrReview/reconcile";
 import { classifyProviderOutcome, type OutcomeClass } from "./src/lib/failureClassifier";
 import { computeCost } from "./src/lib/llmPricing";
+import { recordProviderQualityFailure, recordProviderSuccess } from "./src/lib/providerHealth";
 
 export interface ScanResult {
   success: boolean;
@@ -782,14 +784,25 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
   //    provider's budget as a continuation reviewer. Never fabricate
   //    templated findings — three months of solarplanner "reviews" were
   //    that template silently masking LLM failures.
-  const chain = getChatChain();
+  // Phase 3 circuit breaker — health state lives under the scanned
+  // repo's `.dragnet/` dir, never the server's cwd. `localPath` is the
+  // server-managed clone; `path` is the user-configured repo root.
+  const breakerRepoPath = repo.localPath || repo.path || null;
+  const chain = getChatChain({ repoPath: breakerRepoPath });
   let agenticError: string | null = null;
   let finalReview: any = null;
 
   if (chain.length === 0) {
-    systemWarn = "No LLM endpoint or chat model configured. Open the LLM Settings tab and configure at least one provider.";
+    // Distinguish "no chat provider configured" from "all configured
+    // providers paused by circuit breaker." Different operator action.
+    const primary = getPrimaryChatPreset();
+    if (primary?.chatModel && breakerRepoPath) {
+      systemWarn = `All configured chat providers are currently paused by the circuit breaker after repeated quality failures. They will be retried automatically once their cooldown ends. Open LLM Settings → Provider Health to reset manually.`;
+    } else {
+      systemWarn = "No LLM endpoint or chat model configured. Open the LLM Settings tab and configure at least one provider.";
+    }
   } else {
-    providerLoop: for (const { client, model, name, maxIterations } of chain) {
+    providerLoop: for (const { client, model, name, endpoint, maxIterations } of chain) {
       usedModel = model;
       // Per-attempt state — visible to catch/finally for classification.
       // Reset at the top of each provider iteration.
@@ -1197,6 +1210,18 @@ ${diffPayload}${deterministicPayload}`;
             ` tokens=${attemptPromptTokens}+${attemptCompletionTokens} cost=$${costUsd.toFixed(6)}` +
             (attemptError ? ` error=${(attemptError as any)?.message ?? String(attemptError)}` : ""),
         );
+        // Phase 3 circuit breaker — record outcome so future scans can
+        // skip a chronically-broken provider. Only quality_failure and
+        // success (rating >= 5) move the breaker; transport/interrupted/
+        // unknown outcomes do not. A model that returns a valid 3/10
+        // review doesn't count as success — that may itself be a signal
+        // of model trouble — but it isn't a clear quality_failure
+        // either, so we leave the breaker alone in that band.
+        if (outcome === "quality_failure") {
+          recordProviderQualityFailure(breakerRepoPath, endpoint, model, name);
+        } else if (outcome === "success" && ratingThisAttempt !== null && ratingThisAttempt >= 5) {
+          recordProviderSuccess(breakerRepoPath, endpoint, model, name);
+        }
       }
     }
 

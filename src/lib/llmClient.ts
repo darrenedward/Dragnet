@@ -9,6 +9,7 @@ import {
   resolveMaxIterations,
   type Preset,
 } from "@/src/lib/llmPresets";
+import { getProviderHealth } from "@/src/lib/providerHealth";
 
 /**
  * Dual lazy singletons for the OpenAI-compatible client.
@@ -112,6 +113,11 @@ export interface ChainEntry {
   model: string;
   name: string;
   /**
+   * Preset endpoint URL — used by the Phase 3 circuit breaker to
+   * compute the `{provider_host}:{model}` key. Mirrors `preset.endpoint`.
+   */
+  endpoint: string;
+  /**
    * Agentic-loop iteration cap for this provider. Resolved from the
    * preset's optional maxIterations field; falls back to
    * DEFAULT_MAX_ITERATIONS when absent.
@@ -127,8 +133,17 @@ export interface ChainEntry {
  * Callers iterate and try each entry — catch per-provider errors and
  * continue to the next. After exhaustion, surface an actionable error
  * (don't fabricate templated output).
+ *
+ * **Phase 3 circuit breaker:** when `opts.repoPath` is supplied,
+ * providers whose breaker state is `"open"` are filtered out before
+ * the chain is returned. Half-open providers stay in the chain as
+ * probes — they're allowed one shot to recover. Skipped providers
+ * are logged with their resume time so operators can correlate.
+ *
+ * Callers without a repo context (CLI tooling, diagnostics) omit
+ * `repoPath` and get the unfiltered chain.
  */
-export function getChatChain(): ChainEntry[] {
+export function getChatChain(opts?: { repoPath?: string | null }): ChainEntry[] {
   migrateFromEnvLocalIfNeeded();
   const chain: ChainEntry[] = [];
   const seen = new Set<string>();
@@ -139,6 +154,7 @@ export function getChatChain(): ChainEntry[] {
       client: clientFor(primary),
       model: primary.chatModel,
       name: primary.name,
+      endpoint: primary.endpoint,
       maxIterations: resolveMaxIterations(primary),
     });
     seen.add(primary.id);
@@ -150,11 +166,45 @@ export function getChatChain(): ChainEntry[] {
       client: clientFor(fallback),
       model: fallback.chatModel,
       name: fallback.name,
+      endpoint: fallback.endpoint,
       maxIterations: resolveMaxIterations(fallback),
     });
   }
 
+  // Phase 3 circuit breaker — filter OPEN providers out, keep HALF-OPEN
+  // as probes. Logged so the operator can see why a configured provider
+  // was skipped and when it will become eligible again.
+  if (opts?.repoPath) {
+    return filterOpenProviders(chain, opts.repoPath);
+  }
+
   return chain;
+}
+
+/**
+ * Filters out providers whose breaker state is `"open"`. Half-open
+ * providers are kept — they need a real probe scan to either close or
+ * reopen the circuit. Each skipped provider is logged with resume
+ * time so operators can correlate chain composition with health state.
+ *
+ * Pure with respect to the chain: no mutations to caller's array.
+ */
+function filterOpenProviders(chain: ChainEntry[], repoPath: string): ChainEntry[] {
+  const filtered: ChainEntry[] = [];
+  for (const entry of chain) {
+    const { state, health } = getProviderHealth(repoPath, entry.endpoint, entry.model);
+    if (state === "open") {
+      const resumeAt = health?.cooldownEndsAt ?? null;
+      const resumeIso = resumeAt !== null ? new Date(resumeAt).toISOString() : "unknown";
+      console.log(
+        `[breaker] skipping provider ${entry.name} (${entry.model}) — circuit open, ` +
+          `resume at ${resumeIso}`,
+      );
+      continue;
+    }
+    filtered.push(entry);
+  }
+  return filtered;
 }
 
 /**
@@ -171,6 +221,7 @@ export function getEmbeddingChain(): ChainEntry[] {
       client: clientFor(primary),
       model: primary.embeddingModel,
       name: primary.name,
+      endpoint: primary.endpoint,
       maxIterations: resolveMaxIterations(primary),
     });
     seen.add(primary.id);
@@ -182,6 +233,7 @@ export function getEmbeddingChain(): ChainEntry[] {
       client: clientFor(fallback),
       model: fallback.embeddingModel,
       name: fallback.name,
+      endpoint: fallback.endpoint,
       maxIterations: resolveMaxIterations(fallback),
     });
   }
