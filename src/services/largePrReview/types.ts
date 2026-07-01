@@ -54,6 +54,12 @@ export interface ChunkPlan {
 
 export interface LargePrReviewResult {
   success: boolean;
+  /**
+   * Phase 4 typed interruption. True when the run was aborted mid-chunk
+   * (force-restart, AbortSignal). The orchestrator stops scheduling
+   * further chunks; per-chunk resume is Phase 5.
+   */
+  interrupted?: boolean;
   rating: number | null;
   findings: any[];
   usedModel: string;

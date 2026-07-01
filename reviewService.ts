@@ -16,10 +16,28 @@ import { recordProviderQualityFailure, recordProviderSuccess } from "./src/lib/p
 
 export interface ScanResult {
   success: boolean;
+  /**
+   * Phase 4 typed interruption variant. When true, the scan was aborted
+   * (force-restart, abort signal, or AbortError from the SDK) and the
+   * run is in a non-terminal state — NOT success, NOT failure. The
+   * scan route returns interrupted JSON without marking the run row
+   * completed or failed. Phase 5 will persist `lastCheckpointAt` and
+   * the resume contract.
+   */
+  interrupted?: boolean;
   rating: number | null;
   findings: any[];
   usedModel: string;
   systemWarn?: string | null;
+  /**
+   * Phase 4 interrupted-only fields. Undefined unless `interrupted === true`.
+   * Surfaces how far the scan got for UI affordance; Phase 5 adds
+   * `checkpointId` and `reviewRunId` plumbing for the resume contract.
+   */
+  completedIterations?: number;
+  totalIterations?: number;
+  lastProvider?: string | null;
+  message?: string;
 }
 
 /**
@@ -197,6 +215,50 @@ function isRetryableProviderFailure(err: any): boolean {
 
   const message = String(err?.message ?? err);
   return /\b(429|rate limit|timeout|timed out|connection (error|lost|closed|reset|refused)|network|socket|fetch failed)\b/i.test(message);
+}
+
+/**
+ * Phase 4 — detect AbortError shape. Covers:
+ *   - DOMException with name="AbortError" (what the OpenAI SDK throws
+ *     when its request options.signal is aborted)
+ *   - Standard `AbortError` class instances
+ *   - Errors whose `name` property is exactly `"AbortError"`
+ *
+ * Used by the runPrScan outer catch to convert an abort into a typed
+ * interrupted result instead of marking the run failed. Also recognised
+ * by the failure classifier (`src/lib/failureClassifier.ts`) so the
+ * breaker never counts interruptions toward quality failures.
+ */
+function isAbortError(err: unknown): boolean {
+  if (!err) return false;
+  const name = (err as any)?.name ?? "";
+  return name === "AbortError";
+}
+
+/**
+ * Phase 4 — builds the typed interrupted ScanResult from whatever
+ * partial state the loop accumulated before the abort. Reads the last
+ * provider attempt for iteration/provider metadata so the UI can show
+ * "interrupted at iteration 3/8 on NVIDIA".
+ */
+function buildInterruptedResult(
+  usedModel: string,
+  providerAttempts: ProviderAttempt[],
+  reason: string,
+): ScanResult {
+  const last = providerAttempts[providerAttempts.length - 1];
+  return {
+    success: false,
+    interrupted: true,
+    rating: null,
+    findings: [],
+    usedModel,
+    systemWarn: null,
+    completedIterations: last?.iterationsUsed ?? 0,
+    totalIterations: last?.maxIterations ?? 0,
+    lastProvider: last?.provider ?? null,
+    message: reason,
+  };
 }
 
 /**
@@ -605,7 +667,17 @@ Do not sugarcoat. Do not soften the blow. If the code is bad, say so. If it's cl
  * findings + a null rating and surfaces the reason via systemWarn — it never
  * fabricates templated findings.
  */
-export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunId?: string, reviewChunkId?: string, prManifest?: PrManifestEntry[]): Promise<ScanResult> {
+export interface RunPrScanOptions {
+  /**
+   * Phase 4 abort signal. Threaded into every `client.chat.completions.create`
+   * call so a force-restart cancels the in-flight request at the SDK layer.
+   * On abort, runPrScan returns a typed interrupted ScanResult instead of
+   * marking the run failed.
+   */
+  signal?: AbortSignal;
+}
+
+export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunId?: string, reviewChunkId?: string, prManifest?: PrManifestEntry[], options?: RunPrScanOptions): Promise<ScanResult> {
   console.log(`[scan] runPrScan: starting for prId=${prId}, preloadedFiles=${preloadedFiles?.length}, reviewChunkId=${reviewChunkId ?? "none"}`);
   // Cumulative-char budget for readFile tool calls this scan. Caps context
   // blow-up + cost DoS — see readFile tool implementation below.
@@ -862,7 +934,7 @@ ${diffPayload}${deterministicPayload}`;
               // "occasionally differs" and "always differs."
               temperature: 0,
               ...reasoningOptions(model, 16_384),
-            } as any),
+            } as any, { signal: options?.signal }),
             `${name} chat completion`,
           );
           await assertReviewRunStillActive(reviewRunId);
@@ -1105,7 +1177,7 @@ ${diffPayload}${deterministicPayload}`;
                 temperature: 0.1,
                 response_format: { type: "json_object" },
                 ...reasoningOptions(model, 16_384),
-              } as any),
+              } as any, { signal: options?.signal }),
               `${name} JSON finalizer`,
               LLM_FINALIZER_TIMEOUT_MS,
             );
@@ -1118,7 +1190,7 @@ ${diffPayload}${deterministicPayload}`;
                 messages: finalizerMessages,
                 temperature: 0.1,
                 ...reasoningOptions(model, 16_384),
-              } as any),
+              } as any, { signal: options?.signal }),
               `${name} fallback finalizer`,
               LLM_FINALIZER_TIMEOUT_MS,
             );
@@ -1163,6 +1235,14 @@ ${diffPayload}${deterministicPayload}`;
         console.warn(`[review] chat provider ${name} failed: ${err.message}`);
         void logReview(prId, `Provider ${name} failed: ${err.message}`, "error", reviewRunId, reviewChunkId);
         agenticError = `${name}: ${err.message}`;
+        // Phase 4: AbortError must propagate to the outer catch so the
+        // scan returns the typed interrupted result. The inner catch
+        // would otherwise treat it as a non-retryable quality failure
+        // and continue into the "ended the agentic loop" throw path —
+        // wrong classification for an interruption.
+        if (isAbortError(err)) {
+          throw err;
+        }
         if (!isRetryableProviderFailure(err)) {
           console.warn(`[review] not trying fallback after non-retryable provider failure provider=${name}`);
           void logReview(prId, `Fallback skipped after non-retryable ${name} failure`, "warn", reviewRunId, reviewChunkId);
@@ -1280,7 +1360,7 @@ ${diffPayload}${deterministicPayload}`;
               response_format: { type: "json_object" },
               temperature: 0,
               ...reasoningOptions(usedModel, 500),
-            } as any);
+            } as any, { signal: options?.signal });
             const raw = refusalRes.choices?.[0]?.message?.content ?? "";
             const parsed = JSON.parse(stripThinkBlocks(raw));
             if (parsed?.refused === true) {
@@ -1485,6 +1565,22 @@ ${diffPayload}${deterministicPayload}`;
     systemWarn,
   };
   } catch (err: any) {
+    // Phase 4 — abort is a typed interruption, NOT a failure. The scan
+    // row stays in_progress (Phase 5 will mark it interrupted and write
+    // a checkpoint). Persist partial telemetry so the operator still
+    // sees what the abort cost, then return the interrupted result.
+    if (isAbortError(err)) {
+      console.log(`[scan] runPrScan: aborted — returning typed interrupted result`);
+      if (reviewRunId && !reviewChunkId) {
+        try {
+          await setReviewRunTokens(reviewRunId, buildTokensUsed(providerAttempts));
+        } catch (telemetryErr) {
+          console.warn(`[scan] failed to persist tokensUsed on interrupted run:`, telemetryErr);
+        }
+      }
+      const interruptedModel = providerAttempts[providerAttempts.length - 1]?.model ?? "unconfigured";
+      return buildInterruptedResult(interruptedModel, providerAttempts, "Scan aborted (force-restart or cancellation).");
+    }
     console.error(`[scan] runPrScan: fatal error`, err);
     if (!reviewChunkId) {
       await prisma.pullRequest.updateMany({ where: { id: prId }, data: { status: "Failed" } });

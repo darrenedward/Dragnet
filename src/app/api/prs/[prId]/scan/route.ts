@@ -193,6 +193,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
     }
     acquired = true;
     const releaseLock = lock.release;
+    // Phase 4: signal lets force-restart abort the in-flight scan at the
+    // SDK layer. Threaded into runPrScan / runLargePrReview so every
+    // chat.completions.create call receives it as a request option.
+    const scanSignal = lock.signal;
 
     await prisma.pullRequest.updateMany({ where: { id: prId }, data: { status: 'In Progress' } });
     console.log(`[scan] route: status set to In Progress`);
@@ -211,21 +215,50 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
 
     console.log(`[scan] route: calling ${tier.tier === "normal" ? "runPrScan" : "runLargePrReview"} with ${files.length} files`);
     const result = tier.tier === "normal"
-      ? await runPrScan(prId, files, reviewRunId)
+      ? await runPrScan(prId, files, reviewRunId, undefined, undefined, { signal: scanSignal })
       : await runLargePrReview({
           reviewRunId,
           prId,
           files,
           tier: tier.tier,
           warning: "message" in tier ? tier.message : null,
+          signal: scanSignal,
         });
-    console.log(`[scan] route: runPrScan complete - rating=${result.rating}, findings=${result.findings?.length}, model=${result.usedModel}`);
+    console.log(`[scan] route: runPrScan complete - rating=${result.rating}, findings=${result.findings?.length}, model=${result.usedModel}, interrupted=${result.interrupted ?? false}`);
 
     if (acquired) endReview(prId);
+    // Phase 4: typed interruption is a non-terminal state — NOT success,
+    // NOT failure. Return interrupted JSON without marking the run row
+    // completed or failed. Phase 5 will surface a resume affordance and
+    // persist `lastCheckpointAt`.
+    if (result.interrupted) {
+      return NextResponse.json({
+        ...result,
+        sizeProfile,
+        interrupted: true,
+      });
+    }
     return NextResponse.json({ ...result, sizeProfile });
   } catch (err: any) {
     console.error(`[scan] route: ERROR:`, err);
     if (acquired) endReview(prId);
+    // Phase 4: an AbortError that escapes runPrScan (e.g. from
+    // refreshPrFiles or pre-scan DB calls) is still a typed interruption,
+    // not a 500. Detect by error name and return the same interrupted
+    // shape. We do NOT mark the run failed — Phase 5 owns the
+    // interrupted-status persistence.
+    if (err?.name === "AbortError") {
+      console.log(`[scan] route: AbortError escaped runner — returning interrupted JSON`);
+      return NextResponse.json({
+        success: false,
+        interrupted: true,
+        rating: null,
+        findings: [],
+        usedModel: "unconfigured",
+        systemWarn: null,
+        message: "Scan aborted (force-restart or cancellation).",
+      });
+    }
     // Mark the run failed so the next scan doesn't 409 on an orphaned
     // in_progress row. reviewService handles failures inside runPrScan,
     // but this backstops throws between createReviewRun and runPrScan

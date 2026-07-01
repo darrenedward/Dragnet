@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { prisma } from "@/src/lib/prisma";
 import { readLimits } from "@/src/lib/prSizeConfig";
-import { runPrScan, type ScanResult, type PrManifestEntry } from "@/reviewService";
+import { runPrScan, type ScanResult, type PrManifestEntry, type RunPrScanOptions } from "@/reviewService";
 import { aggregateResults } from "./aggregator";
 import { chunkDiff } from "./chunker";
 import { assertTier, buildDiffManifest } from "./manifest";
@@ -20,6 +20,7 @@ type ChunkRunner = (
   reviewRunId: string,
   reviewChunkId: string,
   prManifest?: PrManifestEntry[],
+  options?: RunPrScanOptions,
 ) => Promise<ScanResult>;
 
 /**
@@ -56,6 +57,13 @@ export interface RunLargePrReviewOptions {
   tier?: LargePrTier;
   warning?: string | null;
   runner?: ChunkRunner;
+  /**
+   * Phase 4 abort signal — threaded into every per-chunk runner call so
+   * force-restart cancels the in-flight chunk's SDK request. Each chunk
+   * that aborts returns a typed interrupted ScanResult and the orchestrator
+   * treats it as an incomplete chunk (Phase 5 will add per-chunk resume).
+   */
+  signal?: AbortSignal;
 }
 
 export async function runLargePrReview({
@@ -65,6 +73,7 @@ export async function runLargePrReview({
   tier,
   warning,
   runner = runPrScan,
+  signal,
 }: RunLargePrReviewOptions): Promise<LargePrReviewResult> {
   const run = await prisma.reviewRun.findUnique({
     where: { id: reviewRunId },
@@ -184,8 +193,41 @@ export async function runLargePrReview({
     await updateChunkCounters(reviewRunId);
     await logRun(prId, reviewRunId, repoPath, `Chunk ${plan.id}: scanning ${plan.label} (${plan.lineCount} lines)`, "info", chunkId);
 
-    const result = await runChunkWithRetry({ prId, reviewRunId, repoPath, chunkId, plan, runner, prManifest: buildPrManifest(files) });
+    const result = await runChunkWithRetry({ prId, reviewRunId, repoPath, chunkId, plan, runner, prManifest: buildPrManifest(files), signal });
     if (result.ok === true) {
+      // Phase 4: if a chunk returned the typed interrupted variant, stop
+      // scheduling further chunks. The orchestrator returns an interrupted
+      // LargePrReviewResult so the route surfaces the right JSON. Phase 5
+      // will persist per-chunk `lastCheckpointAt` for resume.
+      if (result.scan.interrupted) {
+        await prisma.reviewChunk.update({
+          where: { id: chunkId },
+          data: {
+            status: "failed",
+            completedAt: new Date(),
+            errorMessage: result.scan.message ?? "Chunk interrupted",
+          },
+        }).catch(() => {});
+        await updateChunkCounters(reviewRunId);
+        await logRun(prId, reviewRunId, repoPath, `Chunk ${plan.id}: interrupted — aborting remaining chunks`, "warn", chunkId);
+        const aggregated = await aggregateResults(reviewRunId);
+        return {
+          success: false,
+          interrupted: true,
+          rating: null,
+          findings: [],
+          usedModel: result.scan.usedModel,
+          systemWarn: result.scan.message ?? null,
+          largePrMode: true,
+          tier: effectiveTier,
+          reliability: "partial",
+          chunksTotal: aggregated.chunksTotal,
+          chunksCompleted: aggregated.chunksCompleted,
+          chunksFailed: aggregated.chunksFailed,
+          chunksSkipped: aggregated.chunksSkipped,
+          warning: effectiveWarning,
+        };
+      }
       consecutiveErrorKey = null;
       consecutiveErrorCount = 0;
       await prisma.reviewChunk.update({
@@ -376,6 +418,7 @@ async function runChunkWithRetry({
   plan,
   runner,
   prManifest,
+  signal,
 }: {
   prId: string;
   reviewRunId: string;
@@ -384,11 +427,12 @@ async function runChunkWithRetry({
   plan: ChunkPlan;
   runner: ChunkRunner;
   prManifest?: PrManifestEntry[];
+  signal?: AbortSignal;
 }): Promise<{ ok: true; scan: ScanResult } | { ok: false; error: Error }> {
   let lastError: Error | null = null;
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
-      const scan = await runner(prId, plan.files, reviewRunId, chunkId, prManifest);
+      const scan = await runner(prId, plan.files, reviewRunId, chunkId, prManifest, { signal });
       return { ok: true, scan };
     } catch (err: any) {
       lastError = err instanceof Error ? err : new Error(String(err));
