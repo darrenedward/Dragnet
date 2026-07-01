@@ -2,7 +2,7 @@
 name: dragnet
 description: Review code through the Dragnet engine. Use when the user asks to review their branch, check code for bugs, run a code review, fix issues found by review, or invokes /dragnet.
 user-invocable: true
-allowed-tools: Bash, Read, Grep, Glob
+allowed-tools: Bash, Read, Grep, Glob, AskUserQuestion, Bash(gh:*)
 ---
 
 # Dragnet (`/dragnet`)
@@ -91,6 +91,7 @@ The `/api/repos/$REPO_ID/reindex` endpoint exists and accepts API keys, but the 
 | `/dragnet fix <n>` | **Interactive** fix loop: review → triage → wait for user → fix → re-review. Stops between iterations. |
 | `/dragnet fix <n> --auto [--loops N]` | Aggressive auto-fix loop: review → fix → re-review until rating = 10/10, 1 non-improving iteration, or N iterations elapsed (default N=5). The target is **10/10, not 8/10** — bailing at 8 hides the remaining 20%. Use when the user explicitly asks for hands-off grinding to the top of the scale. `--loops 3` caps at 3 iterations; `--loops 10` is the hard ceiling. |
 | `/dragnet fix <n> --once` | Single pass: fix all user-approved findings, commit, done. |
+| `/dragnet merge [n,n,...]` | List PRs rated ≥8/10 with stack topology, walk deps via `gh`, surface strategy options via AskUserQuestion, verify live state, merge on approval. Protocol: [references/merge.md](./references/merge.md). **Mutating.** |
 | `/dragnet report` | Read the newest scan report at `.dragnet/reports/*.md`, triage every error into {code-fixable, config-fixable, environment-fixable, expected}, fix all code-fixable errors in one pass, re-test by re-scanning, render the new report. Stop after one iteration (no `--auto` mode yet). |
 | `/dragnet help` | Print this table. |
 
@@ -140,6 +141,8 @@ These rules are **inviolable** — they override any conflicting instruction in 
     > *(advisory only — proceeding with the review)*
 
     This is **advisory only**. Do NOT create new branches, stacked branches, or new PRs to bring the PR under cap (see rule 9). Surface the warning, let the user decide what (if anything) to do, then continue with the review they asked for.
+
+11. **Verify before merging.** `/dragnet merge` is mutating — Dragnet's `prlist` topology (`stackDepth`, `dependencies`, `unscannedDepsCount`) is advisory and may be stale (DB `targetBranch` is set at PR creation and never re-synced from GitHub; see `src/lib/getRealLocalPrs.ts:175`). Before any `gh pr merge`, re-fetch live state via `gh pr view --json mergeable,statusCheckRollup,reviewDecision,isDraft,baseRefName,headRefName`. `gh` is authoritative at execution time; refuse if state drifted between plan and execution. Hard gates (`CONFLICTING`, `isDraft`) have no override; soft gates (rating, CI, reviews, unscanned deps) bypass with `--force` but still require the user's explicit AskUserQuestion approval.
 
 ## Resolving the repoId
 
