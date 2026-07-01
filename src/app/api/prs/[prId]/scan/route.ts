@@ -214,8 +214,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
     console.log(`[scan] route: created in_progress ReviewRun ${reviewRunId}`);
 
     console.log(`[scan] route: calling ${tier.tier === "normal" ? "runPrScan" : "runLargePrReview"} with ${files.length} files`);
+    // Phase 5 resume — pass the hash trio so every iteration checkpoint
+    // carries the gates resume will validate against.
+    const checkpointMetadata = {
+      commitHash: pr.commitHash,
+      diffHash: currentDiffHash,
+      reviewConfigHash: currentConfigHash,
+    };
     const result = tier.tier === "normal"
-      ? await runPrScan(prId, files, reviewRunId, undefined, undefined, { signal: scanSignal })
+      ? await runPrScan(prId, files, reviewRunId, undefined, undefined, { signal: scanSignal, checkpointMetadata })
       : await runLargePrReview({
           reviewRunId,
           prId,
@@ -223,6 +230,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
           tier: tier.tier,
           warning: "message" in tier ? tier.message : null,
           signal: scanSignal,
+          checkpointMetadata,
         });
     console.log(`[scan] route: runPrScan complete - rating=${result.rating}, findings=${result.findings?.length}, model=${result.usedModel}, interrupted=${result.interrupted ?? false}`);
 

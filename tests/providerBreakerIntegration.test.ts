@@ -130,6 +130,9 @@ vi.mock("../src/services/findingVerifier", () => ({
 
 vi.mock("../src/lib/reviewFreshness", () => ({
   completeReviewRun: vi.fn().mockResolvedValue(undefined),
+  setReviewRunTokens: vi.fn().mockResolvedValue(undefined),
+  setReviewRunLastCheckpointAt: vi.fn().mockResolvedValue(undefined),
+  setReviewChunkLastCheckpointAt: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("../src/services/largePrReview/fingerprint", () => ({

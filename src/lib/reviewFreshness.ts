@@ -412,6 +412,52 @@ export async function setReviewRunTokens(
 }
 
 /**
+ * Phase 5 resume — stamp the ReviewRun with the time of its last
+ * successful checkpoint write. Used by the resume UI to decide whether
+ * a stale `in_progress` row has recoverable state. Best-effort: errors
+ * are logged and swallowed so a checkpoint-metadata failure never
+ * blocks the scan.
+ */
+export async function setReviewRunLastCheckpointAt(
+  runId: string,
+  at: Date,
+): Promise<void> {
+  try {
+    await prisma.reviewRun.update({
+      where: { id: runId },
+      data: { lastCheckpointAt: at },
+    });
+  } catch (err) {
+    console.warn(
+      `[reviewFreshness] failed to persist lastCheckpointAt on run ${runId}:`,
+      err,
+    );
+  }
+}
+
+/**
+ * Phase 5 resume — per-chunk mirror of setReviewRunLastCheckpointAt.
+ * Lets a chunked run resume just the interrupted chunk instead of
+ * re-running every chunk from iteration 1.
+ */
+export async function setReviewChunkLastCheckpointAt(
+  chunkId: string,
+  at: Date,
+): Promise<void> {
+  try {
+    await prisma.reviewChunk.update({
+      where: { id: chunkId },
+      data: { lastCheckpointAt: at },
+    });
+  } catch (err) {
+    console.warn(
+      `[reviewFreshness] failed to persist lastCheckpointAt on chunk ${chunkId}:`,
+      err,
+    );
+  }
+}
+
+/**
  * Load the latest completed ReviewRun and its visible findings.
  *
  * This is the read-side single source of truth for "current report" style

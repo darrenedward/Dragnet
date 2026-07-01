@@ -64,6 +64,16 @@ export interface RunLargePrReviewOptions {
    * treats it as an incomplete chunk (Phase 5 will add per-chunk resume).
    */
   signal?: AbortSignal;
+  /**
+   * Phase 5 resume — checkpoint metadata, threaded into every chunk's
+   * runner call so per-iteration checkpoints carry the hash trio. Resume
+   * validates all three against the current PR state before loading.
+   */
+  checkpointMetadata?: {
+    commitHash: string;
+    diffHash: string;
+    reviewConfigHash: string;
+  };
 }
 
 export async function runLargePrReview({
@@ -74,6 +84,7 @@ export async function runLargePrReview({
   warning,
   runner = runPrScan,
   signal,
+  checkpointMetadata,
 }: RunLargePrReviewOptions): Promise<LargePrReviewResult> {
   const run = await prisma.reviewRun.findUnique({
     where: { id: reviewRunId },
@@ -193,17 +204,30 @@ export async function runLargePrReview({
     await updateChunkCounters(reviewRunId);
     await logRun(prId, reviewRunId, repoPath, `Chunk ${plan.id}: scanning ${plan.label} (${plan.lineCount} lines)`, "info", chunkId);
 
-    const result = await runChunkWithRetry({ prId, reviewRunId, repoPath, chunkId, plan, runner, prManifest: buildPrManifest(files), signal });
+    const result = await runChunkWithRetry({
+      prId,
+      reviewRunId,
+      repoPath,
+      chunkId,
+      plan,
+      runner,
+      prManifest: buildPrManifest(files),
+      signal,
+      checkpointMetadata,
+    });
     if (result.ok === true) {
       // Phase 4: if a chunk returned the typed interrupted variant, stop
       // scheduling further chunks. The orchestrator returns an interrupted
       // LargePrReviewResult so the route surfaces the right JSON. Phase 5
-      // will persist per-chunk `lastCheckpointAt` for resume.
+      // persists per-chunk `lastCheckpointAt` for resume and marks the
+      // chunk `interrupted` (distinct from `failed`) so chunked-run
+      // aggregations can tell "this chunk can be resumed" from "this
+      // chunk genuinely failed and needs a full re-run".
       if (result.scan.interrupted) {
         await prisma.reviewChunk.update({
           where: { id: chunkId },
           data: {
-            status: "failed",
+            status: "interrupted",
             completedAt: new Date(),
             errorMessage: result.scan.message ?? "Chunk interrupted",
           },
@@ -306,9 +330,11 @@ export async function retryFailedChunks(
 
   // Resume scope: any chunk not in a terminal state. Covers failed retries,
   // pending chunks that never started, and `running` chunks left dangling
-  // by a dev-server restart mid-scan.
+  // by a dev-server restart mid-scan. Phase 5: `interrupted` chunks also
+  // count as resumable — they have checkpoint state and a fresh run can
+  // pick up where the previous one left off.
   const resumableChunks = await prisma.reviewChunk.findMany({
-    where: { reviewRunId, status: { in: ["failed", "pending", "running"] } },
+    where: { reviewRunId, status: { in: ["failed", "pending", "running", "interrupted"] } },
     orderBy: { id: "asc" },
   });
   if (resumableChunks.length === 0) {
@@ -419,6 +445,7 @@ async function runChunkWithRetry({
   runner,
   prManifest,
   signal,
+  checkpointMetadata,
 }: {
   prId: string;
   reviewRunId: string;
@@ -428,11 +455,12 @@ async function runChunkWithRetry({
   runner: ChunkRunner;
   prManifest?: PrManifestEntry[];
   signal?: AbortSignal;
+  checkpointMetadata?: { commitHash: string; diffHash: string; reviewConfigHash: string };
 }): Promise<{ ok: true; scan: ScanResult } | { ok: false; error: Error }> {
   let lastError: Error | null = null;
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
-      const scan = await runner(prId, plan.files, reviewRunId, chunkId, prManifest, { signal });
+      const scan = await runner(prId, plan.files, reviewRunId, chunkId, prManifest, { signal, checkpointMetadata });
       return { ok: true, scan };
     } catch (err: any) {
       lastError = err instanceof Error ? err : new Error(String(err));

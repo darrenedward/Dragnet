@@ -95,6 +95,9 @@ vi.mock("../src/services/findingVerifier", () => ({
 // Stub review-run completion helpers.
 vi.mock("../src/lib/reviewFreshness", () => ({
   completeReviewRun: vi.fn().mockResolvedValue(undefined),
+  setReviewRunTokens: vi.fn().mockResolvedValue(undefined),
+  setReviewRunLastCheckpointAt: vi.fn().mockResolvedValue(undefined),
+  setReviewChunkLastCheckpointAt: vi.fn().mockResolvedValue(undefined),
 }));
 
 // Stub reconcile/fingerprint helpers used post-loop.

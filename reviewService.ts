@@ -5,7 +5,7 @@ import { getChatChain, getChatClient } from "./src/lib/llmClient";
 import { getPrimaryChatPreset } from "./src/lib/llmPresets";
 import { randomUUID } from "node:crypto";
 import { verifyFindings, isDocumentationFile, type CandidateFinding } from "./src/services/findingVerifier";
-import { completeReviewRun, setReviewRunTokens } from "./src/lib/reviewFreshness";
+import { completeReviewRun, setReviewRunTokens, setReviewRunLastCheckpointAt, setReviewChunkLastCheckpointAt } from "./src/lib/reviewFreshness";
 import { safeReadFileSync, resolveSafePath } from "./src/lib/pathSafety";
 import { runDeterministicChecks, type DeterministicFinding } from "./src/services/deterministicChecks";
 import { buildFindingFingerprint, resolveSymbolsBatch } from "./src/services/largePrReview/fingerprint";
@@ -13,6 +13,13 @@ import { reconcileFindingsAcrossRuns } from "./src/services/largePrReview/reconc
 import { classifyProviderOutcome, type OutcomeClass } from "./src/lib/failureClassifier";
 import { computeCost } from "./src/lib/llmPricing";
 import { recordProviderQualityFailure, recordProviderSuccess } from "./src/lib/providerHealth";
+import {
+  deleteCheckpoint,
+  deleteRunCheckpoints,
+  RUN_CHECKPOINT_ID,
+  writeCheckpoint,
+  type CheckpointState,
+} from "./src/services/checkpointStore";
 
 export interface ScanResult {
   success: boolean;
@@ -259,6 +266,86 @@ function buildInterruptedResult(
     lastProvider: last?.provider ?? null,
     message: reason,
   };
+}
+
+/**
+ * Phase 5 — checkpoint id for this scan. `__run` for whole-PR scans,
+ * the chunk's DB id for chunked large-PR scans. Per-chunk ids let the
+ * large-PR orchestrator resume one interrupted chunk without losing
+ * the others' progress.
+ */
+function checkpointIdFor(reviewChunkId: string | undefined): string {
+  return reviewChunkId ?? RUN_CHECKPOINT_ID;
+}
+
+/**
+ * Phase 5 — write an iteration checkpoint + update the run/chunk row's
+ * lastCheckpointAt. Wrapped in try/catch so a checkpoint write failure
+ * logs a warning but never fails the scan. Returns void; callers ignore
+ * the result. Split from runPrScan's main body so the abort path can
+ * reuse the exact same write semantics.
+ */
+async function persistCheckpoint(
+  repoPath: string | null,
+  reviewRunId: string | undefined,
+  reviewChunkId: string | undefined,
+  metadata: { commitHash: string; diffHash: string; reviewConfigHash: string } | undefined,
+  messages: any[],
+  loopCount: number,
+  maxIterations: number,
+  provider: string,
+  model: string,
+): Promise<void> {
+  if (!repoPath || !reviewRunId || !metadata) return;
+  const checkpointId = checkpointIdFor(reviewChunkId);
+  const state: CheckpointState = {
+    version: 1,
+    runId: reviewRunId,
+    checkpointId,
+    commitHash: metadata.commitHash,
+    diffHash: metadata.diffHash,
+    reviewConfigHash: metadata.reviewConfigHash,
+    messages: messages as CheckpointState["messages"],
+    loopCount,
+    maxIterations,
+    provider,
+    model,
+    writtenAt: Date.now(),
+  };
+  try {
+    writeCheckpoint(repoPath, reviewRunId, checkpointId, state);
+    const at = new Date();
+    if (reviewChunkId) {
+      await setReviewChunkLastCheckpointAt(reviewChunkId, at);
+    } else {
+      await setReviewRunLastCheckpointAt(reviewRunId, at);
+    }
+  } catch (err) {
+    console.warn(`[checkpoint] failed to persist iteration ${loopCount} for ${reviewRunId}/${checkpointId}:`, err);
+  }
+}
+
+/**
+ * Phase 5 — delete this scan's checkpoint after success. For a chunked
+ * scan, removes just that chunk's file (other chunks keep theirs). For
+ * a whole-PR scan, removes the entire run directory since only `__run`
+ * ever exists for that run.
+ */
+function clearCheckpoint(
+  repoPath: string | null,
+  reviewRunId: string | undefined,
+  reviewChunkId: string | undefined,
+): void {
+  if (!repoPath || !reviewRunId) return;
+  try {
+    if (reviewChunkId) {
+      deleteCheckpoint(repoPath, reviewRunId, reviewChunkId);
+    } else {
+      deleteRunCheckpoints(repoPath, reviewRunId);
+    }
+  } catch (err) {
+    console.warn(`[checkpoint] failed to clear checkpoint for ${reviewRunId}/${checkpointIdFor(reviewChunkId)}:`, err);
+  }
 }
 
 /**
@@ -675,6 +762,21 @@ export interface RunPrScanOptions {
    * marking the run failed.
    */
   signal?: AbortSignal;
+  /**
+   * Phase 5 resume — checkpoint metadata. When provided (along with a
+   * reviewRunId), runPrScan writes a checkpoint after every iteration
+   * so an interrupted scan can resume at the saved loop count instead
+   * of replaying iteration 1. The hash trio gates resume: commitHash
+   * or diffHash changing means the PR moved underneath us; reviewConfig-
+   * Hash changing means the model/prompt/tools/limits moved. Either
+   * invalidates the checkpoint — Phase 7 resume route refuses to load
+   * a mismatched checkpoint and falls through to Start fresh.
+   */
+  checkpointMetadata?: {
+    commitHash: string;
+    diffHash: string;
+    reviewConfigHash: string;
+  };
 }
 
 export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunId?: string, reviewChunkId?: string, prManifest?: PrManifestEntry[], options?: RunPrScanOptions): Promise<ScanResult> {
@@ -1131,6 +1233,21 @@ ${diffPayload}${deterministicPayload}`;
                 content: toolResult,
               });
             }
+            // Phase 5 — persist iteration checkpoint before the
+            // finalReview break so an abort on the NEXT iteration's
+            // LLM call can resume from this exact message state.
+            // deleteCheckpoint on success handles cleanup.
+            await persistCheckpoint(
+              breakerRepoPath,
+              reviewRunId,
+              reviewChunkId,
+              options?.checkpointMetadata,
+              messages,
+              loopCount,
+              ITERATION_BUDGET,
+              endpoint,
+              model,
+            );
             if (finalReview) break;
             // Continue loop with the tool results now appended.
           } else {
@@ -1148,6 +1265,19 @@ ${diffPayload}${deterministicPayload}`;
               }
               finalReview = parsed;
             }
+            // Phase 5 — checkpoint the final assistant turn so an
+            // interrupted run can resume from this state.
+            await persistCheckpoint(
+              breakerRepoPath,
+              reviewRunId,
+              reviewChunkId,
+              options?.checkpointMetadata,
+              messages,
+              loopCount,
+              ITERATION_BUDGET,
+              endpoint,
+              model,
+            );
             break;
           }
         }
@@ -1308,6 +1438,12 @@ ${diffPayload}${deterministicPayload}`;
     console.log(
       `[review] providerAttempts summary: ${providerAttempts.map((a) => `${a.provider}=${a.outcome}`).join(", ") || "(no attempts)"}`,
     );
+
+    // Phase 5 — terminal outcome (success or quality-failure). Clear the
+    // checkpoint so it doesn't linger as a false resume target. The abort
+    // path in the outer catch keeps the checkpoint and writes a final
+    // iteration entry before returning the interrupted result.
+    clearCheckpoint(breakerRepoPath, reviewRunId, reviewChunkId);
 
     // Phase 2 cost telemetry — persist tokens/cost breakdown to ReviewRun.
     // Best-effort: setReviewRunTokens swallows errors. Only written for
