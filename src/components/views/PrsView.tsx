@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { motion } from "motion/react";
 import {
   AlertTriangle,
@@ -21,11 +21,19 @@ import ReviewProgress from "./prs/ReviewProgress";
 import ReviewCard from "./prs/ReviewCard";
 import ScanHistory from "./prs/ScanHistory";
 import PrSizeProfileChip from "../PrSizeProfileChip";
+import type { ReviewLimits } from "../../lib/prSizeConfig";
 
 interface ScanResult {
   count: number;
   model: string;
   notice?: string | null;
+}
+
+interface ScanSettingsSummary {
+  maxIterations: number;
+  primaryModel: string | null;
+  fallbackModel: string | null;
+  limits: ReviewLimits;
 }
 
 interface Props {
@@ -120,6 +128,8 @@ export default function PrsView({
   repoId,
   onIndexComplete,
 }: Props) {
+  const scanSettings = useScanSettingsSummary();
+
   return (
     <motion.div
       key="pr-scanner-viewport"
@@ -139,6 +149,7 @@ export default function PrsView({
           hasFindings={findings.length > 0}
           scanResult={scanResult}
           onDismissScanResult={onDismissScanResult}
+          scanSettings={scanSettings}
           repoId={repoId}
           repoIndexedAt={repoIndexedAt}
           onIndexComplete={onIndexComplete}
@@ -200,6 +211,7 @@ function PrHeader({
   hasFindings,
   scanResult,
   onDismissScanResult,
+  scanSettings,
   repoId,
   repoIndexedAt,
   onIndexComplete,
@@ -212,6 +224,7 @@ function PrHeader({
   hasFindings: boolean;
   scanResult: ScanResult | null;
   onDismissScanResult: () => void;
+  scanSettings: ScanSettingsSummary | null;
   repoId?: string;
   repoIndexedAt?: string | null;
   onIndexComplete?: () => void;
@@ -278,18 +291,18 @@ function PrHeader({
                   ? "Review already in progress."
                   : "Run the agentic review loop on this PR"
             }
-            className={`px-4 py-2 bg-gradient-to-r from-cyan-500 to-indigo-500 hover:from-cyan-400 hover:to-indigo-400 text-black text-xs font-bold rounded-lg flex items-center gap-1.5 transition-all shadow-md select-none ${
+            className={`min-h-11 px-4 py-2 bg-gradient-to-r from-cyan-500 to-indigo-500 hover:from-cyan-400 hover:to-indigo-400 text-black text-xs font-bold rounded-lg flex items-center gap-1.5 transition-all shadow-md select-none ${
               scanning ? "animate-pulse opacity-50" : ""
             } ${!repoIndexedAt ? "opacity-40 cursor-not-allowed grayscale" : "cursor-pointer"}`}
           >
             <Zap size={14} className="fill-black" />
-            <span>{scanning ? "AI Pipeline Working..." : !repoIndexedAt ? "Index Required" : "Trigger AI Review Scan"}</span>
+            <span>{scanning ? "Review Running..." : !repoIndexedAt ? "Index Required" : "Run PR Review"}</span>
           </button>
           {scanning && (
             <button
               onClick={() => onTriggerScan({ force: true })}
               title="Reap the current run (orphaned or stuck) and start a fresh scan. Use when a scan appears hung after a dev-server restart."
-              className="px-3 py-2 bg-rose-500/15 border border-rose-500/30 text-rose-300 hover:bg-rose-500/25 text-xs font-mono font-bold rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer"
+              className="min-h-11 px-3 py-2 bg-rose-500/15 border border-rose-500/30 text-rose-300 hover:bg-rose-500/25 text-xs font-mono font-bold rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer"
             >
               <AlertTriangle size={13} />
               <span>Force Restart</span>
@@ -299,7 +312,7 @@ function PrHeader({
             <>
               <button
                 onClick={() => onExportMarkdown("file")}
-                className="px-3 py-2 bg-white/5 border border-white/10 text-slate-300 hover:bg-white/10 text-xs font-mono font-bold rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer"
+                className="min-h-11 px-3 py-2 bg-white/5 border border-white/10 text-slate-300 hover:bg-white/10 text-xs font-mono font-bold rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer"
                 title="Save the markdown summary to .dragnet/reviews/<branch>/<runId>.md inside the project"
               >
                 <Save size={13} />
@@ -307,7 +320,7 @@ function PrHeader({
               </button>
               <button
                 onClick={() => onExportMarkdown("download")}
-                className="px-3 py-2 bg-white/5 border border-white/10 text-slate-300 hover:bg-white/10 text-xs font-mono font-bold rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer"
+                className="min-h-11 px-3 py-2 bg-white/5 border border-white/10 text-slate-300 hover:bg-white/10 text-xs font-mono font-bold rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer"
                 title="Download the markdown summary as a .md file"
               >
                 <Download size={13} />
@@ -335,13 +348,15 @@ function PrHeader({
         onIndexComplete={onIndexComplete}
       />
 
+      <ScanSettingsStrip settings={scanSettings} />
+
       {scanResult && (
         <div className="mt-3 p-2 bg-cyan-950/20 border border-cyan-800/30 rounded text-xs text-cyan-400 font-mono flex items-center justify-between">
           <span>
             ✓ Scan run completed: Discovered <strong className="text-emerald-400">{scanResult.count}</strong> alerts using{" "}
             <strong>{scanResult.model}</strong>.
           </span>
-          <button onClick={onDismissScanResult} className="hover:text-white p-0.5">
+          <button onClick={onDismissScanResult} className="hover:text-white p-0.5" aria-label="Dismiss scan result">
             <X size={12} />
           </button>
         </div>
@@ -375,6 +390,85 @@ function PrHeader({
         </div>
       </div>
     </div>
+  );
+}
+
+function useScanSettingsSummary(): ScanSettingsSummary | null {
+  const [settings, setSettings] = useState<ScanSettingsSummary | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const [limitsRes, presetsRes] = await Promise.all([
+          fetch("/api/llm/review-limits"),
+          fetch("/api/llm/presets"),
+        ]);
+        if (!limitsRes.ok || !presetsRes.ok) return;
+        const [limitsData, presetsData] = await Promise.all([
+          limitsRes.json(),
+          presetsRes.json(),
+        ]);
+        const limits = limitsData.limits as ReviewLimits | undefined;
+        if (!limits) return;
+        const presets = Array.isArray(presetsData.presets) ? presetsData.presets : [];
+        const primaryId = presetsData.primaryChatPresetId ?? presetsData.activeChatPresetId;
+        const fallbackId = presetsData.fallbackChatPresetId;
+        const primary = presets.find((p: any) => p.id === primaryId);
+        const fallback = presets.find((p: any) => p.id === fallbackId);
+        if (!cancelled) {
+          setSettings({
+            maxIterations: typeof primary?.maxIterations === "number" ? primary.maxIterations : 16,
+            primaryModel: primary?.chatModel || null,
+            fallbackModel: fallback?.chatModel || null,
+            limits,
+          });
+        }
+      } catch (err) {
+        console.error("Failed loading scan settings summary:", err);
+      }
+    };
+    load();
+    window.addEventListener("dragnet:review-limits-changed", load);
+    window.addEventListener("dragnet:llm-presets-changed", load);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("dragnet:review-limits-changed", load);
+      window.removeEventListener("dragnet:llm-presets-changed", load);
+    };
+  }, []);
+
+  return settings;
+}
+
+function ScanSettingsStrip({ settings }: { settings: ScanSettingsSummary | null }) {
+  if (!settings) return null;
+  const { limits } = settings;
+  const modelText = settings.primaryModel
+    ? settings.fallbackModel
+      ? `${settings.primaryModel} -> ${settings.fallbackModel}`
+      : settings.primaryModel
+    : "No chat model";
+
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-white/5 pt-3 text-[10px] font-mono text-slate-500">
+      <span className="uppercase tracking-wider text-slate-600">Next scan</span>
+      <ScanSettingPill label="Model" value={modelText} />
+      <ScanSettingPill label="Iterations" value={String(settings.maxIterations)} />
+      <ScanSettingPill label="Lines/chunk" value={limits.chunkLineCap.toLocaleString()} />
+      <ScanSettingPill label="Normal" value={`${limits.normalMaxLines.toLocaleString()} lines / ${limits.normalMaxCodeFiles} files`} />
+      <ScanSettingPill label="Oversized" value={`${limits.oversizedLines.toLocaleString()} lines / ${limits.oversizedCodeFiles} files`} />
+      <ScanSettingPill label="File cap" value={limits.maxFilesPerReview > 0 ? String(limits.maxFilesPerReview) : "off"} />
+    </div>
+  );
+}
+
+function ScanSettingPill({ label, value }: { label: string; value: string }) {
+  return (
+    <span className="inline-flex min-h-7 max-w-full items-center gap-1.5 rounded-md border border-white/10 bg-slate-950/40 px-2 py-1">
+      <span className="uppercase text-slate-600">{label}</span>
+      <strong className="font-semibold text-slate-300 truncate">{value}</strong>
+    </span>
   );
 }
 

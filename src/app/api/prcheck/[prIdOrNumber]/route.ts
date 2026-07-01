@@ -116,7 +116,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ prIdOrNu
     }
     const diffHash = computeDiffHash(files);
     const configHash = chatChain.length > 0
-      ? computeReviewConfigHash(chatChain, shortHash(SYSTEM_INSTRUCTION))
+      ? computeReviewConfigHash(chatChain, shortHash(SYSTEM_INSTRUCTION), limits)
       : "";
 
     const force = url.searchParams.get("force") === "true";

@@ -24,6 +24,7 @@
 import crypto from "node:crypto";
 import { randomUUID } from "node:crypto";
 import { prisma } from "./prisma";
+import type { ReviewLimits } from "./prSizeConfig";
 
 /**
  * Max wall-clock time a scan is allowed to run before being treated as
@@ -116,6 +117,7 @@ export interface LatestReviewResult {
 export interface ChatChainEntry {
   name: string;
   model: string;
+  maxIterations?: number;
 }
 
 /**
@@ -152,9 +154,28 @@ export function computeDiffHash(files: DiffHashInput[]): string {
 export function computeReviewConfigHash(
   chatChain: ChatChainEntry[],
   systemPromptHash: string,
+  reviewLimits?: ReviewLimits,
 ): string {
-  const models = chatChain.map((c) => c.model).filter(Boolean).join(",");
-  const seed = `${models}|${systemPromptHash}`;
+  const models = chatChain
+    .map((c) => ({
+      model: c.model,
+      maxIterations: c.maxIterations,
+    }))
+    .filter((c) => c.model)
+    .map((c) => `${c.model}:${c.maxIterations ?? "default"}`)
+    .join(",");
+  const limitsSeed = reviewLimits
+    ? [
+        reviewLimits.chunkLineCap,
+        reviewLimits.minUsefulChunkLines,
+        reviewLimits.normalMaxLines,
+        reviewLimits.normalMaxCodeFiles,
+        reviewLimits.oversizedLines,
+        reviewLimits.oversizedCodeFiles,
+        reviewLimits.maxFilesPerReview,
+      ].join(",")
+    : "default-limits";
+  const seed = `${models}|${systemPromptHash}|${limitsSeed}`;
   return crypto.createHash("sha256").update(seed).digest("hex").slice(0, 16);
 }
 
@@ -578,7 +599,7 @@ export async function getActiveScan(prId: string): Promise<{
  * different maxIterations caps. Logs without a chunkId fall under the
  * "__run" sentinel key (used by non-chunked scans).
  */
-function parseIterationLogs(
+export function parseIterationLogs(
   logs: Array<{ message: string; reviewChunkId: string | null }>,
 ): Record<string, { current: number; max: number; provider?: string }> {
   // Current format: "Iteration N/M — Provider" (em-dash separator).
@@ -596,10 +617,7 @@ function parseIterationLogs(
     if (!Number.isFinite(current) || !Number.isFinite(max)) continue;
     const provider = withProvider ? withProvider[3]?.trim() : undefined;
     const key = log.reviewChunkId ?? "__run";
-    const prev = out[key];
-    if (!prev || current > prev.current) {
-      out[key] = { current, max, provider };
-    }
+    out[key] = { current, max, provider };
   }
   return out;
 }

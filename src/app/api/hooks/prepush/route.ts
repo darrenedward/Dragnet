@@ -122,7 +122,7 @@ export async function POST(req: Request) {
     }
     const diffHash = computeDiffHash(files);
     const configHash = chatChain.length > 0
-      ? computeReviewConfigHash(chatChain, shortHash(SYSTEM_INSTRUCTION))
+      ? computeReviewConfigHash(chatChain, shortHash(SYSTEM_INSTRUCTION), limits)
       : "";
 
     // Shared concurrency guard via reviewLocks helper — prepush has no

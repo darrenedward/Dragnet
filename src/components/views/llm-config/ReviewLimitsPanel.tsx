@@ -119,6 +119,7 @@ export default function ReviewLimitsPanel() {
       if (res.ok && data.ok) {
         setSaveResult({ success: true, message: "Saved. Next scan uses the new limits." });
         setDirty(false);
+        window.dispatchEvent(new Event("dragnet:review-limits-changed"));
       } else {
         setSaveResult({ success: false, message: data.error || "Save failed." });
       }

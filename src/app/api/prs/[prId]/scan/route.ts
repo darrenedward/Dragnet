@@ -136,7 +136,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
     // (commitHash, diffHash, reviewConfigHash), short-circuit and return the
     // cached findings. `force=true` bypasses.
     const currentDiffHash = computeDiffHash(files);
-    const currentConfigHash = computeReviewConfigHash(chatChain, shortHash(SYSTEM_INSTRUCTION));
+    const currentConfigHash = computeReviewConfigHash(chatChain, shortHash(SYSTEM_INSTRUCTION), limits);
     console.log(`[scan] route: diffHash=${currentDiffHash.slice(0, 8) || "(empty)"}, configHash=${currentConfigHash.slice(0, 8)}, force=${force}`);
 
     if (!force) {

@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   computeDiffHash,
   computeReviewConfigHash,
+  parseIterationLogs,
   shortHash,
 } from "../src/lib/reviewFreshness";
 
@@ -77,6 +78,30 @@ describe("reviewFreshness", () => {
       );
       expect(single).not.toBe(withFallback);
     });
+
+    it("changes when the model iteration cap changes", () => {
+      const promptHash = shortHash("prompt");
+      const a = computeReviewConfigHash([{ name: "p", model: "gpt-4o", maxIterations: 8 }], promptHash);
+      const b = computeReviewConfigHash([{ name: "p", model: "gpt-4o", maxIterations: 16 }], promptHash);
+      expect(a).not.toBe(b);
+    });
+
+    it("changes when review limits change", () => {
+      const promptHash = shortHash("prompt");
+      const chain = [{ name: "p", model: "gpt-4o" }];
+      const limits = {
+        chunkLineCap: 600,
+        minUsefulChunkLines: 100,
+        normalMaxLines: 800,
+        normalMaxCodeFiles: 40,
+        oversizedLines: 3000,
+        oversizedCodeFiles: 100,
+        maxFilesPerReview: 0,
+      };
+      const a = computeReviewConfigHash(chain, promptHash, limits);
+      const b = computeReviewConfigHash(chain, promptHash, { ...limits, chunkLineCap: 1200 });
+      expect(a).not.toBe(b);
+    });
   });
 
   describe("shortHash", () => {
@@ -90,6 +115,33 @@ describe("reviewFreshness", () => {
 
     it("differs across inputs", () => {
       expect(shortHash("a")).not.toBe(shortHash("b"));
+    });
+  });
+
+  describe("parseIterationLogs", () => {
+    it("resets displayed progress when a fallback provider starts its own budget", () => {
+      const parsed = parseIterationLogs([
+        { message: "Iteration 1/4 — NVIDIA", reviewChunkId: "chunk-a" },
+        { message: "Iteration 2/4 — NVIDIA", reviewChunkId: "chunk-a" },
+        { message: "Iteration 3/4 — NVIDIA", reviewChunkId: "chunk-a" },
+        { message: "Iteration 4/4 — NVIDIA", reviewChunkId: "chunk-a" },
+        { message: "Loop exhausted — no submitReview after 4 iterations", reviewChunkId: "chunk-a" },
+        { message: "Iteration 1/16 — Minimax", reviewChunkId: "chunk-a" },
+        { message: "Iteration 2/16 — Minimax", reviewChunkId: "chunk-a" },
+      ]);
+
+      expect(parsed["chunk-a"]).toEqual({ current: 2, max: 16, provider: "Minimax" });
+    });
+
+    it("tracks each chunk independently", () => {
+      const parsed = parseIterationLogs([
+        { message: "Iteration 4/4 — NVIDIA", reviewChunkId: "chunk-a" },
+        { message: "Iteration 1/16 — Minimax", reviewChunkId: "chunk-a" },
+        { message: "Iteration 3/4 — NVIDIA", reviewChunkId: "chunk-b" },
+      ]);
+
+      expect(parsed["chunk-a"]).toEqual({ current: 1, max: 16, provider: "Minimax" });
+      expect(parsed["chunk-b"]).toEqual({ current: 3, max: 4, provider: "NVIDIA" });
     });
   });
 });
