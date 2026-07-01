@@ -10,6 +10,7 @@ import { isReviewActive, acquireReviewLock } from "@/src/lib/reviewLocks";
 import { getChatChain } from "@/src/lib/llmClient";
 import { computePrSizeProfile, type PrSizeProfile } from "@/src/lib/prSizeProfile";
 import { readPrCommitCount } from "@/src/lib/prSizeProfile.server";
+import { computeStackTopology, type PrTopologyInput } from "@/src/lib/prStackTopology";
 import { assertTier, buildDiffManifest, runLargePrReview } from "@/src/services/largePrReview";
 import { readLimits } from "@/src/lib/prSizeConfig";
 import {
@@ -57,7 +58,7 @@ async function startTrackedReview(pr: any, repo: any): Promise<
   const tier = assertTier(manifest);
   const diffHash = computeDiffHash(files);
   const configHash = chatChain.length > 0
-    ? computeReviewConfigHash(chatChain, shortHash(SYSTEM_INSTRUCTION))
+    ? computeReviewConfigHash(chatChain, shortHash(SYSTEM_INSTRUCTION), limits)
     : "";
 
   // Shared concurrency guard via acquireReviewLock — narrows the race
@@ -326,16 +327,55 @@ async function handlePrComments(args: any): Promise<string> {
   return out;
 }
 
+/**
+ * Shared prlist builder — single source of truth for both the JSON-RPC
+ * `prlist` tool and the legacy `prlist` command. Pulls PRs + scan status,
+ * computes stack topology, attaches per-PR `stackDepth` / `dependencies`
+ * / `unscannedDepsCount` so callers (web UI, CLI, /dragnet merge skill)
+ * get the same stack-aware view without recomputing client-side.
+ *
+ * Topology is advisory: callers verifying merge safety MUST re-check
+ * live `gh pr view` state at execution time (mergeable/CI/reviews drift
+ * in real time). Dragnet's snapshot is the starting point, not truth.
+ */
+async function buildPrList(repoId: string) {
+  const prs = await prisma.pullRequest.findMany({
+    where: { repoId }, orderBy: { createdAt: "desc" }, take: 20,
+  });
+  if (prs.length === 0) return { prs: [], topology: new Map(), scannedPrIds: new Set<string>() };
+
+  const scanned = await prisma.reviewRun.findMany({
+    where: { repoId, status: "completed" },
+    select: { prId: true },
+    distinct: ["prId"],
+  });
+  const scannedPrIds = new Set(scanned.map((s) => s.prId));
+
+  const topoInputs: PrTopologyInput[] = prs.map((p) => ({
+    id: p.id,
+    sourceBranch: p.sourceBranch,
+    targetBranch: p.targetBranch,
+    rating: p.rating,
+  }));
+  const topology = computeStackTopology(topoInputs, scannedPrIds);
+
+  return { prs, topology, scannedPrIds };
+}
+
 async function handlePrList(args: any): Promise<string> {
   if (!args.repoId) return 'Pass "repoId" to list PRs.';
-  const prs = await prisma.pullRequest.findMany({
-    where: { repoId: args.repoId }, orderBy: { createdAt: "desc" }, take: 20,
-  });
+  const { prs, topology } = await buildPrList(args.repoId);
   if (prs.length === 0) return "> **No pull requests found** for this repo.";
+
   let out = `## Pull Requests\n\n`;
   for (const p of prs) {
     const sizeProfile = await loadPrSizeProfile(p);
-    out += `- **${p.sourceBranch}** — ${p.title} — ${p.rating != null ? `${p.rating}/10` : "Not scanned"} — ${formatSizeProfile(sizeProfile)}\n`;
+    const topo = topology.get(p.id);
+    const rating = p.rating != null ? `${p.rating}/10` : "Not scanned";
+    const stackInfo = topo
+      ? ` — Stack: depth=${topo.stackDepth}${topo.unscannedDepsCount > 0 ? `, unscanned deps: ${topo.unscannedDepsCount}` : ""}`
+      : "";
+    out += `- **${p.sourceBranch}** — ${p.title} — ${rating} — ${formatSizeProfile(sizeProfile)}${stackInfo}\n`;
   }
   return out;
 }
@@ -535,15 +575,17 @@ async function handleLegacyCommand(body: any, defRepo: string | null) {
     if (cmdName.endsWith("prlist") || cmdName.endsWith("list")) {
       const rid = body.repoId || defRepo;
       if (!rid) return NextResponse.json({ status: "Error", message: "Pass { repoId }." }, { status: 400 });
-      const prs = await prisma.pullRequest.findMany({
-        where: { repoId: rid }, orderBy: { createdAt: "desc" }, take: 20,
-      });
+      const { prs, topology } = await buildPrList(rid);
       const pullRequests = await Promise.all(prs.map(async (p) => {
         const sizeProfile = await loadPrSizeProfile(p);
+        const topo = topology.get(p.id);
         return {
           number: p.sourceBranch, id: p.id, title: p.title,
           branch: p.sourceBranch, rating: p.rating != null ? `${p.rating}/10` : "Not scanned",
           sizeProfile,
+          stackDepth: topo?.stackDepth ?? 0,
+          dependencies: topo?.dependencies ?? [],
+          unscannedDepsCount: topo?.unscannedDepsCount ?? 0,
         };
       }));
       return NextResponse.json({
