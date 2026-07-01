@@ -94,6 +94,7 @@ describe("Phase 4 force-restart abort", () => {
     expect(isReviewActive(PR_ID)).toBe(false);
 
     const lock = await acquireReviewLock(PR_ID, false);
+    if (lock.status !== "acquired") throw new Error("expected acquired");
     expect(isReviewActive(PR_ID)).toBe(true);
 
     lock.release();

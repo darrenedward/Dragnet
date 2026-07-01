@@ -112,6 +112,7 @@ model ReviewRun {
   triggerReason    String?        // "manual" | "prepush" | "prcheck" | "webhook" | "legacy"
   forced           Boolean        @default(false)
   tokensUsed       Json?          // Phase 2 cost telemetry: { totalCostUsd, totalPromptTokens, totalCompletionTokens, providers[] }
+  lastCheckpointAt DateTime?      // Phase 5 resume: last successful checkpoint write for an in-progress run
   pullRequest      PullRequest    @relation(fields: [prId], references: [id], onDelete: Cascade)
   reviewFindings   ReviewFinding[]
   reviewChunks     ReviewChunk[]
@@ -126,7 +127,7 @@ model ReviewChunk {
   reviewRunId              String
   label                    String
   filePaths                String[]
-  status                   String    // "pending" | "running" | "completed" | "failed" | "skipped"
+  status                   String    // "pending" | "running" | "completed" | "failed" | "skipped" | "interrupted"
   skipReason               String?
   rating                   Int?
   summary                  String?
@@ -135,6 +136,7 @@ model ReviewChunk {
   touchesSecuritySensitive Boolean   @default(false)
   startedAt                DateTime?
   completedAt              DateTime?
+  lastCheckpointAt         DateTime?    // Phase 5 resume: last checkpoint write for this chunk
   reviewRun                ReviewRun @relation(fields: [reviewRunId], references: [id], onDelete: Cascade)
 
   @@index([reviewRunId, status])
