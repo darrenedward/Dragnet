@@ -111,6 +111,7 @@ model ReviewRun {
   chunksSkipped    Int            @default(0)
   triggerReason    String?        // "manual" | "prepush" | "prcheck" | "webhook" | "legacy"
   forced           Boolean        @default(false)
+  tokensUsed       Json?          // Phase 2 cost telemetry: { totalCostUsd, totalPromptTokens, totalCompletionTokens, providers[] }
   pullRequest      PullRequest    @relation(fields: [prId], references: [id], onDelete: Cascade)
   reviewFindings   ReviewFinding[]
   reviewChunks     ReviewChunk[]

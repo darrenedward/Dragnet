@@ -79,6 +79,7 @@ export interface LatestReviewResult {
     chunksCompleted: number;
     chunksFailed: number;
     chunksSkipped: number;
+    tokensUsed: unknown | null;
   } | null;
   findings: Array<{
     id: string;
@@ -382,6 +383,35 @@ export async function completeReviewRun(
 }
 
 /**
+ * Persist Phase 2 cost-telemetry payload to `ReviewRun.tokensUsed`.
+ *
+ * Best-effort: a write failure logs a warning but does not throw —
+ * the scan's findings/rating are already persisted by the time this
+ * is called, and a telemetry write failure must NOT mask a successful
+ * review (or surface on a failed one).
+ *
+ * Caller passes the already-built `TokensUsed` JSON shape from
+ * `reviewService.ts::buildTokensUsed()`; this helper is a thin
+ * persistence wrapper so the write can be unit-tested in isolation.
+ */
+export async function setReviewRunTokens(
+  runId: string,
+  tokensUsed: unknown,
+): Promise<void> {
+  try {
+    await prisma.reviewRun.update({
+      where: { id: runId },
+      data: { tokensUsed: tokensUsed as any },
+    });
+  } catch (err) {
+    console.warn(
+      `[reviewFreshness] failed to persist tokensUsed on run ${runId}:`,
+      err,
+    );
+  }
+}
+
+/**
  * Load the latest completed ReviewRun and its visible findings.
  *
  * This is the read-side single source of truth for "current report" style
@@ -410,6 +440,7 @@ export async function getLatestCompletedReview(
       chunksCompleted: true,
       chunksFailed: true,
       chunksSkipped: true,
+      tokensUsed: true,
     },
   });
 

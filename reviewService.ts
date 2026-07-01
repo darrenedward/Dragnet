@@ -4,12 +4,13 @@ import { prisma } from "./src/lib/prisma";
 import { getChatChain, getChatClient } from "./src/lib/llmClient";
 import { randomUUID } from "node:crypto";
 import { verifyFindings, isDocumentationFile, type CandidateFinding } from "./src/services/findingVerifier";
-import { completeReviewRun } from "./src/lib/reviewFreshness";
+import { completeReviewRun, setReviewRunTokens } from "./src/lib/reviewFreshness";
 import { safeReadFileSync, resolveSafePath } from "./src/lib/pathSafety";
 import { runDeterministicChecks, type DeterministicFinding } from "./src/services/deterministicChecks";
 import { buildFindingFingerprint, resolveSymbolsBatch } from "./src/services/largePrReview/fingerprint";
 import { reconcileFindingsAcrossRuns } from "./src/services/largePrReview/reconcile";
 import { classifyProviderOutcome, type OutcomeClass } from "./src/lib/failureClassifier";
+import { computeCost } from "./src/lib/llmPricing";
 
 export interface ScanResult {
   success: boolean;
@@ -23,6 +24,11 @@ export interface ScanResult {
  * Per-provider attempt record. One entry per provider tried in a scan,
  * classified by `classifyProviderOutcome()`. Phase 1 logs the array;
  * Phase 2 persists it to `ReviewRun.tokensUsed`.
+ *
+ * Token/cost fields (Phase 2): summed across every `chat.completions.create`
+ * call made inside this attempt's loop body. `costUsd` is derived from the
+ * model's price entry via `computeCost()`; unknown models report $0 with a
+ * console warning rather than a fabricated number.
  */
 export interface ProviderAttempt {
   provider: string;
@@ -33,6 +39,72 @@ export interface ProviderAttempt {
   rating: number | null;
   error: unknown;
   outcome: OutcomeClass;
+  promptTokens: number;
+  completionTokens: number;
+  costUsd: number;
+}
+
+/**
+ * Phase 2 cost-telemetry payload persisted to `ReviewRun.tokensUsed`.
+ *
+ * Shape is intentionally flat + UI-ready: the PR review banner reads
+ * `totalCostUsd` + `providers[]` directly, no joins or computation
+ * needed. Per-provider breakdown lets the operator spot "NVIDIA cost
+ * $0.20 to produce nothing, Minimax cost $0.02 to produce the review"
+ * at a glance.
+ *
+ * `outcome` per provider uses the classifier vocabulary
+ * (`success | quality_failure | transport_failure | interrupted |
+ * unknown_failure`) so the UI can pair cost with outcome — "this
+ * provider's spend produced no review" is a different signal from
+ * "this provider's spend produced the final review."
+ */
+export interface TokensUsed {
+  totalCostUsd: number;
+  totalPromptTokens: number;
+  totalCompletionTokens: number;
+  providers: Array<{
+    name: string;
+    model: string;
+    promptTokens: number;
+    completionTokens: number;
+    costUsd: number;
+    outcome: OutcomeClass;
+    iterationsUsed: number;
+    maxIterations: number;
+  }>;
+}
+
+/**
+ * Build the persisted payload from per-attempt records. Pure + testable.
+ * Sums tokens/cost across providers; carries outcome + iteration counts
+ * so the UI can render "NVIDIA ran 4/4 (quality_failure) — $0.003,
+ * Minimax ran 2/8 (success) — $0.001" without re-deriving anything.
+ */
+export function buildTokensUsed(attempts: ProviderAttempt[]): TokensUsed {
+  let totalPromptTokens = 0;
+  let totalCompletionTokens = 0;
+  let totalCostUsd = 0;
+  for (const a of attempts) {
+    totalPromptTokens += a.promptTokens;
+    totalCompletionTokens += a.completionTokens;
+    totalCostUsd += a.costUsd;
+  }
+  return {
+    totalCostUsd: Math.round(totalCostUsd * 1e6) / 1e6,
+    totalPromptTokens,
+    totalCompletionTokens,
+    providers: attempts.map((a) => ({
+      name: a.provider,
+      model: a.model,
+      promptTokens: a.promptTokens,
+      completionTokens: a.completionTokens,
+      costUsd: a.costUsd,
+      outcome: a.outcome,
+      iterationsUsed: a.iterationsUsed,
+      maxIterations: a.maxIterations,
+    })),
+  };
 }
 
 /**
@@ -566,6 +638,12 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
   await prisma.pullRequest.updateMany({ where: { id: prId }, data: { status: "In Progress" } });
   console.log(`[scan] runPrScan: status set to In Progress`);
 
+  // Hoisted out of the try block so the outer catch can still persist
+  // partial token/cost telemetry when runPrScan throws. Without this,
+  // a scan that burns 50k tokens then throws would report "cost not
+  // tracked" — violating the honest-accounting rule (Phase 2).
+  const providerAttempts: ProviderAttempt[] = [];
+
   try {
   let findings: any[] = [];
   let rating: number | null = null;
@@ -707,7 +785,6 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
   const chain = getChatChain();
   let agenticError: string | null = null;
   let finalReview: any = null;
-  const providerAttempts: ProviderAttempt[] = [];
 
   if (chain.length === 0) {
     systemWarn = "No LLM endpoint or chat model configured. Open the LLM Settings tab and configure at least one provider.";
@@ -719,6 +796,12 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
       let attemptIterations = 0;
       let attemptMalformedStreak = 0;
       let attemptError: unknown = null;
+      // Token accumulators — summed across every chat.completions.create
+      // call this attempt makes (main loop + JSON finalizer + fallback
+      // finalizer). `response.usage` is null on some OpenAI-compatible
+      // endpoints; those calls contribute 0 honestly rather than guessing.
+      let attemptPromptTokens = 0;
+      let attemptCompletionTokens = 0;
       try {
         const initialPrompt = `Your mission: audit this PR with maximum prejudice. Assume the author is hiding something. Trace every changed function across the codebase — check its callers, its callees, its error handling, its edge cases. Use \`searchCodebase\`, \`getCallers\`, and \`findSimilar\` to validate that nothing is overlooked.
 When you are satisfied (or outraged), call \`submitReview\` exactly once.
@@ -770,6 +853,14 @@ ${diffPayload}${deterministicPayload}`;
             `${name} chat completion`,
           );
           await assertReviewRunStillActive(reviewRunId);
+          // Phase 2 cost telemetry — accumulate token usage. Some
+          // OpenAI-compatible endpoints (notably older vLLM builds and
+          // certain Ollama proxies) return no `usage` block at all; those
+          // calls contribute 0 rather than NaN.
+          if (response.usage) {
+            attemptPromptTokens += response.usage.prompt_tokens ?? 0;
+            attemptCompletionTokens += response.usage.completion_tokens ?? 0;
+          }
 
           const msg = response.choices?.[0]?.message;
           if (!msg) {
@@ -1020,6 +1111,10 @@ ${diffPayload}${deterministicPayload}`;
             );
           }
           await assertReviewRunStillActive(reviewRunId);
+          if (finalizerResponse?.usage) {
+            attemptPromptTokens += finalizerResponse.usage.prompt_tokens ?? 0;
+            attemptCompletionTokens += finalizerResponse.usage.completion_tokens ?? 0;
+          }
           const rawFinalizerText = finalizerResponse.choices?.[0]?.message?.content || "";
           const parsed = parseFinalReviewJson(rawFinalizerText);
           if (parsed) {
@@ -1065,7 +1160,9 @@ ${diffPayload}${deterministicPayload}`;
         // Always record this provider's outcome. Covers success break,
         // quality-failure break (no submitReview), thrown errors, and
         // retryable-transport-failure fall-through to next provider.
-        // Phase 1: console log only. Phase 2 persists to ReviewRun.tokensUsed.
+        // Phase 1 classified the outcome; Phase 2 attaches token/cost
+        // telemetry so the UI can render "this scan cost $0.04 on NVIDIA"
+        // and the operator can spot runaway spend per provider.
         const successThisAttempt = finalReview !== null;
         const ratingThisAttempt: number | null = successThisAttempt
           ? (finalReview as any)?.rating ?? null
@@ -1081,6 +1178,7 @@ ${diffPayload}${deterministicPayload}`;
           refusalDetected: false,
           emptyFindings: false,
         });
+        const { costUsd } = computeCost(model, attemptPromptTokens, attemptCompletionTokens);
         providerAttempts.push({
           provider: name,
           model,
@@ -1090,9 +1188,13 @@ ${diffPayload}${deterministicPayload}`;
           rating: ratingThisAttempt,
           error: attemptError,
           outcome,
+          promptTokens: attemptPromptTokens,
+          completionTokens: attemptCompletionTokens,
+          costUsd,
         });
         console.log(
           `[review] provider ${name} outcome=${outcome} iterations=${attemptIterations}/${maxIterations} submitReview=${successThisAttempt} malformed=${attemptMalformedStreak}` +
+            ` tokens=${attemptPromptTokens}+${attemptCompletionTokens} cost=$${costUsd.toFixed(6)}` +
             (attemptError ? ` error=${(attemptError as any)?.message ?? String(attemptError)}` : ""),
         );
       }
@@ -1101,6 +1203,14 @@ ${diffPayload}${deterministicPayload}`;
     console.log(
       `[review] providerAttempts summary: ${providerAttempts.map((a) => `${a.provider}=${a.outcome}`).join(", ") || "(no attempts)"}`,
     );
+
+    // Phase 2 cost telemetry — persist tokens/cost breakdown to ReviewRun.
+    // Best-effort: setReviewRunTokens swallows errors. Only written for
+    // non-chunked runs (chunked scans aggregate per-chunk telemetry in
+    // the large-PR orchestrator — see runLargePrReview).
+    if (reviewRunId && !reviewChunkId) {
+      await setReviewRunTokens(reviewRunId, buildTokensUsed(providerAttempts));
+    }
 
     if (finalReview) {
       // Clamp severity/category to the known enums so both the returned and
@@ -1355,6 +1465,15 @@ ${diffPayload}${deterministicPayload}`;
       await prisma.pullRequest.updateMany({ where: { id: prId }, data: { status: "Failed" } });
     }
     if (reviewRunId && !reviewChunkId) {
+      // Persist partial telemetry even on failure — the operator still
+      // wants to know how many tokens the (failed) scan burned. This is
+      // the "honest accounting" rule: a failed scan with 50k tokens of
+      // partial work shouldn't show as cost-not-tracked.
+      try {
+        await setReviewRunTokens(reviewRunId, buildTokensUsed(providerAttempts));
+      } catch (telemetryErr) {
+        console.warn(`[scan] failed to persist tokensUsed on failed run:`, telemetryErr);
+      }
       await completeReviewRun(reviewRunId, { status: "failed" });
     }
     throw err;

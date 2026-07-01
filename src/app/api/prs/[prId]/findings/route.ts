@@ -143,6 +143,11 @@ export async function GET(req: Request, { params }: { params: Promise<{ prId: st
         chunksCompleted: latest.reviewRun.chunksCompleted,
         chunksFailed: latest.reviewRun.chunksFailed,
         chunksSkipped: latest.reviewRun.chunksSkipped,
+        // Phase 2 cost telemetry — null on old runs (column added by
+        // Phase 2 migration; pre-existing rows have no value). UI renders
+        // "Cost: not tracked" for null; otherwise renders
+        // "$X on PROVIDER" from the providers[] breakdown.
+        tokensUsed: latest.reviewRun.tokensUsed ?? null,
       },
       findings: latest.findings,
       rejectedFindings: latest.rejectedFindings,
