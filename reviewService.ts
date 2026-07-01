@@ -351,7 +351,7 @@ function clearCheckpoint(
 /**
  * Build provider-specific request options for chat.completions.create.
  *
- * Three reasoning-model families, each with its OWN top tier — they are
+ * Four reasoning-model families, each with its OWN top tier — they are
  * NOT interchangeable. Sending the wrong tier (e.g. `xhigh` to a Claude
  * model) 400s instantly.
  *
@@ -367,12 +367,21 @@ function clearCheckpoint(
  * - Zhipu GLM 4.5+ (glm-4.5, glm-4.5-flash, glm-4.6, glm-5.x):
  *     `reasoning_effort` accepts low/medium/high/max. "max" is GLM's top
  *     tier — distinct from OpenAI's xhigh and Anthropic's high.
+ * - NVIDIA Nemotron-3 (nemotron-3-ultra-*, nemotron-3-super-*,
+ *     nemotron-3-nano-*): all emit heavy `reasoning_content` that
+ *     exhausts `max_tokens` before the JSON finalizer can produce
+ *     structured output. NVIDIA NIM accepts top-level `reasoning_effort`
+ *     (NOT the `nvext` wrapper — that path produces <unk> garbage).
+ *     "low" is the only tier that consistently fits the 90s JSON
+ *     finalizer budget; deeper tiers (medium/high) work for the main
+ *     agentic loop but time out the finalizer. Verified July 2026 on
+ *     nemotron-3-super-120b-a12b: low returns clean JSON in ~1s.
  *
  * Non-reasoning providers (OpenRouter non-reasoning routes, MiniMax,
  * Ollama, LM Studio) stay on the universal `max_tokens` form and would
  * 400 on `reasoning_effort`.
  *
- * Tradeoff across all three: ~2x latency + cost vs deeper chain-of-
+ * Tradeoff across all four: ~2x latency + cost vs deeper chain-of-
  * thought — for a code reviewer that's the right default. Override per
  * preset via `reasoningEffort` field if we expose it later.
  */
@@ -392,6 +401,12 @@ function reasoningOptions(model: string, maxTokens: number): Record<string, unkn
   if (/^glm-(4\.[5-9]|[5-9])/i.test(model)) {
     return {
       reasoning_effort: "max" as const,
+      max_tokens: maxTokens,
+    };
+  }
+  if (/nemotron-3/i.test(model)) {
+    return {
+      reasoning_effort: "low" as const,
       max_tokens: maxTokens,
     };
   }
