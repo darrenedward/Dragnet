@@ -12,6 +12,24 @@ import {
 import { getProviderHealth } from "@/src/lib/providerHealth";
 
 /**
+ * SDK-level retry count handed to every OpenAI-compatible client. The
+ * SDK retries on 408/409/429/5xx with exponential backoff + jitter.
+ * Default of 2 matches the SDK's built-in default; override via
+ * `DRAGNET_LLM_RETRY_COUNT` when a flaky endpoint needs more (or a
+ * strict-latency endpoint needs fewer). Provider-level quality
+ * failures (loop exhaustion without submitReview, malformed streaks)
+ * are NOT retried at this layer — those go through the Phase 3
+ * circuit breaker instead, which pauses the provider after N quality
+ * failures rather than retrying in-place.
+ */
+const DEFAULT_LLM_RETRY_COUNT = 2;
+
+function getMaxRetries(): number {
+  const v = Number(process.env.DRAGNET_LLM_RETRY_COUNT);
+  return Number.isFinite(v) && v >= 0 ? Math.floor(v) : DEFAULT_LLM_RETRY_COUNT;
+}
+
+/**
  * Dual lazy singletons for the OpenAI-compatible client.
  *
  * Chat and embedding roles can be served by different presets (e.g.
@@ -50,6 +68,7 @@ function buildClient(preset: Preset): OpenAI {
   return new OpenAI({
     apiKey: preset.apiKey || "no-key-required",
     baseURL: preset.endpoint,
+    maxRetries: getMaxRetries(),
   });
 }
 
