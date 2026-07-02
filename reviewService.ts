@@ -221,7 +221,7 @@ function isRetryableProviderFailure(err: any): boolean {
   }
 
   const message = String(err?.message ?? err);
-  return /\b(429|rate limit|timeout|timed out|connection (error|lost|closed|reset|refused)|network|socket|fetch failed)\b/i.test(message);
+  return /\b(429|rate limit|timeout|timed out|aborted|connection (error|lost|closed|reset|refused)|network|socket|fetch failed)\b/i.test(message);
 }
 
 /**
@@ -413,6 +413,20 @@ function reasoningOptions(model: string, maxTokens: number): Record<string, unkn
   return { max_tokens: maxTokens };
 }
 
+function supportsJsonResponseFormat(endpoint: string | null | undefined): boolean {
+  if (!endpoint) return true;
+  try {
+    const host = new URL(endpoint).host;
+    // NVIDIA's OpenAI-compatible endpoint can accept normal chat completions
+    // while hanging or 404ing on `response_format: json_object` for some
+    // hosted models. Use the plain JSON instruction path there first.
+    if (host === "integrate.api.nvidia.com") return false;
+  } catch {
+    // If the endpoint is not parseable, use the standard path.
+  }
+  return true;
+}
+
 /**
  * The responseSchema is reused as the parameters for the submitReview tool
  * (model returns its final review by calling the tool with the full
@@ -581,23 +595,90 @@ async function withTimeout<T>(promise: Promise<T>, label: string, ms: number = L
   }
 }
 
+function parseJsonMaybe(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  const trimmed = stripThinkBlocks(value).trim();
+  if (!trimmed || (!trimmed.startsWith("{") && !trimmed.startsWith("["))) return value;
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return value;
+  }
+}
+
+function unwrapFinalReviewCandidate(candidate: any): any {
+  let current = parseJsonMaybe(candidate);
+  const wrappers = ["review", "result", "finalReview", "final_review", "assessment", "response", "data", "arguments"];
+  for (let depth = 0; depth < 4; depth++) {
+    if (!current || typeof current !== "object" || Array.isArray(current)) return current;
+    if ("rating" in current || "findings" in current) return current;
+
+    const currentRecord = current as Record<string, unknown>;
+    const wrapperKey = wrappers.find((key) => key in currentRecord);
+    if (!wrapperKey) return current;
+    current = parseJsonMaybe(currentRecord[wrapperKey]);
+  }
+  return current;
+}
+
+function coerceRating(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim() !== "") {
+    const parsed = Number(value.trim());
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+}
+
+function coerceFindings(value: unknown): any[] | null {
+  const parsed = parseJsonMaybe(value);
+  if (Array.isArray(parsed)) return parsed;
+  if (parsed && typeof parsed === "object" && Array.isArray((parsed as any).items)) {
+    return (parsed as any).items;
+  }
+  return null;
+}
+
+function describeFinalReviewShape(candidate: any): string {
+  const root = parseJsonMaybe(candidate);
+  if (!root || typeof root !== "object") return `root=${typeof root}`;
+  if (Array.isArray(root)) return `root=array(${root.length})`;
+
+  const keys = Object.keys(root).slice(0, 12);
+  const unwrapped = unwrapFinalReviewCandidate(root);
+  const wrapperNote = unwrapped !== root && unwrapped && typeof unwrapped === "object"
+    ? ` unwrappedKeys=${Object.keys(unwrapped).slice(0, 12).join(",")}`
+    : "";
+  const ratingType = typeof unwrapped?.rating;
+  const findingsValue = parseJsonMaybe(unwrapped?.findings);
+  const findingsType = Array.isArray(findingsValue)
+    ? `array(${findingsValue.length})`
+    : findingsValue && typeof findingsValue === "object"
+      ? `object(${Object.keys(findingsValue).slice(0, 6).join(",")})`
+      : typeof findingsValue;
+
+  return `keys=${keys.join(",") || "(none)"}${wrapperNote} rating=${ratingType} findings=${findingsType}`;
+}
+
 function normalizeFinalReview(candidate: any): {
   rating: number;
   summary: string;
   findings: any[];
   droppedFilenamelessCount: number;
 } | null {
-  if (!candidate || typeof candidate !== "object") return null;
-  if (typeof candidate.rating !== "number") return null;
-  if (!Array.isArray(candidate.findings)) return null;
-  const before = candidate.findings.length;
-  const filtered = candidate.findings.filter((f: any) => {
+  const review = unwrapFinalReviewCandidate(candidate);
+  if (!review || typeof review !== "object" || Array.isArray(review)) return null;
+  const rating = coerceRating(review.rating);
+  const findings = coerceFindings(review.findings);
+  if (rating === null || !findings) return null;
+  const before = findings.length;
+  const filtered = findings.filter((f: any) => {
     const fn = (f?.filename ?? "").trim();
     return fn !== "" && fn !== "<unattributed>";
   });
   return {
-    rating: candidate.rating,
-    summary: typeof candidate.summary === "string" ? candidate.summary : "",
+    rating,
+    summary: typeof review.summary === "string" ? review.summary : "",
     findings: filtered,
     droppedFilenamelessCount: before - filtered.length,
   };
@@ -637,6 +718,92 @@ function parseFinalReviewJson(rawText: string): any | null {
     }
   }
   return null;
+}
+
+const FINALIZER_TOOL_RESULT_CHAR_CAP = 4_000;
+const FINALIZER_RECENT_MESSAGE_COUNT = 12;
+
+function truncateFinalizerContent(content: unknown, capContent = true): string {
+  let text: string;
+  if (typeof content === "string") {
+    text = content;
+  } else if (content == null) {
+    text = "";
+  } else {
+    text = JSON.stringify(content) ?? String(content);
+  }
+  if (!capContent) return text;
+  if (text.length <= FINALIZER_TOOL_RESULT_CHAR_CAP) return text;
+  return (
+    text.slice(0, FINALIZER_TOOL_RESULT_CHAR_CAP) +
+    `\n...[TRUNCATED ${text.length - FINALIZER_TOOL_RESULT_CHAR_CAP} chars for finalization]`
+  );
+}
+
+function sanitizeMessageForFinalizer(msg: any, capContent = true): any | null {
+  if (!msg || typeof msg !== "object") return null;
+
+  if (msg.role === "system") {
+    return { role: "system", content: truncateFinalizerContent(msg.content ?? "", capContent) };
+  }
+
+  if (msg.role === "user") {
+    return { role: "user", content: truncateFinalizerContent(msg.content ?? "", capContent) };
+  }
+
+  if (msg.role === "assistant") {
+    const toolCalls = Array.isArray(msg.tool_calls)
+      ? msg.tool_calls
+          .map((call: any) => {
+            const fnName = call?.function?.name || "unknown";
+            const fnArgs = call?.function?.arguments || "{}";
+            return `${fnName}(${fnArgs})`;
+          })
+          .join("; ")
+      : "";
+    const content = [msg.content, toolCalls ? `Tool calls requested: ${toolCalls}` : ""]
+      .filter((part) => typeof part === "string" && part.trim() !== "")
+      .join("\n");
+    return { role: "assistant", content: truncateFinalizerContent(content || "(assistant requested tools)", capContent) };
+  }
+
+  if (msg.role === "tool") {
+    return {
+      role: "user",
+      content: truncateFinalizerContent(
+        `Tool result from the investigation${msg.tool_call_id ? ` (${msg.tool_call_id})` : ""}:\n${msg.content ?? ""}`,
+      ),
+    };
+  }
+
+  return null;
+}
+
+function compactMessagesForFinalizer(messages: any[]): any[] {
+  if (messages.length <= 2) return messages;
+
+  const [systemMessage, initialUserMessage, ...rest] = messages;
+  const recent = rest
+    .slice(-FINALIZER_RECENT_MESSAGE_COUNT)
+    .map((msg) => sanitizeMessageForFinalizer(msg))
+    .filter(Boolean);
+
+  const omitted = rest.length - recent.length;
+  const summary = omitted > 0
+    ? [{
+        role: "user",
+        content:
+          `Finalization context note: ${omitted} earlier assistant/tool message(s) were omitted to keep the JSON finalizer within provider limits. ` +
+          `Use the original diff, deterministic findings, and the recent investigation context below to produce the final review.`,
+      }]
+    : [];
+
+  return [
+    sanitizeMessageForFinalizer(systemMessage, false) ?? systemMessage,
+    sanitizeMessageForFinalizer(initialUserMessage, false) ?? initialUserMessage,
+    ...summary,
+    ...recent,
+  ];
 }
 
 const tools = [
@@ -1013,6 +1180,8 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
   const chain = getChatChain({ repoPath: breakerRepoPath });
   let agenticError: string | null = null;
   let finalReview: any = null;
+  let finalReviewClient: any = null;
+  let finalReviewEndpoint: string | null = null;
 
   if (chain.length === 0) {
     // Distinguish "no chat provider configured" from "all configured
@@ -1149,12 +1318,15 @@ ${diffPayload}${deterministicPayload}`;
               if (fnName === "submitReview") {
                 const normalized = normalizeFinalReview(fnArgs);
                 if (!normalized) {
-                  console.warn(`[review] submitReview had invalid shape provider=${name}`);
+                  const shape = describeFinalReviewShape(fnArgs);
+                  console.warn(`[review] submitReview had invalid shape provider=${name} shape=${shape}`);
                   attemptMalformedStreak++;
                   messages.push({
                     role: "tool",
                     tool_call_id: call.id,
-                    content: "Error: submitReview arguments must include numeric rating and findings array. Call submitReview again with the required shape.",
+                    content:
+                      "Error: submitReview arguments must include top-level numeric rating and findings array. " +
+                      `Received shape: ${shape}. Call submitReview again with exactly {"rating":8,"summary":"...","findings":[...]}.`,
                   });
                   continue;
                 }
@@ -1167,6 +1339,8 @@ ${diffPayload}${deterministicPayload}`;
                   void logReview(prId, `Pre-verifier filter: dropped ${normalized.droppedFilenamelessCount} findings with no filename`, "warn", reviewRunId, reviewChunkId);
                 }
                 finalReview = normalized;
+                finalReviewClient = client;
+                finalReviewEndpoint = endpoint;
                 break;
               }
 
@@ -1314,6 +1488,8 @@ ${diffPayload}${deterministicPayload}`;
                 void logReview(prId, `Pre-verifier filter: dropped ${parsed.droppedFilenamelessCount} findings with no filename`, "warn", reviewRunId, reviewChunkId);
               }
               finalReview = parsed;
+              finalReviewClient = client;
+              finalReviewEndpoint = endpoint;
             }
             // Phase 5 — checkpoint the final assistant turn so an
             // interrupted run can resume from this state.
@@ -1337,7 +1513,7 @@ ${diffPayload}${deterministicPayload}`;
           console.log(`[review] attempting JSON-only finalization provider=${name}`);
           void logReview(prId, `Attempting JSON-only finalization — ${name}`, "info", reviewRunId, reviewChunkId);
           const finalizerMessages = [
-            ...messages,
+            ...compactMessagesForFinalizer(messages),
             {
               role: "user",
               content:
@@ -1350,17 +1526,32 @@ ${diffPayload}${deterministicPayload}`;
           ];
           let finalizerResponse;
           try {
-            finalizerResponse = await withTimeout(
-              client.chat.completions.create({
-                model,
-                messages: finalizerMessages,
-                temperature: 0.1,
-                response_format: { type: "json_object" },
-                ...reasoningOptions(model, 16_384),
-              } as any, { signal: options?.signal }),
-              `${name} JSON finalizer`,
-              LLM_FINALIZER_TIMEOUT_MS,
-            );
+            if (supportsJsonResponseFormat(endpoint)) {
+              finalizerResponse = await withTimeout(
+                client.chat.completions.create({
+                  model,
+                  messages: finalizerMessages,
+                  temperature: 0.1,
+                  response_format: { type: "json_object" },
+                  ...reasoningOptions(model, 4_096),
+                } as any, { signal: options?.signal }),
+                `${name} JSON finalizer`,
+                LLM_FINALIZER_TIMEOUT_MS,
+              );
+            } else {
+              console.log(`[review] skipping response_format JSON finalizer provider=${name} endpoint=${endpoint}`);
+              void logReview(prId, `JSON response_format finalizer skipped for provider endpoint`, "info", reviewRunId, reviewChunkId);
+              finalizerResponse = await withTimeout(
+                client.chat.completions.create({
+                  model,
+                  messages: finalizerMessages,
+                  temperature: 0.1,
+                  ...reasoningOptions(model, 4_096),
+                } as any, { signal: options?.signal }),
+                `${name} plain JSON finalizer`,
+                LLM_FINALIZER_TIMEOUT_MS,
+              );
+            }
           } catch (err: any) {
             console.warn(`[review] JSON response_format finalizer failed provider=${name}: ${err.message}`);
             void logReview(prId, `JSON response_format finalizer failed: ${err.message}`, "warn", reviewRunId, reviewChunkId);
@@ -1369,7 +1560,7 @@ ${diffPayload}${deterministicPayload}`;
                 model,
                 messages: finalizerMessages,
                 temperature: 0.1,
-                ...reasoningOptions(model, 16_384),
+                ...reasoningOptions(model, 4_096),
               } as any, { signal: options?.signal }),
               `${name} fallback finalizer`,
               LLM_FINALIZER_TIMEOUT_MS,
@@ -1392,6 +1583,8 @@ ${diffPayload}${deterministicPayload}`;
               void logReview(prId, `Pre-verifier filter: dropped ${parsed.droppedFilenamelessCount} findings with no filename`, "warn", reviewRunId, reviewChunkId);
             }
             finalReview = parsed;
+            finalReviewClient = client;
+            finalReviewEndpoint = endpoint;
           }
         }
 
@@ -1527,9 +1720,9 @@ ${diffPayload}${deterministicPayload}`;
       // harmlessly to refused=false on any error.
       if (!reviewChunkId) {
         try {
-          const refusalClient = getChatClient();
+          const refusalClient = finalReviewClient;
           if (refusalClient) {
-            const refusalRes = await refusalClient.chat.completions.create({
+            const refusalBody: any = {
               model: usedModel,
               messages: [
                 {
@@ -1543,12 +1736,20 @@ ${diffPayload}${deterministicPayload}`;
                     `If you reviewed everything fully, return {"refused": false, "topics": []}.`,
                 },
               ],
-              response_format: { type: "json_object" },
               temperature: 0,
               ...reasoningOptions(usedModel, 500),
-            } as any, { signal: options?.signal });
+            };
+            if (supportsJsonResponseFormat(finalReviewEndpoint)) {
+              refusalBody.response_format = { type: "json_object" };
+            }
+            const refusalRes = await refusalClient.chat.completions.create(refusalBody, { signal: options?.signal });
             const raw = refusalRes.choices?.[0]?.message?.content ?? "";
-            const parsed = JSON.parse(stripThinkBlocks(raw));
+            // Some models wrap JSON in markdown fences (```json...```) or
+            // <think>...</think> reasoning despite response_format=json_object.
+            // Extract the {...} substring rather than parsing raw.
+            const stripped = stripThinkBlocks(raw);
+            const jsonMatch = stripped.match(/\{[\s\S]*\}/);
+            const parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
             if (parsed?.refused === true) {
               refused = true;
               const topics = Array.isArray(parsed.topics) ? parsed.topics.filter(Boolean) : [];

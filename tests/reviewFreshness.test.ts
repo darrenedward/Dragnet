@@ -1,10 +1,28 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+
+const prismaMocks = vi.hoisted(() => ({
+  reviewRunFindFirst: vi.fn(),
+}));
+
+vi.mock("../src/lib/prisma", () => ({
+  prisma: {
+    reviewRun: {
+      findFirst: prismaMocks.reviewRunFindFirst,
+    },
+  },
+}));
+
 import {
+  assertReviewFreshness,
   computeDiffHash,
   computeReviewConfigHash,
   parseIterationLogs,
   shortHash,
 } from "../src/lib/reviewFreshness";
+
+beforeEach(() => {
+  prismaMocks.reviewRunFindFirst.mockReset();
+});
 
 describe("reviewFreshness", () => {
   describe("computeDiffHash", () => {
@@ -79,6 +97,32 @@ describe("reviewFreshness", () => {
       expect(single).not.toBe(withFallback);
     });
 
+    it("changes when provider endpoint changes", () => {
+      const promptHash = shortHash("prompt");
+      const a = computeReviewConfigHash(
+        [{ name: "primary", endpoint: "https://api.one.example/v1", model: "gpt-4o" }],
+        promptHash,
+      );
+      const b = computeReviewConfigHash(
+        [{ name: "primary", endpoint: "https://api.two.example/v1", model: "gpt-4o" }],
+        promptHash,
+      );
+      expect(a).not.toBe(b);
+    });
+
+    it("changes when provider name changes", () => {
+      const promptHash = shortHash("prompt");
+      const a = computeReviewConfigHash(
+        [{ name: "primary-a", endpoint: "https://api.example/v1", model: "gpt-4o" }],
+        promptHash,
+      );
+      const b = computeReviewConfigHash(
+        [{ name: "primary-b", endpoint: "https://api.example/v1", model: "gpt-4o" }],
+        promptHash,
+      );
+      expect(a).not.toBe(b);
+    });
+
     it("changes when the model iteration cap changes", () => {
       const promptHash = shortHash("prompt");
       const a = computeReviewConfigHash([{ name: "p", model: "gpt-4o", maxIterations: 8 }], promptHash);
@@ -115,6 +159,48 @@ describe("reviewFreshness", () => {
 
     it("differs across inputs", () => {
       expect(shortHash("a")).not.toBe(shortHash("b"));
+    });
+  });
+
+  describe("assertReviewFreshness", () => {
+    const pr = { id: "pr-1", commitHash: "commit-current" };
+    const matchingRun = {
+      id: "run-1",
+      commitHash: "commit-current",
+      diffHash: "diff-current",
+      reviewConfigHash: "config-current",
+      rating: 8,
+      reliability: null,
+    };
+
+    it("reuses a matching completed run with a concrete rating", async () => {
+      prismaMocks.reviewRunFindFirst.mockResolvedValue(matchingRun);
+
+      await expect(
+        assertReviewFreshness(pr, "diff-current", "config-current"),
+      ).resolves.toEqual({ ok: true, runId: "run-1", rating: 8 });
+    });
+
+    it("does not reuse a matching completed run with null rating", async () => {
+      prismaMocks.reviewRunFindFirst.mockResolvedValue({ ...matchingRun, rating: null });
+
+      const result = await assertReviewFreshness(pr, "diff-current", "config-current");
+
+      expect(result.ok).toBe(false);
+      if (!("kind" in result)) throw new Error("expected cache miss for null rating");
+      expect(result.kind).toBe("STALE_RUN");
+      expect(result.message).toContain("rating=null");
+    });
+
+    it("does not reuse a matching completed run with partial reliability", async () => {
+      prismaMocks.reviewRunFindFirst.mockResolvedValue({ ...matchingRun, reliability: "partial" });
+
+      const result = await assertReviewFreshness(pr, "diff-current", "config-current");
+
+      expect(result.ok).toBe(false);
+      if (!("kind" in result)) throw new Error("expected cache miss for partial reliability");
+      expect(result.kind).toBe("STALE_RUN");
+      expect(result.message).toContain("reliability=partial");
     });
   });
 

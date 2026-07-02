@@ -82,6 +82,12 @@ describe("classifyProviderOutcome — rule 2 (transport_failure)", () => {
       classifyProviderOutcome({ ...baseInput, error: new Error("fetch failed") }),
     ).toBe("transport_failure");
   });
+
+  it("message containing 'Request was aborted' → transport_failure", () => {
+    expect(
+      classifyProviderOutcome({ ...baseInput, error: new Error("Request was aborted.") }),
+    ).toBe("transport_failure");
+  });
 });
 
 describe("classifyProviderOutcome — rule 3 (unknown_failure)", () => {

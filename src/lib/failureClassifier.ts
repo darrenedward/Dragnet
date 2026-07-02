@@ -96,7 +96,7 @@ export function isRetryableError(err: unknown): boolean {
   }
 
   const message = String(anyErr?.message ?? anyErr);
-  return /\b(429|rate limit|timeout|timed out|connection (error|lost|closed|reset|refused)|network|socket|fetch failed)\b/i.test(
+  return /\b(429|rate limit|timeout|timed out|aborted|connection (error|lost|closed|reset|refused)|network|socket|fetch failed)\b/i.test(
     message,
   );
 }

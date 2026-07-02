@@ -333,4 +333,148 @@ describe("Phase 6 — loop writes and clears checkpoints", () => {
     // The checkpoints directory itself shouldn't exist either.
     expect(fs.existsSync(path.join(tmpRepo, ".dragnet", "checkpoints"))).toBe(false);
   });
+
+  it("accepts wrapped submitReview arguments with string rating and stringified findings", async () => {
+    create.mockImplementation((body: any) => {
+      if (!body?.tools) {
+        return Promise.resolve({
+          choices: [{
+            message: {
+              role: "assistant",
+              content: JSON.stringify({ refused: false, topics: [] }),
+            },
+          }],
+          usage: null,
+        });
+      }
+
+      return Promise.resolve({
+        choices: [{
+          message: {
+            role: "assistant",
+            content: "done",
+            tool_calls: [{
+              id: "call-wrapped",
+              function: {
+                name: "submitReview",
+                arguments: JSON.stringify({
+                  review: {
+                    rating: "8",
+                    summary: "wrapped but valid",
+                    findings: JSON.stringify([]),
+                  },
+                }),
+              },
+            }],
+          },
+        }],
+        usage: null,
+      });
+    });
+
+    const { runPrScan } = await import("../reviewService");
+    const result = await runPrScan(
+      "pr-cp",
+      [
+        {
+          filename: "src/test.ts",
+          status: "modified",
+          additions: 1,
+          deletions: 1,
+          originalContent: "",
+          modifiedContent: "x",
+          diff: "+x",
+        },
+      ],
+      "run-cp",
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.rating).toBe(8);
+  });
+
+  it("sends provider-safe messages to the JSON finalizer after tool calls", async () => {
+    let finalizerBody: any = null;
+    let toolCallIdx = 0;
+    create.mockImplementation((body: any) => {
+      if (body?.tools) {
+        toolCallIdx++;
+        return Promise.resolve({
+          choices: [{
+            message: {
+              role: "assistant",
+              content: null,
+              tool_calls: [{
+                id: `call-${toolCallIdx}`,
+                function: {
+                  name: "searchCodebase",
+                  arguments: JSON.stringify({ query: `symbol-${toolCallIdx}` }),
+                },
+              }],
+            },
+          }],
+          usage: null,
+        });
+      }
+
+      const isFinalizer = body?.messages?.some((msg: any) =>
+        typeof msg?.content === "string" && msg.content.includes("You did not submit the review"),
+      );
+      if (isFinalizer) {
+        finalizerBody = body;
+        return Promise.resolve({
+          choices: [{
+            message: {
+              role: "assistant",
+              content: JSON.stringify({
+                rating: 8,
+                summary: "clean after finalization",
+                findings: [],
+              }),
+            },
+          }],
+          usage: null,
+        });
+      }
+
+      return Promise.resolve({
+        choices: [{
+          message: {
+            role: "assistant",
+            content: JSON.stringify({ refused: false, topics: [] }),
+          },
+        }],
+        usage: null,
+      });
+    });
+
+    const { runPrScan } = await import("../reviewService");
+    const result = await runPrScan(
+      "pr-cp",
+      [
+        {
+          filename: "src/test.ts",
+          status: "modified",
+          additions: 1,
+          deletions: 1,
+          originalContent: "",
+          modifiedContent: "export const x = 1;\n",
+          diff: "+export const x = 1;\n",
+        },
+      ],
+      "run-cp",
+    );
+
+    expect(result.success).toBe(true);
+    expect(finalizerBody).toBeTruthy();
+    expect(finalizerBody.messages.some((msg: any) => msg.role === "tool")).toBe(false);
+    expect(finalizerBody.messages.some((msg: any) => "tool_calls" in msg)).toBe(false);
+    expect(
+      finalizerBody.messages.some((msg: any) =>
+        msg.role === "user" &&
+        typeof msg.content === "string" &&
+        msg.content.includes("Tool result from the investigation"),
+      ),
+    ).toBe(true);
+  });
 });

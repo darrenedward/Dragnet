@@ -9,9 +9,10 @@
  *    actual changed code hasn't moved. Commit hashes change on every
  *    rebase; diff hashes don't.
  *
- * 2. **reviewConfigHash** — sha256 of (chat-chain model IDs + system
- *    prompt hash). If you swap models or edit the system prompt, this
- *    hash changes and any prior review is treated as stale.
+ * 2. **reviewConfigHash** — sha256 of the review engine version, ordered
+ *    provider/model chain, system prompt hash, and review limits. If you
+ *    swap models/providers, edit the prompt, or change the scan contract,
+ *    this hash changes and any prior review is treated as stale.
  *
  * A completed ReviewRun is reusable (cache hit) only when its
  * (commitHash, diffHash, reviewConfigHash) all match the current values.
@@ -138,8 +139,18 @@ export interface LatestReviewResult {
 export interface ChatChainEntry {
   name: string;
   model: string;
+  endpoint?: string;
   maxIterations?: number;
 }
+
+/**
+ * Bump this when review semantics change without a SYSTEM_INSTRUCTION change:
+ * tool schemas, finalizer transcript handling, verifier acceptance, chunk
+ * prompt contracts, or provider request compatibility. This deliberately
+ * invalidates old cached ReviewRuns so a manual scan does real work after
+ * scanner behavior changes.
+ */
+export const REVIEW_ENGINE_CACHE_VERSION = "review-engine-v2-finalizer-safe-transcript";
 
 /**
  * Hash a PR's diff content. Filters to files with non-empty diff,
@@ -179,11 +190,13 @@ export function computeReviewConfigHash(
 ): string {
   const models = chatChain
     .map((c) => ({
+      name: c.name,
+      endpoint: c.endpoint,
       model: c.model,
       maxIterations: c.maxIterations,
     }))
     .filter((c) => c.model)
-    .map((c) => `${c.model}:${c.maxIterations ?? "default"}`)
+    .map((c) => `${c.name || "provider"}:${c.endpoint || "endpoint"}:${c.model}:${c.maxIterations ?? "default"}`)
     .join(",");
   const limitsSeed = reviewLimits
     ? [
@@ -196,7 +209,7 @@ export function computeReviewConfigHash(
         reviewLimits.maxFilesPerReview,
       ].join(",")
     : "default-limits";
-  const seed = `${models}|${systemPromptHash}|${limitsSeed}`;
+  const seed = `${REVIEW_ENGINE_CACHE_VERSION}|${models}|${systemPromptHash}|${limitsSeed}`;
   return crypto.createHash("sha256").update(seed).digest("hex").slice(0, 16);
 }
 
@@ -231,6 +244,7 @@ export async function assertReviewFreshness(
       diffHash: true,
       reviewConfigHash: true,
       rating: true,
+      reliability: true,
     },
   });
 
@@ -248,17 +262,22 @@ export async function assertReviewFreshness(
     latest.reviewConfigHash === currentConfigHash &&
     currentDiffHash !== ""; // empty hash = can't verify, don't cache
 
-  if (matches) {
+  const reusable =
+    latest.rating !== null &&
+    (latest.reliability === null || latest.reliability === "complete");
+
+  if (matches && reusable) {
     return { ok: true, runId: latest.id, rating: latest.rating };
   }
 
   return {
     ok: false,
     kind: "STALE_RUN",
-    message:
-      `Prior review run was for commit ${latest.commitHash.slice(0, 7)} ` +
-      `(diffHash ${latest.diffHash.slice(0, 8) || "(unknown)"}). ` +
-      `Current state: commit ${pr.commitHash.slice(0, 7)}, diffHash ${currentDiffHash.slice(0, 8) || "(unknown)"}.`,
+    message: !reusable
+      ? `Prior review run is not reusable (rating=${latest.rating ?? "null"}, reliability=${latest.reliability ?? "unknown"}).`
+      : `Prior review run was for commit ${latest.commitHash.slice(0, 7)} ` +
+        `(diffHash ${latest.diffHash.slice(0, 8) || "(unknown)"}). ` +
+        `Current state: commit ${pr.commitHash.slice(0, 7)}, diffHash ${currentDiffHash.slice(0, 8) || "(unknown)"}.`,
   };
 }
 
