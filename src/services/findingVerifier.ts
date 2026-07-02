@@ -82,8 +82,6 @@ export interface VerifyOptions {
   docsReview?: boolean;
 }
 
-const CONTEXT_RADIUS = 5;
-
 /**
  * File extensions + path patterns treated as documentation. Findings
  * citing these are auto-rejected in normal code review mode — docs are
@@ -246,22 +244,21 @@ function validateLineAndFile(
     };
   }
 
-  // Substring check: does the code at line ±5 contain the key symbol
-  // the finding's explanation references?
+  // Substring check: do the symbols the explanation references appear
+  // anywhere in the cited file? We search the whole file, not a ±window
+  // around finding.line — explanations routinely cite symbols imported
+  // at the top of the file, types defined in sibling functions, or
+  // sibling handlers in the same module. The real hallucination signal
+  // is "none of the cited symbols appear anywhere in the file", not
+  // "not within ±5 lines of the cited line."
   const symbols = extractCitedSymbols(finding.explanation);
   if (symbols.length === 0) return null;
 
-  const start = Math.max(0, finding.line - 1 - CONTEXT_RADIUS);
-  const end = Math.min(lines.length, finding.line + CONTEXT_RADIUS);
-  const window = lines.slice(start, end).join("\n");
-
-  const missing = symbols.filter((s) => !window.includes(s));
+  const missing = symbols.filter((s) => !content.includes(s));
   if (missing.length === symbols.length) {
-    // None of the cited symbols appear anywhere in the window — strong
-    // signal the finding is hallucinated or stale.
     return {
       status: "rejected",
-      note: `cited code at line ${finding.line} does not reference ${missing.join(", ")}`,
+      note: `cited symbols ${missing.join(", ")} not found anywhere in "${finding.filename}"`,
     };
   }
 
@@ -479,9 +476,16 @@ function buildPrompt(
   ].join("\n");
 }
 
+function stripThinkBlocks(s: string): string {
+  return s
+    .replace(/<think[^>]*>[\s\S]*?<\/think>/gi, "")
+    .replace(/<think[^>]*>[\s\S]*$/gi, "");
+}
+
 function parseVerdict(text: string): VerificationResult {
-  const firstLine = text.split("\n")[0]?.trim().toUpperCase() ?? "";
-  const rest = text.split("\n").slice(1).join(" ").trim();
+  const cleaned = stripThinkBlocks(text).trim();
+  const firstLine = cleaned.split("\n")[0]?.trim().toUpperCase() ?? "";
+  const rest = cleaned.split("\n").slice(1).join(" ").trim();
 
   if (firstLine.startsWith("VERIFIED")) {
     return { status: "verified", note: rest.slice(0, 200) || "counter-evidence checked" };
