@@ -1,0 +1,30 @@
+# VCS / editor
+.git
+.gitignore
+.vscode
+.idea
+
+# Build outputs (rebuilt inside the container)
+.next
+node_modules
+
+# Runtime volumes (mounted via compose, not part of build context)
+.dragnet
+repos
+
+# Tests + docs (not needed at runtime)
+tests
+docs
+
+# Logs
+*.log
+/tmp-*
+
+# Secrets — never leak into image layers
+.env*
+!.env.example
+
+# Misc
+.DS_Store
+*.md
+!prd.md

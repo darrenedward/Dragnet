@@ -1,0 +1,34 @@
+services:
+  dragnet:
+    build: .
+    image: dragnet:latest
+    container_name: dragnet
+    restart: unless-stopped
+
+    # Linux-only. With host networking, `localhost` inside the container
+    # IS the host — Ollama at localhost:11434 just works without
+    # host.docker.internal translation. The `ports:` directive is ignored
+    # in this mode (port 3300 is on the host directly).
+    network_mode: host
+
+    # Reads DATABASE_URL + DRAGNET_* vars from the host's .env.local.
+    env_file:
+      - .env.local
+
+    environment:
+      - NODE_ENV=production
+      - PORT=3300
+      - REPOS_DIR=/app/repos
+
+    volumes:
+      # Runtime config: llm-presets.json, checkpoints/, reports/
+      - ./.dragnet:/app/.dragnet
+      # Cloned repos — persists across restarts so re-scans are fast.
+      - ./repos:/app/repos
+
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:3300/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
