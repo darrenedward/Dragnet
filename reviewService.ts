@@ -1826,8 +1826,9 @@ ${diffPayload}${deterministicPayload}`;
     explanation: finding.explanation || "",
     source: finding.source ?? "llm",
   }));
-  const verification = repo?.path
-    ? await verifyFindings(candidates, repo.path, prId)
+  const repoPathForVerifier = repo?.localPath || repo?.path;
+  const verification = repoPathForVerifier
+    ? await verifyFindings(candidates, repoPathForVerifier, prId)
     : new Map();
   const rejectedCount = Array.from(verification.values()).filter(v => v.status === "rejected").length;
   if (rejectedCount > 0) {
