@@ -6,9 +6,8 @@ import { type RunOptions } from "../src/lib/containerOrchestratorTypes";
  * ContainerOrchestrator Unit Tests
  *
  * These tests validate the EXTERNAL behaviour of the ContainerOrchestrator
- * interface only — they never run a real Docker daemon. The execFileSync
- * calls (createVolume / deleteVolume) and execFile / execSync (detectEngine,
- * runRunner) are fully mocked.
+ * interface only — they never run a real Docker daemon. All execFile and
+ * execSync calls are fully mocked.
  *
  * Prior art: tests/providerBreakerIntegration.test.ts (mocked external
  * system pattern), tests/scanAbortIntegration.test.ts (process abort
@@ -16,18 +15,15 @@ import { type RunOptions } from "../src/lib/containerOrchestratorTypes";
  */
 
 // Mock child_process so no real Docker binary is called.
-const mockExecFileSync = vi.fn();
 const mockExecFile = vi.fn<(file: string, args: string[], opts: object, cb: (err: Error | null, stdout?: string, stderr?: string) => void) => void>();
 vi.mock("node:child_process", () => ({
   execFile: (...args: unknown[]) => mockExecFile(args[0] as string, args[1] as string[], args[2] as object, args[3] as (err: Error | null, stdout?: string, stderr?: string) => void),
-  execFileSync: (...args: unknown[]) => mockExecFileSync(...args),
   execSync: vi.fn(),
 }));
 
 // Reset to a fresh singleton per test.
 beforeEach(() => {
   ContainerOrchestrator["instance"] = null;
-  mockExecFileSync.mockReset();
   mockExecFile.mockReset();
 });
 
@@ -37,19 +33,24 @@ afterEach(() => {
 
 describe("ContainerOrchestrator.createVolume", () => {
   it("calls the container engine with volume create", async () => {
-    mockExecFileSync.mockReturnValue("");
+    mockExecFile.mockImplementation((_file, _args, _opts, cb) => {
+      cb(null, "", "");
+    });
     const orc = ContainerOrchestrator.getInstance();
     await orc.createVolume("dragnet-repo-test-123");
-    expect(mockExecFileSync).toHaveBeenCalledWith(
+    expect(mockExecFile).toHaveBeenCalledWith(
       expect.stringMatching(/docker|podman/),
       ["volume", "create", "dragnet-repo-test-123"],
-      expect.objectContaining({ stdio: "ignore" }),
+      expect.objectContaining({ encoding: "utf8" }),
+      expect.any(Function),
     );
+    const opts = mockExecFile.mock.calls[0][2] as { signal: unknown };
+    expect(opts.signal).toBeInstanceOf(AbortSignal);
   });
 
   it("throws a descriptive error on failure", async () => {
-    mockExecFileSync.mockImplementation(() => {
-      throw Object.assign(new Error("daemon not running"), { status: 1 });
+    mockExecFile.mockImplementation((_file, _args, _opts, cb) => {
+      cb(new Error("daemon not running"));
     });
     const orc = ContainerOrchestrator.getInstance();
     await expect(orc.createVolume("dragnet-repo-fail")).rejects.toThrow(
@@ -60,14 +61,19 @@ describe("ContainerOrchestrator.createVolume", () => {
 
 describe("ContainerOrchestrator.deleteVolume", () => {
   it("calls volume rm -f", async () => {
-    mockExecFileSync.mockReturnValue("");
+    mockExecFile.mockImplementation((_file, _args, _opts, cb) => {
+      cb(null, "", "");
+    });
     const orc = ContainerOrchestrator.getInstance();
     await orc.deleteVolume("dragnet-repo-test-123");
-    expect(mockExecFileSync).toHaveBeenCalledWith(
+    expect(mockExecFile).toHaveBeenCalledWith(
       expect.stringMatching(/docker|podman/),
       ["volume", "rm", "-f", "dragnet-repo-test-123"],
-      expect.anything(),
+      expect.objectContaining({ encoding: "utf8" }),
+      expect.any(Function),
     );
+    const opts = mockExecFile.mock.calls[0][2] as { signal: unknown };
+    expect(opts.signal).toBeInstanceOf(AbortSignal);
   });
 });
 

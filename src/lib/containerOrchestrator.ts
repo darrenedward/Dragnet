@@ -1,4 +1,4 @@
-import { execFile as cpExecFile, execFileSync, execSync } from "node:child_process";
+import { execFile as cpExecFile, execSync } from "node:child_process";
 import { type RunOptions, type RunResult } from "./containerOrchestratorTypes";
 
 function asyncExecFile(file: string, args: string[], options: { encoding: string; signal: AbortSignal }): Promise<{ stdout: string; stderr: string }> {
@@ -56,8 +56,9 @@ export class ContainerOrchestrator {
   public async createVolume(volumeName: string): Promise<void> {
     const engine = detectContainerEngine();
     try {
-      execFileSync(engine, ["volume", "create", volumeName], {
-        stdio: "ignore",
+      await asyncExecFile(engine, ["volume", "create", volumeName], {
+        encoding: "utf8",
+        signal: AbortSignal.timeout(30_000),
       });
     } catch (err: any) {
       throw new Error(`Failed to create volume ${volumeName} via ${engine}: ${err.message}`);
@@ -70,8 +71,9 @@ export class ContainerOrchestrator {
   public async deleteVolume(volumeName: string): Promise<void> {
     const engine = detectContainerEngine();
     try {
-      execFileSync(engine, ["volume", "rm", "-f", volumeName], {
-        stdio: "ignore",
+      await asyncExecFile(engine, ["volume", "rm", "-f", volumeName], {
+        encoding: "utf8",
+        signal: AbortSignal.timeout(30_000),
       });
     } catch (err: any) {
       throw new Error(`Failed to delete volume ${volumeName} via ${engine}: ${err.message}`);
