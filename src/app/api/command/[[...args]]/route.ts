@@ -23,7 +23,8 @@ import {
   getRecentRuns,
   getActiveScan,
 } from "@/src/lib/reviewFreshness";
-import { computeStability } from "@/src/lib/stabilityScore";
+import { computeStability, computeWeightedStability } from "@/src/lib/stabilityScore";
+import { lookupTrustWeight } from "@/src/lib/modelTrustWeights";
 
 /**
  * Start a tracked review: refresh files, create an in_progress ReviewRun,
@@ -568,6 +569,7 @@ async function handleLegacyCommand(body: any, defRepo: string | null) {
       const latest = await getLatestCompletedReview(pr.id);
       const ratingTrend = await getRecentRuns(pr.id, 5);
       const stability = computeStability(ratingTrend);
+      const weighted = computeWeightedStability(ratingTrend, lookupTrustWeight);
       return NextResponse.json({
         status: latest.reviewRun ? "Success" : (freshPr?.rating != null ? "Success" : "Pending"),
         type: "status",
@@ -575,6 +577,8 @@ async function handleLegacyCommand(body: any, defRepo: string | null) {
         reviewRun: latest.reviewRun,
         ratingTrend,
         stability,
+        weightedStability: weighted.weightedStability,
+        weightedReadyToMerge: weighted.readyToMerge,
         stale: latest.stale,
         rejectedCount: latest.rejectedCount,
         sizeProfile,
