@@ -1,18 +1,7 @@
 import { execFileSync } from "node:child_process";
-import { relative } from "node:path";
-import type { Runner, DeterministicFinding } from "./types";
+import type { Runner } from "./types";
 import { skippedFinding } from "./helpers";
-
-interface EslintResult {
-  filePath: string;
-  messages: Array<{
-    line: number;
-    column?: number;
-    severity: 1 | 2;
-    ruleId: string | null;
-    message: string;
-  }>;
-}
+import { parseEslintJson } from "./parsers";
 
 /**
  * Runs `eslint . --format json` (or the project's `npm run lint` script
@@ -69,48 +58,14 @@ export const eslintRunner: Runner = {
         .join("\n")
         .trim();
       if (!stripped) return [];
-      // Try to parse as JSON anyway (many users do set --format json).
-      const parsed = tryParseJson<EslintResult[]>(stripped);
-      if (parsed) return parseEslintJson(parsed, detection.rootDir);
+      const parsed = parseEslintJson(stripped, detection.rootDir);
+      if (parsed.length > 0) return parsed;
       return [skippedFinding("eslint", `\`npm run lint\` produced unparseable output (${stripped.length} chars) — review manually.`)];
     }
 
-    const parsed = tryParseJson<EslintResult[]>(raw);
-    if (!parsed) {
-      return [skippedFinding("eslint", "eslint JSON output could not be parsed — check eslint version / config.")];
-    }
-    return parseEslintJson(parsed, detection.rootDir);
+    // Direct eslint --format json — output is always JSON when present.
+    // parseEslintJson returns [] for both clean (empty array) and
+    // unparseable output. Both mean "no actionable findings."
+    return parseEslintJson(raw, detection.rootDir);
   },
 };
-
-function tryParseJson<T>(raw: string): T | null {
-  try {
-    return JSON.parse(raw) as T;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Walks eslint's JSON array and produces one finding per message.
- * `severity: 2` is "error", `severity: 1` is "warning". Filenames are
- * made relative to rootDir so they line up with diff payload paths.
- */
-function parseEslintJson(results: EslintResult[], rootDir: string): DeterministicFinding[] {
-  const findings: DeterministicFinding[] = [];
-  for (const result of results) {
-    if (!result.messages?.length) continue;
-    const rel = relative(rootDir, result.filePath).replace(/\\/g, "/");
-    for (const msg of result.messages) {
-      findings.push({
-        filename: rel,
-        line: msg.line,
-        severity: msg.severity === 2 ? "error" : "warning",
-        category: "Lint",
-        explanation: msg.ruleId ? `${msg.ruleId}: ${msg.message}` : msg.message,
-        source: "eslint",
-      });
-    }
-  }
-  return findings;
-}

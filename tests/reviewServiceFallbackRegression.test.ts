@@ -84,6 +84,8 @@ vi.mock("../src/lib/prisma", () => ({
 // Skip deterministic checks (would otherwise shell out to tsc/eslint).
 vi.mock("../src/services/deterministicChecks", () => ({
   runDeterministicChecks: vi.fn().mockResolvedValue([]),
+  runContainerizedChecks: vi.fn().mockResolvedValue([]),
+  logReview: vi.fn().mockResolvedValue(undefined),
 }));
 
 // Stub post-loop verifier — we're testing the loop, not the verifier.

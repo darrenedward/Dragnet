@@ -79,6 +79,8 @@ vi.mock("../src/lib/prisma", () => ({
 
 vi.mock("../src/services/deterministicChecks", () => ({
   runDeterministicChecks: vi.fn().mockResolvedValue([]),
+  runContainerizedChecks: vi.fn().mockResolvedValue([]),
+  logReview: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("../src/services/findingVerifier", () => ({

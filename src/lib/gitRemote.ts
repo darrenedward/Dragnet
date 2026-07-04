@@ -30,45 +30,37 @@ export function cloneRepo(opts: CloneOpts): string {
   mkdirSync(root, { recursive: true });
 
   const url = interpolatePat(opts.cloneUrl, opts.pat);
-  const { env, cleanup } = opts.deployKey
+  using ssh = opts.deployKey
     ? buildSshEnv(opts.deployKey, `clone-${opts.repoId}`)
-    : { env: undefined as Record<string, string> | undefined, cleanup: () => {} };
+    : { env: undefined as Record<string, string> | undefined, [Symbol.dispose]() {} };
 
-  try {
-    execFileSync("git", ["clone", "--filter=blob:none", url, dest], {
-      env: { ...process.env, ...env },
-      stdio: "pipe",
-      timeout: 300_000,
-    });
-  } finally {
-    cleanup();
-  }
+  execFileSync("git", ["clone", "--filter=blob:none", url, dest], {
+    env: { ...process.env, ...ssh.env },
+    stdio: "pipe",
+    timeout: 300_000,
+  });
 
   return dest;
 }
 
 export function fetchRepo(opts: FetchOpts): void {
   const url = interpolatePat(opts.cloneUrl, opts.pat);
-  const { env, cleanup } = opts.deployKey
+  using ssh = opts.deployKey
     ? buildSshEnv(opts.deployKey, `fetch-${crypto.randomUUID().slice(0, 8)}`)
-    : { env: undefined as Record<string, string> | undefined, cleanup: () => {} };
+    : { env: undefined as Record<string, string> | undefined, [Symbol.dispose]() {} };
 
-  try {
-    execFileSync("git", ["fetch", "origin", "--prune"], {
-      cwd: opts.localPath,
-      env: { ...process.env, ...env },
-      stdio: "pipe",
-      timeout: 120_000,
-    });
-  } finally {
-    cleanup();
-  }
+  execFileSync("git", ["fetch", "origin", "--prune"], {
+    cwd: opts.localPath,
+    env: { ...process.env, ...ssh.env },
+    stdio: "pipe",
+    timeout: 120_000,
+  });
 }
 
 export function buildSshEnv(
   deployKey: string,
   keyId: string,
-): { env: Record<string, string>; cleanup: () => void } {
+): { env: Record<string, string>; [Symbol.dispose](): void } {
   const baseTmp = process.env.XDG_RUNTIME_DIR || os.tmpdir();
   // mkdtempSync gives a private, unpredictable directory. Earlier versions
   // used a fixed name `dragnet-deploykey-${keyId}` directly in /tmp —
@@ -88,7 +80,7 @@ export function buildSshEnv(
     env: {
       GIT_SSH_COMMAND: `ssh -i ${keyFile} -o StrictHostKeyChecking=accept-new -o IdentitiesOnly=yes`,
     },
-    cleanup: () => {
+    [Symbol.dispose](): void {
       try {
         unlinkSync(keyFile);
         rmdirSync(keyDir);

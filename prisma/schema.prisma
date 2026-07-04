@@ -52,6 +52,10 @@ model Repository {
   reviewsCount       Int
   indexedAt          String?
   securitySensitivePaths String[] @default([])
+  runnerImage        String   @default("node:20-alpine")
+  installCommand     String   @default("npm install")
+  testCommand        String   @default("npm test && npm run lint")
+  isPollingEnabled   Boolean  @default(false)
   reviewHistory      ReviewHistory[]
   pullRequests       PullRequest[]
   symbols            Symbol[]

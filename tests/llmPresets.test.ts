@@ -48,7 +48,7 @@ describe("resolveMaxIterations", () => {
   });
 
   it("falls back to default when out of bounds", () => {
-    expect(resolveMaxIterations({ maxIterations: 3 })).toBe(DEFAULT_MAX_ITERATIONS);
+    expect(resolveMaxIterations({ maxIterations: 0 })).toBe(DEFAULT_MAX_ITERATIONS);
     expect(resolveMaxIterations({ maxIterations: 33 })).toBe(DEFAULT_MAX_ITERATIONS);
   });
 
@@ -57,9 +57,9 @@ describe("resolveMaxIterations", () => {
     expect(resolveMaxIterations({ maxIterations: NaN })).toBe(DEFAULT_MAX_ITERATIONS);
   });
 
-  it("respects the documented bounds (4–32)", () => {
-    expect(MAX_ITERATIONS_BOUNDS).toEqual({ min: 4, max: 32 });
-    expect(resolveMaxIterations({ maxIterations: 4 })).toBe(4);
+  it("respects the documented bounds (1–32)", () => {
+    expect(MAX_ITERATIONS_BOUNDS).toEqual({ min: 1, max: 32 });
+    expect(resolveMaxIterations({ maxIterations: 1 })).toBe(1);
     expect(resolveMaxIterations({ maxIterations: 32 })).toBe(32);
   });
 });
@@ -76,19 +76,19 @@ describe("validatePresetsInput + maxIterations", () => {
   });
 
   it("rejects maxIterations below the min", () => {
-    const input = baseState({ presets: [basePreset({ maxIterations: 2 })] });
-    expect(() => validatePresetsInput(input)).toThrow(/maxIterations must be between 4 and 32/);
+    const input = baseState({ presets: [basePreset({ maxIterations: 0 })] });
+    expect(() => validatePresetsInput(input)).toThrow(/must be between 1 and 32/);
   });
 
   it("rejects maxIterations above the max", () => {
     const input = baseState({ presets: [basePreset({ maxIterations: 64 })] });
-    expect(() => validatePresetsInput(input)).toThrow(/maxIterations must be between 4 and 32/);
+    expect(() => validatePresetsInput(input)).toThrow(/must be between 1 and 32/);
   });
 
   it("rejects non-numeric maxIterations", () => {
     const input = baseState({
       presets: [basePreset({ maxIterations: "lots" as unknown as number })],
     });
-    expect(() => validatePresetsInput(input)).toThrow(/maxIterations must be between 4 and 32/);
+    expect(() => validatePresetsInput(input)).toThrow(/must be between 1 and 32/);
   });
 });

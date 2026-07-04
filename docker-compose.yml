@@ -25,6 +25,13 @@ services:
       - ./.dragnet:/app/.dragnet
       # Cloned repos — persists across restarts so re-scans are fast.
       - ./repos:/app/repos
+      # Read-only bind-mount of the host repo directory so the container
+      # can run `git diff` against repos registered with absolute host
+      # paths in the database. The container-side mount point is
+      # `/host-repos`; DB `path` values should be rewritten to use this
+      # prefix (e.g. `/host-repos/CredManagerPro` instead of
+      # `/home/curryman/Websites/CredManagerPro`).
+      - /home/curryman/Websites:/host-repos:ro
 
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:3300/"]

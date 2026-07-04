@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
-import type { Runner, DeterministicFinding } from "./types";
+import type { Runner } from "./types";
 import { skippedFinding } from "./helpers";
+import { parseTscOutput } from "./parsers";
 
 /**
  * Runs `tsc --noEmit` (or the project's `npm run typecheck` script if
@@ -49,32 +50,3 @@ export const tscRunner: Runner = {
     return parseTscOutput(stdout);
   },
 };
-
-/**
- * Parses default tsc diagnostic output:
- *   path/to/file.ts(42,3): error TS2322: Type 'string' is not assignable to type 'number'.
- *
- * Returns one finding per diagnostic line. Severity mapped 1:1
- * (error/warning). The `category` is "Type Error" for both — the
- * rule code (TS2322) goes into the explanation for traceability.
- */
-function parseTscOutput(stdout: string): DeterministicFinding[] {
-  const lines = stdout.split("\n");
-  const pattern = /^(.+?)\((\d+),(\d+)\):\s+(error|warning)\s+(TS\d+):\s+(.+)$/;
-  const findings: DeterministicFinding[] = [];
-
-  for (const line of lines) {
-    const m = line.match(pattern);
-    if (!m) continue;
-    const [, file, lineStr, , level, code, message] = m;
-    findings.push({
-      filename: file,
-      line: parseInt(lineStr, 10),
-      severity: level as "error" | "warning",
-      category: "Type Error",
-      explanation: `${code}: ${message}`,
-      source: "tsc",
-    });
-  }
-  return findings;
-}

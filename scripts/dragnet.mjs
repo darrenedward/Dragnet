@@ -53,8 +53,48 @@ async function main() {
       }
       break;
     }
+    case "prune-volumes": {
+      const { execSync } = await import("child_process");
+      const engine = process.env.CONTAINER_RUNTIME === "podman" ? "podman" : "docker";
+      try {
+        execSync(`${engine} --version`, { stdio: "ignore" });
+      } catch {
+        console.error(`${engine} is not available — cannot prune volumes.`);
+        process.exit(1);
+      }
+      const allVolumes = execSync(`${engine} volume ls --format '{{.Name}}'`, { encoding: "utf8" })
+        .trim()
+        .split("\n")
+        .filter((v) => v.startsWith("dragnet-repo-"));
+      if (allVolumes.length === 0) {
+        console.log("No dragnet volumes found.");
+        break;
+      }
+      const { PrismaClient } = await import("@prisma/client");
+      const prisma = new PrismaClient();
+      let activeIds;
+      try {
+        const repos = await prisma.repository.findMany({ select: { id: true } });
+        activeIds = new Set(repos.map((r) => `dragnet-repo-${r.id}`));
+      } finally {
+        await prisma.$disconnect();
+      }
+      let pruned = 0;
+      for (const vol of allVolumes) {
+        if (activeIds.has(vol)) continue;
+        try {
+          execSync(`${engine} volume rm -f "${vol}"`, { stdio: "ignore" });
+          console.log(`  ✓ pruned ${vol}`);
+          pruned++;
+        } catch (e) {
+          console.warn(`  ✗ failed to prune ${vol}: ${e.message}`);
+        }
+      }
+      console.log(`Pruned ${pruned} orphaned volume(s).`);
+      break;
+    }
     default:
-      console.log("Usage: dragnet <install-hooks|uninstall-hooks|review>");
+      console.log("Usage: dragnet <install-hooks|uninstall-hooks|review|prune-volumes>");
       process.exit(1);
   }
 }

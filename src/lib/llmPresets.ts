@@ -47,7 +47,7 @@ export interface Preset {
 export const DEFAULT_MAX_ITERATIONS = 16;
 
 /** Bounds for the per-preset maxIterations field. */
-export const MAX_ITERATIONS_BOUNDS = { min: 4, max: 32 } as const;
+export const MAX_ITERATIONS_BOUNDS = { min: 1, max: 32 } as const;
 
 /**
  * Resolve a preset's effective iteration cap. Falls back to

@@ -3,13 +3,16 @@
  * before any request is served. Next.js 16 auto-discovers this file at
  * `src/instrumentation.ts`.
  *
- * Used here to sweep orphaned `ReviewRun` rows (status=in_progress past
- * the stale TTL) so a freshly restarted server doesn't present bricked
- * PRs to the operator. See `src/services/runReaper.ts` for the why.
+ * Responsibilities:
+ *   1. Sweep orphaned `ReviewRun` rows (status=in_progress past the stale
+ *      TTL) so a freshly restarted server doesn't present bricked PRs.
+ *      See `src/services/runReaper.ts` for the why.
+ *   2. Start the PR polling worker for repos with `isPollingEnabled = true`.
+ *      This allows Dragnet to detect new PR commits in firewalled/local
+ *      environments where GitHub cannot send webhooks directly.
  *
- * Errors are swallowed — boot must not fail just because the reaper
- * couldn't reach the DB. Layer 2 in `assertNoActiveScan` will retry on
- * the next request.
+ * All errors are swallowed — boot must not fail because a DB or Docker
+ * operation didn't succeed on startup.
  */
 export async function register(): Promise<void> {
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
@@ -18,4 +21,19 @@ export async function register(): Promise<void> {
   // (which would break `next build` on empty env).
   const { reapStaleRuns } = await import("./services/runReaper");
   void reapStaleRuns();
+
+  // Start the polling worker only when enabled via environment variable.
+  // Keeping this opt-in avoids unnecessary GitHub API calls for deployments
+  // that rely exclusively on webhooks.
+  if (process.env.DRAGNET_POLLING_ENABLED === "1") {
+    try {
+      const { startPolling } = await import("./lib/prPollingWorker");
+      const { runPrScan } = await import("../reviewService");
+      startPolling(async (_repoId, prId, _commitHash) => {
+        await runPrScan(prId);
+      });
+    } catch (err: any) {
+      console.warn("[instrumentation] polling worker failed to start:", err.message);
+    }
+  }
 }

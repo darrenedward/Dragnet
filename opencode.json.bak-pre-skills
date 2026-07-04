@@ -1,0 +1,34 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "bughunter": {
+      "type": "remote",
+      "url": "http://localhost:3300/api/command/dragnet-1782121720477",
+      "headers": {
+        "Authorization": "Bearer dr_REPLACEME_WITH_FRESH_KEY_AFTER_RENAME"
+      }
+    }
+  },
+  "command": {
+    "pr": {
+      "description": "List PRs for a repo (/pr or /pr <repo-name>)",
+      "template": "If $ARGUMENTS is provided, use a web fetch to call `http://localhost:3300/api/repos/resolve?name=<url-encoded-name>` with the given name to resolve the repo ID. Otherwise, detect from the current directory: use a web fetch to call `http://localhost:3300/api/repos/resolve?dir=<pwd-url-encoded>` with the current directory path to resolve the repo ID. If the API returns null, say \"Repo not found.\" Otherwise, use the bughunter prlist tool with the resolved repo to list all PRs."
+    },
+    "prs": {
+      "description": "List pull requests for this repo",
+      "template": "First, detect whether this project is registered as a Dragnet repository: use a web fetch to call `http://localhost:3300/api/repos/resolve?dir=<pwd-url-encoded>` with the current directory path to resolve the repo ID. If it returns null, say \"This project is not registered in Dragnet.\" Otherwise, use the bughunter prlist tool to list all PRs for the current repo."
+    },
+    "prcheck": {
+      "description": "Review a PR (/prcheck <number> or <branch>)",
+      "template": "First, detect whether this project is registered as a Dragnet repository: use a web fetch to call `http://localhost:3300/api/repos/resolve?dir=<pwd-url-encoded>` with the current directory path to resolve the repo ID. If it returns null, say \"This project is not registered in Dragnet.\" Otherwise, use the bughunter prcheck tool to review PR #$ARGUMENTS. Show me the rating and any findings."
+    },
+    "prcheckstatus": {
+      "description": "Check review status (/prcheckstatus <branch>)",
+      "template": "First, detect whether this project is registered as a Dragnet repository: use a web fetch to call `http://localhost:3300/api/repos/resolve?dir=<pwd-url-encoded>` with the current directory path to resolve the repo ID. If it returns null, say \"This project is not registered in Dragnet.\" Otherwise, use the bughunter prcheckstatus tool with branch=$ARGUMENTS to check the status."
+    },
+    "bugfixer": {
+      "description": "Auto-fix loop: review \u2192 fix \u2192 re-review until 4/5 (/bugfixer <number>)",
+      "template": "First, detect whether this project is registered as a Dragnet repository: use a web fetch to call `http://localhost:3300/api/repos/resolve?dir=<pwd-url-encoded>` with the current directory path to resolve the repo ID. If it returns null, say \"This project is not registered in Dragnet.\" Otherwise, use the bughunter prcheck tool to review PR #$1. If rating >= 4/5, report PASS. Otherwise fix each finding (read the file, apply the fix, commit with 'fix: address review findings'), then tell me to run /bugfixer $1 again for re-review. Loop until 4/5."
+    }
+  }
+}

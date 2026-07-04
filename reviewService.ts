@@ -7,7 +7,7 @@ import { randomUUID } from "node:crypto";
 import { verifyFindings, isDocumentationFile, type CandidateFinding } from "./src/services/findingVerifier";
 import { completeReviewRun, setReviewRunTokens, setReviewRunLastCheckpointAt, setReviewChunkLastCheckpointAt } from "./src/lib/reviewFreshness";
 import { safeReadFileSync, resolveSafePath } from "./src/lib/pathSafety";
-import { runDeterministicChecks, type DeterministicFinding } from "./src/services/deterministicChecks";
+import { runDeterministicChecks, runContainerizedChecks, logReview, type DeterministicFinding } from "./src/services/deterministicChecks";
 import { buildFindingFingerprint, resolveSymbolsBatch } from "./src/services/largePrReview/fingerprint";
 import { reconcileFindingsAcrossRuns } from "./src/services/largePrReview/reconcile";
 import { classifyProviderOutcome, type OutcomeClass } from "./src/lib/failureClassifier";
@@ -175,16 +175,6 @@ ${lines.join("\n")}
 Before claiming any file, route, or import does not exist, call \`readFile\` or \`searchCodebase\` — it almost certainly exists in one of the sibling files above.
 
 `;
-}
-
-async function logReview(prId: string, message: string, level: string = "info", reviewRunId?: string, reviewChunkId?: string) {
-  try {
-    await prisma.reviewLog.create({
-      data: { id: randomUUID(), prId, message, level, reviewRunId: reviewRunId ?? null, reviewChunkId: reviewChunkId ?? null },
-    });
-  } catch {
-    // Best-effort — never break the review for a log write failure.
-  }
 }
 
 async function assertReviewRunStillActive(reviewRunId?: string): Promise<void> {
@@ -1156,6 +1146,35 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
     } catch (err: any) {
       console.warn(`[scan] runPrScan: deterministic checks crashed:`, err);
       void logReview(prId, `Deterministic checks crashed: ${err.message}`, "warn", reviewRunId, reviewChunkId);
+    }
+  } else if (repo?.cloneUrl) {
+    try {
+      const { decryptSecret, hasMasterKey } = await import("./src/lib/crypto");
+      let deployKey: string | undefined;
+      let pat: string | undefined;
+      if (repo.deployKeyCipher && repo.deployKeyIv && repo.deployKeyTag && hasMasterKey()) {
+        deployKey = decryptSecret(repo.deployKeyCipher, repo.deployKeyIv, repo.deployKeyTag);
+      }
+      if (repo.patCipher && repo.patIv && repo.patTag && hasMasterKey()) {
+        pat = decryptSecret(repo.patCipher, repo.patIv, repo.patTag);
+      }
+      deterministicFindings = await runContainerizedChecks({
+        repoId: repo.id,
+        cloneUrl: repo.cloneUrl,
+        commitHash: pr.commitHash,
+        deployKey,
+        pat,
+        runnerImage: repo.runnerImage ?? "node:20-alpine",
+        installCommand: repo.installCommand ?? "npm install",
+        testCommand: repo.testCommand ?? "npm test && npm run lint",
+        prId,
+        reviewRunId,
+        reviewChunkId,
+      });
+      console.log(`[scan] runPrScan: containerized checks → ${deterministicFindings.length} finding(s)`);
+    } catch (err: any) {
+      console.warn(`[scan] runPrScan: containerized checks crashed:`, err);
+      void logReview(prId, `Containerized checks crashed: ${err.message}`, "warn", reviewRunId, reviewChunkId);
     }
   }
 
