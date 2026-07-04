@@ -36,7 +36,7 @@ function parseGenericErrors(stderr: string): DeterministicFinding[] {
         severity: "error",
         category: "Build Error",
         explanation: fileMatch[2],
-        source: "tsc",
+        source: "runner",
       });
     }
   }

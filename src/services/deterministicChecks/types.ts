@@ -34,5 +34,5 @@ export interface DeterministicFinding {
   category: string;
   explanation: string;
   diffSuggestion?: string | null;
-  source: "tsc" | "eslint";
+  source: "tsc" | "eslint" | "runner";
 }
