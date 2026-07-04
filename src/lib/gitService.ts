@@ -19,6 +19,7 @@ import path from "node:path";
 import { buildSshEnv } from "./gitRemote";
 import type { RunResult } from "./containerOrchestratorTypes";
 import { ContainerOrchestrator } from "./containerOrchestrator";
+import { shellEscape } from "./shellEscape";
 
 export interface SyncOptions {
   repoId: string;
@@ -68,13 +69,14 @@ class RealGitService implements GitServiceInterface {
     //   3. Fetch.
     //   4. Checkout the exact commit hash.
     //   5. Clean untracked files (preserving node_modules via .gitignore).
+    const escapedUrl = shellEscape(cloneUrl);
     const syncScript = [
       "set -e",
       "[ -d /workspace/.git ] || git init /workspace",
       "cd /workspace",
-      `git remote get-url origin 2>/dev/null && git remote set-url origin '${cloneUrl}' || git remote add origin '${cloneUrl}'`,
+      `git remote get-url origin 2>/dev/null && git remote set-url origin '${escapedUrl}' || git remote add origin '${escapedUrl}'`,
       "git fetch origin --prune --depth=100",
-      `git checkout -f ${opts.commitHash}`,
+      `git checkout -f '${shellEscape(opts.commitHash)}'`,
       "git clean -fd --exclude=node_modules --exclude=.next --exclude=dist",
     ].join(" && ");
 
