@@ -3,6 +3,7 @@
 import { useCallback, useState } from "react";
 import { AlertTriangle, CheckCircle2, Copy, Loader2, ShieldAlert } from "lucide-react";
 import type { PullRequest, ReviewChunk, ReviewFinding } from "../../../lib/types";
+import type { StabilityProp } from "../../../lib/stabilityScore";
 import PrSizeProfileChip from "../../PrSizeProfileChip";
 import FindingsList from "./FindingsList";
 import LargePrModePanel from "./LargePrModePanel";
@@ -44,6 +45,7 @@ interface Props {
     verificationNote: string | null;
   }>;
   stale?: boolean;
+  stability?: StabilityProp | null;
   isScanning?: boolean;
   chunks?: ReviewChunk[];
   // Currently in-progress scan + its live chunks. When isScanning is true
@@ -126,6 +128,7 @@ export default function ReviewCard({
   rejectedCount,
   rejectedFindings,
   stale,
+  stability,
   isScanning,
   chunks = [],
   activeScan,
@@ -208,6 +211,24 @@ export default function ReviewCard({
               }`}
             >
               {activePR.rating}/10
+            </span>
+          )}
+          {stability && !isScanning && (
+            <span
+              title={
+                stability.readyToMerge
+                  ? `${stability.consecutiveCleanRounds} consecutive clean rounds — ready to merge`
+                  : stability.consecutiveCleanRounds > 0
+                    ? `${stability.consecutiveCleanRounds} clean round${stability.consecutiveCleanRounds === 1 ? "" : "s"}, still fluctuating`
+                    : "Not enough data for stability score"
+              }
+              className={`px-2 py-0.5 rounded uppercase font-mono text-[9px] font-bold border flex items-center gap-1 ${
+                stability.readyToMerge
+                  ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/25"
+                  : "bg-amber-500/10 text-amber-400 border-amber-500/25"
+              }`}
+            >
+              {stability.readyToMerge ? "✓" : "◐"} {stability.consecutiveCleanRounds}
             </span>
           )}
           {activePR?.sizeProfile && !isScanning && (

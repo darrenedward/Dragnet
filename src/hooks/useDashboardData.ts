@@ -126,6 +126,7 @@ export function useDashboardData() {
     verificationNote: string | null;
   }>>([]);
   const [stale, setStale] = useState(false);
+  const [stability, setStability] = useState<import("@/src/lib/stabilityScore").StabilityProp | null>(null);
   const [logs, setLogs] = useState<ActivityLog[]>([]);
 
   // ===== Scan / UI feedback =====
@@ -324,6 +325,7 @@ export function useDashboardData() {
         setRejectedCount(findingsData.rejectedCount ?? 0);
         setRejectedFindings(findingsData.rejectedFindings ?? []);
         setStale(Boolean(findingsData.stale));
+        setStability(findingsData.stability ?? null);
         if (findingsData.sizeProfile) {
           setPrs((prev) =>
             prev.map((p) => (p.id === prId ? { ...p, sizeProfile: findingsData.sizeProfile } : p)),
@@ -973,6 +975,7 @@ export function useDashboardData() {
     rejectedCount,
     rejectedFindings,
     stale,
+    stability,
     logs,
     fetchPrsForSelectedRepo,
     // scan

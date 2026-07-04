@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { getActiveScan, getLatestCompletedReview } from "@/src/lib/reviewFreshness";
+import { getActiveScan, getLatestCompletedReview, getRecentRuns } from "@/src/lib/reviewFreshness";
+import { computeStability } from "@/src/lib/stabilityScore";
 import { authenticateSessionOrKey } from "@/src/lib/apiAuth";
 import { prisma } from "@/src/lib/prisma";
 import { computePrSizeProfile } from "@/src/lib/prSizeProfile";
@@ -118,6 +119,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ prId: st
         rejectedCount: 0,
         stale: false,
         sizeProfile,
+        stability: null,
         chunks,
         activeScan: activeScanView,
         activeChunks,
@@ -126,6 +128,9 @@ export async function GET(req: Request, { params }: { params: Promise<{ prId: st
         message: "No completed review yet. Run a scan.",
       });
     }
+
+    const ratingTrend = await getRecentRuns(prId, 5);
+    const stability = computeStability(ratingTrend);
 
     return NextResponse.json({
       reviewRun: {
@@ -143,16 +148,13 @@ export async function GET(req: Request, { params }: { params: Promise<{ prId: st
         chunksCompleted: latest.reviewRun.chunksCompleted,
         chunksFailed: latest.reviewRun.chunksFailed,
         chunksSkipped: latest.reviewRun.chunksSkipped,
-        // Phase 2 cost telemetry — null on old runs (column added by
-        // Phase 2 migration; pre-existing rows have no value). UI renders
-        // "Cost: not tracked" for null; otherwise renders
-        // "$X on PROVIDER" from the providers[] breakdown.
         tokensUsed: latest.reviewRun.tokensUsed ?? null,
       },
       findings: latest.findings,
       rejectedFindings: latest.rejectedFindings,
       rejectedCount: latest.rejectedCount,
       stale: latest.stale,
+      stability,
       sizeProfile,
       chunks,
       activeScan: activeScanView,

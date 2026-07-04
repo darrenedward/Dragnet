@@ -811,27 +811,41 @@ export function parseIterationLogs(
   return out;
 }
 
+export type RatingTrendEntry = {
+  runId: string;
+  rating: number | null;
+  completedAt: Date | null;
+  commitHash: string;
+  newFindingsCount: number;
+};
+
 /**
  * Recent completed runs for a PR, ascending order (oldest first, current last).
  * Drives the rating-trend rendering in `/dragnet status`: R1: 3/10 → R2: 5/10 → R3: 7/10.
+ * Each entry includes `newFindingsCount` — the number of findings whose
+ * `firstSeenRunId` matches this run (i.e. new issues introduced that round).
  */
 export async function getRecentRuns(
   prId: string,
   limit = 5,
-): Promise<
-  Array<{
-    runId: string;
-    rating: number | null;
-    completedAt: Date | null;
-    commitHash: string;
-  }>
-> {
+): Promise<RatingTrendEntry[]> {
   const runs = await prisma.reviewRun.findMany({
     where: { prId, status: "completed" },
     orderBy: { completedAt: "desc" },
     take: limit,
     select: { id: true, rating: true, completedAt: true, commitHash: true },
   });
+
+  if (runs.length === 0) return [];
+
+  const runIds = runs.map((r) => r.id);
+  const newCounts = await prisma.reviewFinding.groupBy({
+    by: ["firstSeenRunId"],
+    where: { prId, firstSeenRunId: { in: runIds } },
+    _count: true,
+  });
+  const countMap = new Map(newCounts.map((g) => [g.firstSeenRunId, g._count]));
+
   return runs
     .reverse()
     .map((r) => ({
@@ -839,5 +853,6 @@ export async function getRecentRuns(
       rating: r.rating,
       completedAt: r.completedAt,
       commitHash: r.commitHash,
+      newFindingsCount: countMap.get(r.id) ?? 0,
     }));
 }

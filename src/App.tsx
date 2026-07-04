@@ -309,6 +309,7 @@ export default function App() {
                   activeIterations={d.activeIterations}
                   isRetryingChunks={d.isRetryingChunks}
                   onRetryFailedChunks={d.handleRetryFailedChunks}
+                  stability={d.stability}
                   rejectedCount={d.rejectedCount}
                   rejectedFindings={d.rejectedFindings}
                   stale={d.stale}

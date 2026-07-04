@@ -23,6 +23,7 @@ import ReviewCard from "./prs/ReviewCard";
 import ScanHistory from "./prs/ScanHistory";
 import PrSizeProfileChip from "../PrSizeProfileChip";
 import type { ReviewLimits } from "../../lib/prSizeConfig";
+import type { StabilityProp } from "../../lib/stabilityScore";
 
 interface ScanResult {
   count: number;
@@ -60,6 +61,7 @@ interface Props {
     chunksFailed?: number;
     chunksSkipped?: number;
   } | null;
+  stability?: StabilityProp | null;
   chunks?: ReviewChunk[];
   // Currently in-progress scan (null when no scan is active). Drives the
   // live "Large PR Mode" chunk grid and the ReviewProgress log target
@@ -114,6 +116,7 @@ export default function PrsView({
   onDismissScanResult,
   findings,
   reviewRun,
+  stability,
   chunks,
   activeScan,
   activeChunks,
@@ -182,6 +185,7 @@ export default function PrsView({
                 activePR={activePR}
                 findings={findings}
                 reviewRun={reviewRun}
+                stability={stability}
                 chunks={chunks}
                 activeScan={activeScan}
                 activeChunks={activeChunks}

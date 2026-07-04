@@ -23,6 +23,7 @@ import {
   getRecentRuns,
   getActiveScan,
 } from "@/src/lib/reviewFreshness";
+import { computeStability } from "@/src/lib/stabilityScore";
 
 /**
  * Start a tracked review: refresh files, create an in_progress ReviewRun,
@@ -566,12 +567,14 @@ async function handleLegacyCommand(body: any, defRepo: string | null) {
       const freshPr = await prisma.pullRequest.findUnique({ where: { id: pr.id } });
       const latest = await getLatestCompletedReview(pr.id);
       const ratingTrend = await getRecentRuns(pr.id, 5);
+      const stability = computeStability(ratingTrend);
       return NextResponse.json({
         status: latest.reviewRun ? "Success" : (freshPr?.rating != null ? "Success" : "Pending"),
         type: "status",
         productionScore: latest.reviewRun?.rating != null ? `${latest.reviewRun.rating}/10` : (freshPr?.rating != null ? `${freshPr.rating}/10` : "Not scanned yet"),
         reviewRun: latest.reviewRun,
         ratingTrend,
+        stability,
         stale: latest.stale,
         rejectedCount: latest.rejectedCount,
         sizeProfile,

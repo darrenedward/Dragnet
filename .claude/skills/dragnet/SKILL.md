@@ -220,10 +220,15 @@ The `<arg>` is a PR `id` (preferred) or `branch` — both accepted. Numeric ordi
     "refusalNote": null      // string when refused=true: topics the reviewer skipped
   },
   "ratingTrend": [           // last 5 completed runs, oldest first; may be empty
-    { "runId": "r1...", "rating": 3, "completedAt": "...", "commitHash": "..." },
-    { "runId": "r2...", "rating": 5, "completedAt": "...", "commitHash": "..." },
-    { "runId": "r3...", "rating": 7, "completedAt": "...", "commitHash": "..." }
+    { "runId": "r1...", "rating": 3, "completedAt": "...", "commitHash": "...", "newFindingsCount": 2 },
+    { "runId": "r2...", "rating": 5, "completedAt": "...", "commitHash": "...", "newFindingsCount": 1 },
+    { "runId": "r3...", "rating": 7, "completedAt": "...", "commitHash": "...", "newFindingsCount": 0 }
   ],
+  "stability": {             // computed from ratingTrend; may be omitted if no runs exist
+    "consecutiveCleanRounds": 3,
+    "readyToMerge": true,     // true when ≥3 consecutive clean rounds (rating≥8, no new findings)
+    "lastUnstableRunId": null // the run that broke the streak; null when all clean
+  },
   "stale": false,            // true if diff has changed since this run
   "rejectedCount": 0,        // findings filtered by verifier
   "findingsCount": 4,
@@ -244,6 +249,22 @@ The `<arg>` is a PR `id` (preferred) or `branch` — both accepted. Numeric ordi
 - The last entry is the current run — append `← current`.
 - Skip null ratings (failed runs) silently — they don't belong in the trend line.
 - Findings list below should distinguish new vs carried-over once the backend tags them; for now treat the entire list as "open" (resolved findings are already filtered server-side).
+
+**Stability rendering:** when `stability` is present in the response, render it under the rating trend as a single line:
+
+```
+✓ Stable — 3 consecutive clean rounds (ready to merge)
+```
+
+or
+
+```
+◐ Unstable — 1 clean round, rating or findings still fluctuating
+```
+
+- `readyToMerge: true` → render the stable verdict
+- `readyToMerge: false` → render the unstable verdict
+- If `ratingTrend.length < 2`, stability may indicate "not enough data" — render `○ Gathering data — only 1 scan completed`
 
 **No completed run yet:**
 ```json
