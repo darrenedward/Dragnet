@@ -267,6 +267,12 @@ async function formatLatestFindings(pr: any): Promise<string> {
     if (latest.rejectedCount > 0) {
       out += `_Verifier filtered ${latest.rejectedCount} finding${latest.rejectedCount === 1 ? "" : "s"}._\n`;
     }
+    if (latest.regressions.length > 0) {
+      out += `_Regressions detected: ${latest.regressions.length} finding${latest.regressions.length === 1 ? "" : "s"} previously resolved but now reappeared._\n`;
+      for (const r of latest.regressions) {
+        out += `  ⚠ [${r.category}|${r.severity}] ${r.filename}:${r.line} — ${r.explanation}\n`;
+      }
+    }
     if (latest.reviewRun.refused) {
       out += `\n> ⚠ **Reviewer flagged incomplete coverage.** ${latest.reviewRun.refusalNote ?? "Parts of the PR were skipped or not fully analyzed."} Re-scan recommended after addressing the underlying cause.\n`;
     }
@@ -581,6 +587,10 @@ async function handleLegacyCommand(body: any, defRepo: string | null) {
         weightedReadyToMerge: weighted.readyToMerge,
         stale: latest.stale,
         rejectedCount: latest.rejectedCount,
+        regressionsCount: latest.regressions.length,
+        regressions: latest.regressions.map((r: any) =>
+          `[${r.category} | ${r.severity}] ${r.filename}:${r.line} - ${r.explanation} (regressed from ${r.regressedFromRunId ?? "unknown"})`,
+        ),
         sizeProfile,
         findingsCount: latest.findings.filter((f: any) => f.status !== "resolved").length,
         findings: latest.findings

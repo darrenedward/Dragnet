@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { planReconcile } from "../../src/services/largePrReview";
+import { detectRegressions, planReconcile } from "../../src/services/largePrReview";
 
 describe("planReconcile", () => {
   it("matches a current finding to a prior finding by fingerprint", () => {
@@ -134,5 +134,108 @@ describe("planReconcile", () => {
       matchedPriorUpdates: [],
       unmatchedPriorIds: [],
     });
+  });
+});
+
+describe("detectRegressions", () => {
+  it("flags a regression when resolved prior has different sourceHash", () => {
+    const newFinds = [
+      { id: "new-1", fingerprint: "fp-x", sourceHashAtInsert: "hash-ghi" },
+    ];
+    const resolved = [
+      { fingerprint: "fp-x", sourceHashAtInsert: "hash-abc", resolvedAtRunId: "run-3" },
+    ];
+
+    const plan = detectRegressions(newFinds, resolved);
+
+    expect(plan.regressions).toHaveLength(1);
+    expect(plan.regressions[0]).toEqual({
+      currentFindingId: "new-1",
+      regressedFromRunId: "run-3",
+    });
+    expect(plan.falsePositiveRecoveries).toEqual([]);
+  });
+
+  it("classifies as false-positive recovery when sourceHash matches resolved prior", () => {
+    const newFinds = [
+      { id: "new-1", fingerprint: "fp-x", sourceHashAtInsert: "hash-abc" },
+    ];
+    const resolved = [
+      { fingerprint: "fp-x", sourceHashAtInsert: "hash-abc", resolvedAtRunId: "run-3" },
+    ];
+
+    const plan = detectRegressions(newFinds, resolved);
+
+    expect(plan.regressions).toEqual([]);
+    expect(plan.falsePositiveRecoveries).toEqual(["new-1"]);
+  });
+
+  it("does not flag regressions for genuinely new findings (no prior resolved match)", () => {
+    const newFinds = [
+      { id: "new-1", fingerprint: "fp-new", sourceHashAtInsert: "hash-1" },
+    ];
+    const resolved: Array<{
+      fingerprint: string | null;
+      sourceHashAtInsert: string | null;
+      resolvedAtRunId: string | null;
+    }> = [];
+
+    const plan = detectRegressions(newFinds, resolved);
+
+    expect(plan.regressions).toEqual([]);
+    expect(plan.falsePositiveRecoveries).toEqual([]);
+  });
+
+  it("ignores new findings with null fingerprint", () => {
+    const newFinds = [
+      { id: "new-1", fingerprint: null, sourceHashAtInsert: "hash-1" },
+    ];
+    const resolved = [
+      { fingerprint: "fp-x", sourceHashAtInsert: "hash-abc", resolvedAtRunId: "run-3" },
+    ];
+
+    const plan = detectRegressions(newFinds, resolved);
+
+    expect(plan.regressions).toEqual([]);
+    expect(plan.falsePositiveRecoveries).toEqual([]);
+  });
+
+  it("handles multiple resolved priors matching different new findings", () => {
+    const newFinds = [
+      { id: "new-a", fingerprint: "fp-a", sourceHashAtInsert: "hash-a2" },
+      { id: "new-b", fingerprint: "fp-b", sourceHashAtInsert: "hash-b1" },
+      { id: "new-c", fingerprint: "fp-c", sourceHashAtInsert: "hash-c2" },
+    ];
+    const resolved = [
+      { fingerprint: "fp-a", sourceHashAtInsert: "hash-a1", resolvedAtRunId: "run-1" },
+      { fingerprint: "fp-b", sourceHashAtInsert: "hash-b1", resolvedAtRunId: "run-2" },
+      { fingerprint: "fp-c", sourceHashAtInsert: "hash-c1", resolvedAtRunId: "run-3" },
+    ];
+
+    const plan = detectRegressions(newFinds, resolved);
+
+    expect(plan.regressions).toHaveLength(2);
+    expect(plan.regressions.map((r) => r.currentFindingId).sort()).toEqual(["new-a", "new-c"]);
+    expect(plan.falsePositiveRecoveries).toEqual(["new-b"]);
+  });
+
+  it("defense-in-depth: does not double-match one fingerprint to two resolved priors", () => {
+    const newFinds = [
+      { id: "new-1", fingerprint: "fp-x", sourceHashAtInsert: "hash-2" },
+    ];
+    const resolved = [
+      { fingerprint: "fp-x", sourceHashAtInsert: "hash-1", resolvedAtRunId: "run-1" },
+      { fingerprint: "fp-x", sourceHashAtInsert: "hash-1", resolvedAtRunId: "run-2" },
+    ];
+
+    const plan = detectRegressions(newFinds, resolved);
+
+    expect(plan.regressions).toHaveLength(1);
+    expect(plan.regressions[0].regressedFromRunId).toBe("run-1");
+  });
+
+  it("returns empty plan when both sides are empty", () => {
+    const plan = detectRegressions([], []);
+    expect(plan).toEqual({ regressions: [], falsePositiveRecoveries: [] });
   });
 });

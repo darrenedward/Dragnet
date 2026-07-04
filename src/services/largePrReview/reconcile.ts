@@ -17,6 +17,14 @@ export interface ReconcilePlan {
   unmatchedPriorIds: string[];
 }
 
+export interface RegressionPlan {
+  regressions: Array<{
+    currentFindingId: string;
+    regressedFromRunId: string;
+  }>;
+  falsePositiveRecoveries: string[];
+}
+
 /**
  * Pure-function core of cross-run reconciliation. Given the current run's
  * findings and the prior OPEN findings for the same PR, return a plan: which
@@ -62,9 +70,6 @@ export function planReconcile(
         id: prior.id,
         sourceHashAtInsert: match.sourceHashAtInsert,
       });
-      // Consume the match so a second prior with the same fingerprint can't
-      // re-grab it. Defense-in-depth: intra-run dedup should already prevent
-      // two priors from sharing a fingerprint, but legacy rows may not.
       currentByFp.delete(prior.fingerprint);
     } else {
       unmatchedPriorIds.push(prior.id);
@@ -75,15 +80,70 @@ export function planReconcile(
 }
 
 /**
+ * Pure-function regression detector. Given the genuinely new findings (those
+ * not matched to any OPEN prior) and the prior RESOLVED findings, determine
+ * which are regressions and which are false-positive recoveries.
+ *
+ * A finding is a regression when a resolved finding with the same fingerprint
+ * exists AND the code at the anchor point has changed since resolution
+ * (prior.sourceHashAtInsert !== current.sourceHashAtInsert).
+ *
+ * A finding is a false-positive recovery when the sourceHash matches the prior
+ * resolved finding — meaning the "resolution" was spurious (code never changed,
+ * LLM just stopped reporting it).
+ *
+ * Pure so it can be tested without a database.
+ */
+export function detectRegressions(
+  newFindings: Array<{
+    id: string;
+    fingerprint: string | null;
+    sourceHashAtInsert: string | null;
+  }>,
+  priorResolved: Array<{
+    fingerprint: string | null;
+    sourceHashAtInsert: string | null;
+    resolvedAtRunId: string | null;
+  }>,
+): RegressionPlan {
+  const resolvedByFp = new Map<string, (typeof priorResolved)[number]>();
+  for (const r of priorResolved) {
+    if (r.fingerprint && !resolvedByFp.has(r.fingerprint)) {
+      resolvedByFp.set(r.fingerprint, r);
+    }
+  }
+
+  const regressions: Array<{ currentFindingId: string; regressedFromRunId: string }> = [];
+  const falsePositiveRecoveries: string[] = [];
+
+  for (const f of newFindings) {
+    if (!f.fingerprint) continue;
+    const prior = resolvedByFp.get(f.fingerprint);
+    if (!prior) continue;
+
+    if (prior.resolvedAtRunId && prior.sourceHashAtInsert !== f.sourceHashAtInsert) {
+      regressions.push({
+        currentFindingId: f.id,
+        regressedFromRunId: prior.resolvedAtRunId,
+      });
+    } else {
+      falsePositiveRecoveries.push(f.id);
+    }
+  }
+
+  return { regressions, falsePositiveRecoveries };
+}
+
+/**
  * Cross-run finding reconciliation. After a scan (and intra-run dedup), match
  * the current run's findings against prior OPEN findings for the same PR by
- * fingerprint. Preserves `firstSeenRunId` on match (so "open since R1" works
- * in the skill UI) and distinguishes "fixed" from "detection regression" using
- * the `sourceHashAtInsert` snapshot.
+ * fingerprint. Then check genuinely new findings against prior RESOLVED findings
+ * to detect regressions.
  *
- *   Match by fingerprint  → bump prior.lastSeenRunId + snapshot, delete the new duplicate.
- *   No match (new)        → leave the new finding as-is.
- *   Prior with no match   → compare current symbol.sourceHash to snapshot:
+ *   Match by fingerprint      → bump prior.lastSeenRunId + snapshot, delete the new duplicate.
+ *   No match, resolved prior  → detectRegression: flag isRegression or false-positive recovery.
+ *   No match, no prior        → leave the new finding as-is.
+ *   Prior with no match       → compare current symbol.sourceHash to snapshot:
  *     changed  → mark resolved (code at the anchor shifted — likely the fix landed).
  *     unchanged → leave open, log warning (LLM missed it this round; will retry next scan).
  *
@@ -105,7 +165,7 @@ export async function reconcileFindingsAcrossRuns(
     select: { id: true, fingerprint: true, sourceHashAtInsert: true },
   });
 
-  const priorFindings = await prisma.reviewFinding.findMany({
+  const priorOpenFindings = await prisma.reviewFinding.findMany({
     where: {
       prId,
       status: "open",
@@ -121,11 +181,25 @@ export async function reconcileFindingsAcrossRuns(
     },
   });
 
-  if (currentFindings.length === 0 && priorFindings.length === 0) {
+  const priorResolvedFindings = await prisma.reviewFinding.findMany({
+    where: {
+      prId,
+      status: "resolved",
+      lastSeenRunId: { not: currentRunId },
+    },
+    select: {
+      fingerprint: true,
+      sourceHashAtInsert: true,
+      resolvedAtRunId: true,
+    },
+  });
+
+  if (currentFindings.length === 0 && priorOpenFindings.length === 0 && priorResolvedFindings.length === 0) {
     return result;
   }
 
-  const plan = planReconcile(currentFindings, priorFindings);
+  // Phase 1: match current vs prior OPEN findings by fingerprint
+  const plan = planReconcile(currentFindings, priorOpenFindings);
   result.matched = plan.matchedPriorUpdates.length;
   result.newFindings = currentFindings.length - plan.matchedNewIds.length;
 
@@ -144,11 +218,39 @@ export async function reconcileFindingsAcrossRuns(
     });
   }
 
+  // Phase 2: check genuinely new findings against prior RESOLVED findings
+  if (priorResolvedFindings.length > 0 && result.newFindings > 0) {
+    const genuinelyNew = currentFindings.filter((f) =>
+      !plan.matchedNewIds.includes(f.id),
+    );
+    const regressionPlan = detectRegressions(genuinelyNew, priorResolvedFindings);
+
+    if (regressionPlan.regressions.length > 0) {
+      for (const r of regressionPlan.regressions) {
+        await prisma.reviewFinding.update({
+          where: { id: r.currentFindingId },
+          data: {
+            isRegression: true,
+            regressedFromRunId: r.regressedFromRunId,
+          },
+        });
+      }
+      result.regressions = regressionPlan.regressions.length;
+    }
+
+    if (regressionPlan.falsePositiveRecoveries.length > 0) {
+      await prisma.reviewFinding.deleteMany({
+        where: { id: { in: regressionPlan.falsePositiveRecoveries } },
+      });
+    }
+  }
+
+  // Phase 3: handle unmatched prior OPEN findings — resolve or warn
   if (plan.unmatchedPriorIds.length > 0) {
-    const unmatchedPriors = priorFindings.filter((p) =>
+    const unmatchedPriors = priorOpenFindings.filter((p) =>
       plan.unmatchedPriorIds.includes(p.id),
     );
-    const repoId = unmatchedPriors[0].repoId;
+    const repoId = unmatchedPriors[0]!.repoId;
     const symbols = await resolveSymbolsBatch(
       repoId,
       unmatchedPriors.map((p) => ({ filePath: p.filename, line: p.line })),
@@ -164,7 +266,6 @@ export async function reconcileFindingsAcrossRuns(
         console.warn(
           `[dedup] possible detection regression: prior finding ${prior.id} not re-detected but code at anchor unchanged`,
         );
-        result.regressions++;
       }
     }
     if (resolvedIds.length > 0) {

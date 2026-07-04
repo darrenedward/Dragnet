@@ -73,6 +73,8 @@ export interface ReviewFinding {
   verificationStatus?: "verified" | "downgraded" | "rejected" | "unverified" | null;
   verificationNote?: string | null;
   source?: string | null;
+  isRegression?: boolean;
+  regressedFromRunId?: string | null;
 }
 
 export interface ReviewChunk {

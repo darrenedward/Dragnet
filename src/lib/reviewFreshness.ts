@@ -121,6 +121,8 @@ export interface LatestReviewResult {
     verificationNote: string | null;
     source: string | null;
     timestamp: string;
+    isRegression: boolean | null;
+    regressedFromRunId: string | null;
   }>;
   rejectedCount: number;
   rejectedFindings: Array<{
@@ -132,6 +134,16 @@ export interface LatestReviewResult {
     explanation: string;
     verificationNote: string | null;
     source: string | null;
+  }>;
+  regressions: Array<{
+    id: string;
+    filename: string;
+    line: number | null;
+    category: string;
+    severity: string;
+    explanation: string;
+    isRegression: boolean;
+    regressedFromRunId: string | null;
   }>;
   stale: boolean;
 }
@@ -608,6 +620,7 @@ export async function getLatestCompletedReview(
       findings: [],
       rejectedFindings: [],
       rejectedCount: 0,
+      regressions: [],
       stale: false,
     };
   }
@@ -619,6 +632,15 @@ export async function getLatestCompletedReview(
   const currentDiffHash = computeDiffHash(prFiles);
   const stale = latestRun.diffHash !== "" && latestRun.diffHash !== currentDiffHash;
 
+  const reviewFindingSelect = {
+    id: true, prId: true, reviewRunId: true, repoId: true,
+    category: true, severity: true, exploitability: true, impact: true,
+    filename: true, line: true, explanation: true, diffSuggestion: true,
+    evidenceChain: true, confidence: true, verificationStatus: true,
+    verificationNote: true, source: true, timestamp: true,
+    isRegression: true, regressedFromRunId: true,
+  } as const;
+
   const [findings, rejectedFindings] = await Promise.all([
     prisma.reviewFinding.findMany({
       where: {
@@ -629,6 +651,7 @@ export async function getLatestCompletedReview(
         ],
       },
       orderBy: { line: "asc" },
+      select: reviewFindingSelect,
     }),
     prisma.reviewFinding.findMany({
       where: { reviewRunId: latestRun.id, verificationStatus: "rejected" },
@@ -640,11 +663,25 @@ export async function getLatestCompletedReview(
     }),
   ]);
 
+  const regressions = findings
+    .filter((f) => f.isRegression)
+    .map((f) => ({
+      id: f.id,
+      filename: f.filename,
+      line: f.line,
+      category: f.category,
+      severity: f.severity,
+      explanation: f.explanation,
+      isRegression: f.isRegression,
+      regressedFromRunId: f.regressedFromRunId,
+    }));
+
   return {
     reviewRun: latestRun,
     findings,
     rejectedFindings,
     rejectedCount: rejectedFindings.length,
+    regressions,
     stale,
   };
 }

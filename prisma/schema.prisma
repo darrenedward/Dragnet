@@ -208,6 +208,8 @@ model ReviewFinding {
   lastSeenRunId      String?     // most recent run that still detected it
   resolvedAtRunId    String?     // run where it stopped appearing AND code at anchor had changed
   status             String?     // "open" | "resolved" | "wontfix"
+  isRegression       Boolean   @default(false)  // true when a resolved finding reappeared with changed code
+  regressedFromRunId String?     // the run that previously resolved it (resolvedAtRunId at the time)
   sourceHashAtInsert String?     // snapshot of Symbol.sourceHash when this finding was last detected
   pullRequest        PullRequest @relation(fields: [prId], references: [id], onDelete: Cascade)
   reviewRun          ReviewRun?  @relation(fields: [reviewRunId], references: [id], onDelete: Cascade)

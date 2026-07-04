@@ -231,6 +231,10 @@ The `<arg>` is a PR `id` (preferred) or `branch` — both accepted. Numeric ordi
   },
   "stale": false,            // true if diff has changed since this run
   "rejectedCount": 0,        // findings filtered by verifier
+  "regressionsCount": 0,     // findings flagged as regressions (resolved but reappeared)
+  "regressions": [           // pre-formatted strings; empty array when none
+    "[Security|blocker] src/auth.ts:42 — auth bypass reoccurred (regressed from run-3)",
+  ],
   "findingsCount": 4,
   "findings": [              // pre-formatted strings, NOT objects
     "[Correctness|warning|moderate] src/proxy.ts:40 — <explanation>",
@@ -265,6 +269,19 @@ or
 - `readyToMerge: true` → render the stable verdict
 - `readyToMerge: false` → render the unstable verdict
 - If `ratingTrend.length < 2`, stability may indicate "not enough data" — render `○ Gathering data — only 1 scan completed`
+
+**Regressions rendering:** when `regressions` has entries, render them as a distinct section above findings with a clear visual separation:
+
+```
+⚠ REGRESSIONS (2) — previously resolved issues that reappeared
+  [Security|blocker] src/auth.ts:42 — auth bypass reoccurred (regressed from run-3)
+  [Correctness|warning] src/lib/validate.ts:18 — null check missing (regressed from run-1)
+```
+
+- Render the section title as `⚠ REGRESSIONS (N)` in bold.
+- List each regression with its category, severity, file, line, and explanation.
+- The `(regressed from run-X)` suffix tells the user which prior run resolved it.
+- Below the regressions section, render findings normally.
 
 **No completed run yet:**
 ```json
