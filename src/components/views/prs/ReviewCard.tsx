@@ -221,15 +221,17 @@ export default function ReviewCard({
                     ? `${stability.consecutiveCleanRounds} consecutive clean rounds — ready to merge`
                     : stability.consecutiveCleanRounds > 0
                       ? `${stability.consecutiveCleanRounds} clean round${stability.consecutiveCleanRounds === 1 ? "" : "s"}, still fluctuating`
-                      : "Not enough data for stability score"
+                      : "Not enough data — only 1 scan completed"
                 }
                 className={`px-2 py-0.5 rounded uppercase font-mono text-[9px] font-bold border flex items-center gap-1 ${
                   stability.readyToMerge
                     ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/25"
-                    : "bg-amber-500/10 text-amber-400 border-amber-500/25"
+                    : stability.consecutiveCleanRounds > 0
+                      ? "bg-amber-500/10 text-amber-400 border-amber-500/25"
+                      : "bg-slate-500/10 text-slate-400 border-slate-500/25"
                 }`}
               >
-                {stability.readyToMerge ? "✓" : "◐"} {stability.consecutiveCleanRounds}
+                {stability.readyToMerge ? "✓" : stability.consecutiveCleanRounds > 0 ? "◐" : "○"} {stability.consecutiveCleanRounds || "—"}
               </span>
               {stability.weightedStability !== undefined && (
                 <span

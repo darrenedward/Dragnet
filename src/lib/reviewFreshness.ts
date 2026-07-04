@@ -26,6 +26,7 @@ import crypto from "node:crypto";
 import { randomUUID } from "node:crypto";
 import { prisma } from "./prisma";
 import type { ReviewLimits } from "./prSizeConfig";
+import type { RatingTrendEntry } from "./stabilityScore";
 
 /**
  * Max wall-clock time a scan is allowed to run before being treated as
@@ -847,15 +848,6 @@ export function parseIterationLogs(
   }
   return out;
 }
-
-export type RatingTrendEntry = {
-  runId: string;
-  rating: number | null;
-  completedAt: Date | null;
-  commitHash: string;
-  newFindingsCount: number;
-  model: string | null;
-};
 
 /**
  * Recent completed runs for a PR, ascending order (oldest first, current last).

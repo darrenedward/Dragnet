@@ -17,6 +17,17 @@ function fakeWeight(model: string | null | undefined): number {
 }
 
 describe("computeStability", () => {
+  it("returns readyToMerge: false for dirty pattern [dirty, clean, clean]", () => {
+    const result = computeStability([
+      run("r1", 5, 2),
+      run("r2", 10, 0),
+      run("r3", 9, 0),
+    ]);
+    expect(result.readyToMerge).toBe(false);
+    expect(result.consecutiveCleanRounds).toBe(2);
+    expect(result.lastUnstableRunId).toBe("r1");
+  });
+
   it("returns readyToMerge: true for 3+ consecutive clean rounds", () => {
     const result = computeStability([
       run("r1", 9, 0),
