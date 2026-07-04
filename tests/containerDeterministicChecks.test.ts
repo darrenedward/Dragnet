@@ -232,6 +232,28 @@ describe("runContainerizedChecks", () => {
     expect(findings[0].explanation).toContain("exited with code 1");
   });
 
+  it("logs container execution output at 'info' level, not 'tool_call'", async () => {
+    mockRunRunner
+      .mockResolvedValueOnce({ exitCode: 0, stdout: "installed pkgs", stderr: "", timedOut: false })
+      .mockResolvedValueOnce({ exitCode: 0, stdout: "tests passed", stderr: "", timedOut: false });
+
+    const { prisma } = await import("../src/lib/prisma");
+    const createMock = vi.mocked(prisma.reviewLog.create);
+
+    const findings = await runContainerizedChecks(baseOpts);
+    expect(findings).toHaveLength(0);
+
+    const containerCalls = createMock.mock.calls.filter(
+      (c) =>
+        (c[0].data.message as string).startsWith("[install]") ||
+        (c[0].data.message as string).startsWith("[test]"),
+    );
+    expect(containerCalls.length).toBeGreaterThanOrEqual(1);
+    for (const call of containerCalls) {
+      expect(call[0].data.level).toBe("info");
+    }
+  });
+
   it("runs with custom runnerImage and commands", async () => {
     const customOpts: ContainerizedCheckOptions = {
       ...baseOpts,

@@ -161,7 +161,7 @@ export async function runContainerizedChecks(
     void logReview(
       opts.prId,
       log,
-      "tool_call",
+      "info",
       opts.reviewRunId,
       opts.reviewChunkId,
     );
