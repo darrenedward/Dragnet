@@ -144,7 +144,6 @@ async function fetchPollingRepos() {
       patIv: true,
       patTag: true,
       pullRequests: {
-        where: { status: { in: ["Pending", "In Progress"] } },
         select: { id: true, sourceBranch: true, commitHash: true },
       },
     },
