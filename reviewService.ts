@@ -1143,7 +1143,7 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
       const detected = await detectBuildSystem(repo.path);
       runnerImage = detected.image;
       buildSystemWarn = detected.warn;
-      if (detected.buildSystem === "rust" || detected.buildSystem === "python") {
+      if (detected.buildSystem !== "node") {
         tier2Supported = false;
       }
       void logReview(
@@ -1184,7 +1184,7 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
   // 5c. Tier 2: Containerized checks (install + test/lint in ephemeral container).
   //     Gated: skipped when Tier 1 found errors (uncompilable code), when the
   //     per-repo "Skip Tier 2" toggle is enabled, or when the build system is
-  //     not yet supported by the container runner (rust/python).
+  //     not Node.js (only node images ship with working install/test commands).
   const skipTier2 = repo?.skipTier2 ?? false;
   const tier2ShouldRun =
     (Boolean(repo?.path) || Boolean(repo?.cloneUrl)) &&
@@ -1228,7 +1228,7 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
       : tier1HadErrors
         ? "Tier 1 found errors"
         : !tier2Supported
-          ? "unsupported build system (rust/python)"
+          ? "unsupported build system (non-Node.js)"
           : "no repo path or clone URL";
     void logReview(prId, `Tier 2 skipped: ${reason}`, "info", reviewRunId, reviewChunkId);
     console.log(`[scan] runPrScan: Tier 2 skipped — ${reason}`);

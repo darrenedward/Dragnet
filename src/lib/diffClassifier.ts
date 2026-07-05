@@ -79,8 +79,8 @@ export function isGeneratedFile(filename: string): boolean {
 
 export function isTrivialFile(filename: string): boolean {
   return (
-    matchesAny(filename, CONFIG_FILE_PATTERNS) ||
-    matchesAny(filename, GENERATED_FILE_PATTERNS) ||
+    isConfigFile(filename) ||
+    isGeneratedFile(filename) ||
     matchesAny(filename, DOCS_PATH_PATTERNS)
   );
 }

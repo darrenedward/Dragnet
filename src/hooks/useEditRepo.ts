@@ -24,9 +24,9 @@ export function useEditRepo({ onUpdated, onWebhookPrompt }: Options) {
   const [editPath, setEditPath] = useState("");
   const [editCloneUrl, setEditCloneUrl] = useState("");
   const [editCloneUrlHttps, setEditCloneUrlHttps] = useState("");
-const [editDeployKey, setEditDeployKey] = useState("");
-const [editPat, setEditPat] = useState("");
-const [editSkipTier2, setEditSkipTier2] = useState(false);
+  const [editDeployKey, setEditDeployKey] = useState("");
+  const [editPat, setEditPat] = useState("");
+  const [editSkipTier2, setEditSkipTier2] = useState(false);
 
   const openEditor = (repo: Repository) => {
     setEditingRepo(repo);
