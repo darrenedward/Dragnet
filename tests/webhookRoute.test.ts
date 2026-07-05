@@ -76,7 +76,7 @@ describe("webhooks/github/route POST", () => {
         return signature === sign(payload, secret);
       },
     );
-    mocks.mockEnqueue.mockResolvedValue(undefined);
+    mocks.mockEnqueue.mockResolvedValue("/tmp/remote-repo");
     mocks.mockCheckDelivery.mockReturnValue(false);
     mocks.mockScanRepoPrs.mockResolvedValue(["pr-1"]);
     mocks.mockRunPrScan.mockResolvedValue(undefined);
@@ -226,7 +226,7 @@ describe("webhooks/github/route POST", () => {
     expect(mocks.mockRunPrScan).toHaveBeenCalled();
   });
 
-  it("enqueues remote fetch for pull_request when no localPath (no AFK scan)", async () => {
+  it("enqueues remote fetch for pull_request and triggers AFK scan", async () => {
     mocks.mockFindRepo.mockResolvedValue({
       id: "repo-1",
       localPath: null,
@@ -243,8 +243,11 @@ describe("webhooks/github/route POST", () => {
     const res = await POST(req);
     expect(res.status).toBe(200);
     expect(mocks.mockEnqueue).toHaveBeenCalledWith("repo-1");
-    expect(mocks.mockGitFetch).not.toHaveBeenCalled();
-    expect(mocks.mockRunPrScan).not.toHaveBeenCalled();
+    expect(mocks.mockGitFetch).toHaveBeenCalledWith("/tmp/remote-repo");
+    expect(mocks.mockScanRepoPrs).toHaveBeenCalledWith("repo-1", "/tmp/remote-repo");
+    expect(mocks.mockRunPrScan).toHaveBeenCalledWith("pr-1");
+    const body = await res.json();
+    expect(body.afkScans).toBe(1);
   });
 
   it("triggers AFK scan on valid push event", async () => {
@@ -261,7 +264,7 @@ describe("webhooks/github/route POST", () => {
     expect(mocks.mockRunPrScan).toHaveBeenCalledWith("pr-1");
   });
 
-  it("enqueues remote fetch on push when no localPath (no AFK scan)", async () => {
+  it("enqueues remote fetch on push and triggers AFK scan", async () => {
     mocks.mockFindRepo.mockResolvedValue({
       id: "repo-1",
       localPath: null,
@@ -276,8 +279,34 @@ describe("webhooks/github/route POST", () => {
     const res = await POST(req);
     expect(res.status).toBe(200);
     expect(mocks.mockEnqueue).toHaveBeenCalledWith("repo-1");
+    expect(mocks.mockGitFetch).toHaveBeenCalledWith("/tmp/remote-repo");
+    expect(mocks.mockScanRepoPrs).toHaveBeenCalledWith("repo-1", "/tmp/remote-repo");
+    expect(mocks.mockRunPrScan).toHaveBeenCalledWith("pr-1");
+    const body = await res.json();
+    expect(body.afkScans).toBe(1);
+  });
+
+  it("handles enqueue failure gracefully (no AFK scan)", async () => {
+    mocks.mockFindRepo.mockResolvedValue({
+      id: "repo-1",
+      localPath: null,
+      webhookSecret: "test-secret",
+    });
+    mocks.mockEnqueue.mockRejectedValue(new Error("network error"));
+    const req = buildRequest({
+      event: "push",
+      body: {
+        repository: { clone_url: "https://github.com/owner/repo.git" },
+      },
+    });
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+    expect(mocks.mockEnqueue).toHaveBeenCalledWith("repo-1");
     expect(mocks.mockGitFetch).not.toHaveBeenCalled();
+    expect(mocks.mockScanRepoPrs).not.toHaveBeenCalled();
     expect(mocks.mockRunPrScan).not.toHaveBeenCalled();
+    const body = await res.json();
+    expect(body.afkScans).toBe(0);
   });
 
   it("returns ignored for unknown events", async () => {

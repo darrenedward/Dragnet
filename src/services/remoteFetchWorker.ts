@@ -10,8 +10,8 @@ export function isFetching(repoId: string): boolean {
   return activeFetches.has(repoId);
 }
 
-export async function enqueue(repoId: string): Promise<void> {
-  if (activeFetches.has(repoId)) return;
+export async function enqueue(repoId: string): Promise<string | null> {
+  if (activeFetches.has(repoId)) return null;
   activeFetches.add(repoId);
 
   try {
@@ -62,6 +62,8 @@ export async function enqueue(repoId: string): Promise<void> {
       where: { id: repoId },
       data: { lastFetchAt: new Date() },
     });
+
+    return localPath;
   } finally {
     activeFetches.delete(repoId);
   }

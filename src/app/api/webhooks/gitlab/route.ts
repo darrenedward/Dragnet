@@ -66,7 +66,15 @@ export async function POST(request: Request) {
       const ids = await scanRepoPrs(matched.id, matched.localPath);
       prIds.push(...ids);
     } else {
-      enqueue(matched.id).catch((err) => console.error(`[webhook] enqueue failed for ${matched.id}:`, err));
+      const localPath = await enqueue(matched.id).catch((err) => {
+        console.error(`[webhook] enqueue failed for ${matched.id}:`, err);
+        return null;
+      });
+      if (localPath) {
+        gitFetch(localPath);
+        const ids = await scanRepoPrs(matched.id, localPath);
+        prIds.push(...ids);
+      }
     }
     triggerAfkScans(prIds);
     return NextResponse.json({ ok: true, repo: matched.id, mr: mr.iid, afkScans: prIds.length });
@@ -79,7 +87,15 @@ export async function POST(request: Request) {
       const ids = await scanRepoPrs(matched.id, matched.localPath);
       prIds.push(...ids);
     } else {
-      enqueue(matched.id).catch((err) => console.error(`[webhook] enqueue failed for ${matched.id}:`, err));
+      const localPath = await enqueue(matched.id).catch((err) => {
+        console.error(`[webhook] enqueue failed for ${matched.id}:`, err);
+        return null;
+      });
+      if (localPath) {
+        gitFetch(localPath);
+        const ids = await scanRepoPrs(matched.id, localPath);
+        prIds.push(...ids);
+      }
     }
     triggerAfkScans(prIds);
     return NextResponse.json({ ok: true, repo: matched.id, afkScans: prIds.length });
