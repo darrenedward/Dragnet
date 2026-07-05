@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { verifyGithubSignature } from "../src/lib/webhook";
+import { describe, it, expect, beforeEach } from "vitest";
+import { verifyGithubSignature, verifyReplayAttack, resetRecentDeliveries } from "../src/lib/webhook";
 
 describe("verifyGithubSignature", () => {
   it("returns true for valid signature", () => {
@@ -27,5 +27,44 @@ describe("verifyGithubSignature", () => {
   it("returns false for malformed signature", () => {
     const result = verifyGithubSignature('{"test": true}', "not-sha256-format", "mysecret");
     expect(result).toBe(false);
+  });
+});
+
+describe("verifyReplayAttack", () => {
+  beforeEach(() => {
+    resetRecentDeliveries();
+  });
+
+  it("accepts a new delivery GUID", () => {
+    expect(verifyReplayAttack("abc-123")).toBe(true);
+  });
+
+  it("rejects a duplicate delivery GUID", () => {
+    verifyReplayAttack("dup-uuid");
+    expect(verifyReplayAttack("dup-uuid")).toBe(false);
+  });
+
+  it("rejects a delivery GUID seen again multiple times", () => {
+    verifyReplayAttack("dup-uuid");
+    verifyReplayAttack("dup-uuid");
+    expect(verifyReplayAttack("dup-uuid")).toBe(false);
+  });
+
+  it("accepts multiple unique delivery GUIDs", () => {
+    expect(verifyReplayAttack("uuid-1")).toBe(true);
+    expect(verifyReplayAttack("uuid-2")).toBe(true);
+    expect(verifyReplayAttack("uuid-3")).toBe(true);
+  });
+
+  it("rejects empty delivery GUID", () => {
+    expect(verifyReplayAttack("")).toBe(false);
+  });
+
+  it("rejects null delivery GUID", () => {
+    expect(verifyReplayAttack(null as unknown as string)).toBe(false);
+  });
+
+  it("rejects undefined delivery GUID", () => {
+    expect(verifyReplayAttack(undefined as unknown as string)).toBe(false);
   });
 });

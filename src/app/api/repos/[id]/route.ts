@@ -55,6 +55,7 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
       installCommand,
       testCommand,
       isPollingEnabled,
+      webhookEnabled,
     } = body;
 
     const current = await prisma.repository.findUnique({ where: { id } });
@@ -79,6 +80,7 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
     if (installCommand !== undefined) updateData.installCommand = installCommand;
     if (testCommand !== undefined) updateData.testCommand = testCommand;
     if (isPollingEnabled !== undefined) updateData.isPollingEnabled = Boolean(isPollingEnabled);
+    if (webhookEnabled !== undefined) updateData.webhookEnabled = Boolean(webhookEnabled);
 
     const modeChanged = typeof mode === "string" && mode !== current.provider;
     const urlChanged =

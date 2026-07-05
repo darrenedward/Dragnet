@@ -26,6 +26,8 @@ export interface Repository {
   patCipher?: string | null;
   deployKeyCipher?: string | null;
   localPath?: string | null;
+  webhookEnabled?: boolean;
+  lastWebhookEventAt?: string | null;
 }
 
 export interface PullRequest {

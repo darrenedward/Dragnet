@@ -34,9 +34,11 @@ model Repository {
   patCipher       String?
   patIv           String?
   patTag          String?
-  webhookSecret   String? // HMAC secret (plaintext — needed to verify inbound webhooks)
-  webhookId       String?
-  lastFetchAt     DateTime?
+  webhookSecret       String?   // HMAC secret (plaintext — needed to verify inbound webhooks)
+  webhookId           String?
+  webhookEnabled      Boolean   @default(false)
+  lastWebhookEventAt  DateTime?
+  lastFetchAt         DateTime?
   localPath       String? // server-managed clone directory
 
   baseBranch         String

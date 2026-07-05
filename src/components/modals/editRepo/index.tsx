@@ -23,6 +23,8 @@ interface Props {
   setNewDeployKey: (v: string) => void;
   newPat: string;
   setNewPat: (v: string) => void;
+  webhookEnabled: boolean;
+  onWebhookEnabledChange: (v: boolean) => void;
 }
 
 export default function EditRepoModal(props: Props) {
@@ -30,6 +32,7 @@ export default function EditRepoModal(props: Props) {
     repo,
     onClose, onSubmit, errorFeedback,
     newRepoMode, setNewRepoMode,
+    webhookEnabled, onWebhookEnabledChange,
     ...rest
   } = props;
 
@@ -107,6 +110,9 @@ export default function EditRepoModal(props: Props) {
               {...rest}
               newRepoMode={newRepoMode === "local" ? "ssh" : newRepoMode}
               setNewRepoMode={(v) => setNewRepoMode(v)}
+              webhookEnabled={webhookEnabled}
+              onWebhookEnabledChange={onWebhookEnabledChange}
+              lastWebhookEventAt={repo.lastWebhookEventAt ?? null}
             />
           )}
 

@@ -418,6 +418,8 @@ export default function App() {
             setNewDeployKey={ed.setEditDeployKey}
             newPat={ed.editPat}
             setNewPat={ed.setEditPat}
+            webhookEnabled={ed.editWebhookEnabled}
+            onWebhookEnabledChange={ed.setEditWebhookEnabled}
           />
         )}
       </AnimatePresence>
