@@ -12,6 +12,11 @@ afterAll(() => {
   rmSync(tmpDir, { recursive: true, force: true });
 });
 
+function setMasterKeyEnv(hexKey: string): void {
+  (globalThis as any).__dragnetCryptoKey = undefined;
+  process.env.DRAGNET_MASTER_KEY = Buffer.from(hexKey, "hex").toString("base64");
+}
+
 async function getGenerateMod() {
   return import("../src/tools/generateMasterKey");
 }
@@ -50,8 +55,7 @@ describe("generateMasterKey", () => {
 describe("rotateMasterKey", () => {
   it("decrypts and re-encrypts secrets through the full round-trip", async () => {
     const mod = await getRotateMod();
-    (globalThis as any).__dragnetCryptoKey = undefined;
-    process.env.DRAGNET_MASTER_KEY = Buffer.from(oldKeyHex, "hex").toString("base64");
+    setMasterKeyEnv(oldKeyHex);
     const cryptoMod = await import("../src/lib/crypto");
     const { cipher, iv, tag } = cryptoMod.encryptSecret("supersecret-deploy-key");
 
@@ -68,8 +72,7 @@ describe("rotateMasterKey", () => {
     expect(reEncrypted[0].iv).toBeTruthy();
     expect(reEncrypted[0].tag).toBeTruthy();
 
-    (globalThis as any).__dragnetCryptoKey = undefined;
-    process.env.DRAGNET_MASTER_KEY = Buffer.from(newKeyHex, "hex").toString("base64");
+    setMasterKeyEnv(newKeyHex);
     const decryptMod = await import("../src/lib/crypto");
     const decrypted = decryptMod.decryptSecret(
       reEncrypted[0].cipher!,

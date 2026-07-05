@@ -33,23 +33,25 @@ The script is idempotent — running it again is safe.
 ### 3. Initialize the master key
 
 ```bash
-sudo -u dragnet node /opt/dragnet/src/tools/generateMasterKey.ts
+sudo -u dragnet npx tsx /opt/dragnet/src/tools/generateMasterKey.ts
 ```
 
 This writes a 32-byte hex key to `/var/lib/dragnet/master.key` with mode 400, owner `dragnet:dragnet`.
 
+> **Important:** Always prefix with `sudo -u dragnet` so the key file is owned by dragnet:dragnet. Running as root produces a root-owned key that the dragnet user cannot read.
+
 ### 4. Configure environment
 
-Create `/etc/dragnet.env`:
+The systemd unit sources no env file — hardcoded env vars are set directly in `dragnet.service`. For secrets, create `/etc/dragnet.env`:
 
 ```env
 DATABASE_URL=postgresql://user:password@host:5432/dragnet
-NODE_ENV=production
-DRAGNET_MASTER_KEY_FILE=/var/lib/dragnet/master.key
 DRAGNET_API_KEY=your-generated-api-key
 ```
 
 Set permissions: `chmod 600 /etc/dragnet.env && chown dragnet:dragnet /etc/dragnet.env`.
+
+Add an `EnvironmentFile=/etc/dragnet.env` line to `dragnet.service` under the `[Service]` section to load it at boot.
 
 ### 5. Start the service
 
@@ -67,7 +69,17 @@ Keys are rotated with the built-in tool:
 # The tool reads the current key from the default path, decrypts all
 # encrypted secrets, generates a new key, re-encrypts, and does an
 # atomic swap of the key file.
-sudo -u dragnet node /opt/dragnet/src/tools/rotateMasterKey.ts
+sudo -u dragnet npx tsx /opt/dragnet/src/tools/rotateMasterKey.ts
+```
+
+> **Note:** The rotate tool currently handles in-memory re-encryption. Integration with the database (querying encrypted columns, writing back new cipher/iv/tag tuples) is planned — for now, run `npm run lint` and verify tests pass before/after rotation.
+
+## Container Escape Mitigation
+
+The systemd unit is hardened (`NoNewPrivileges=yes`, `ProtectSystem=strict`, `ProtectHome=yes`, `CapabilityBoundingSet=` empty) so any container escape from a workload lands as the `dragnet` user — not root. Combined with `RestrictNamespaces=yes` and `PrivateDevices=yes`, kernel-level breakout primitives are blocked. Verify with:
+
+```bash
+systemd-analyze verify /etc/systemd/system/dragnet.service
 ```
 
 ## Podman Rootless Setup (Optional)

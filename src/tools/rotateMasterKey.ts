@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync } from "fs";
 import { dirname } from "path";
 import { randomBytes } from "crypto";
+import { generateMasterKey } from "./generateMasterKey";
 
 export interface EncryptedSecret {
   id: string;
@@ -75,8 +76,4 @@ export function atomicWriteKeyFile(key: string, filePath: string): void {
 
 export function readKeyFile(filePath: string): string {
   return readFileSync(filePath, "utf-8").trim();
-}
-
-export function generateNewKey(): string {
-  return randomBytes(32).toString("hex");
 }

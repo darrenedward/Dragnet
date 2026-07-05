@@ -8,6 +8,7 @@ Wants=network-online.target
 Type=exec
 User=dragnet
 Group=dragnet
+WorkingDirectory=/opt/dragnet
 
 # Hardening
 NoNewPrivileges=yes
@@ -34,10 +35,10 @@ StateDirectory=dragnet
 RuntimeDirectory=dragnet
 StateDirectoryMode=0750
 RuntimeDirectoryMode=0750
-ReadWritePaths=/var/lib/dragnet /run/dragnet
+ReadWritePaths=/var/lib/dragnet /run/dragnet /opt/dragnet/.dragnet
 
-# Executable
-ExecStart=/usr/local/bin/dragnet-server
+# Executable (Next.js production server)
+ExecStart=/usr/bin/node /opt/dragnet/node_modules/.bin/next start -p 3300
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=5
@@ -45,7 +46,8 @@ TimeoutStopSec=30
 
 # Environment
 Environment=NODE_ENV=production
-Environment=DRAGNET_MASTER_KEY_FILE=/var/lib/dragnet/master.key
+Environment=PORT=3300
+EnvironmentFile=-/etc/dragnet.env
 
 [Install]
 WantedBy=multi-user.target
