@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { verifyGithubSignature, findRepoByCloneUrl, gitFetch, scanRepoPrs } from "../../../../lib/webhook";
 import { enqueue } from "@/src/services/remoteFetchWorker";
 import { checkDelivery } from "../../../../lib/webhookReplay";
+import { runPrScan } from "../../../../../reviewService";
 
 export async function POST(request: Request) {
   const event = request.headers.get("x-github-event");
@@ -51,24 +52,38 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Duplicate delivery GUID — replay rejected" }, { status: 429 });
   }
 
+  const triggerAfkScans = (prIds: string[]) => {
+    for (const prId of prIds) {
+      runPrScan(prId).catch((err) =>
+        console.error(`[webhook] AFK scan failed for ${prId}:`, err),
+      );
+    }
+  };
+
   if (event === "pull_request" && payload.action) {
+    const prIds: string[] = [];
     if (matched.localPath) {
       gitFetch(matched.localPath);
-      await scanRepoPrs(matched.id, matched.localPath);
+      const ids = await scanRepoPrs(matched.id, matched.localPath);
+      prIds.push(...ids);
     } else {
       enqueue(matched.id).catch((err) => console.error(`[webhook] enqueue failed for ${matched.id}:`, err));
     }
-    return NextResponse.json({ ok: true, repo: matched.id, pr: payload.pull_request?.number });
+    triggerAfkScans(prIds);
+    return NextResponse.json({ ok: true, repo: matched.id, pr: payload.pull_request?.number, afkScans: prIds.length });
   }
 
   if (event === "push") {
+    const prIds: string[] = [];
     if (matched.localPath) {
       gitFetch(matched.localPath);
-      await scanRepoPrs(matched.id, matched.localPath);
+      const ids = await scanRepoPrs(matched.id, matched.localPath);
+      prIds.push(...ids);
     } else {
       enqueue(matched.id).catch((err) => console.error(`[webhook] enqueue failed for ${matched.id}:`, err));
     }
-    return NextResponse.json({ ok: true, repo: matched.id });
+    triggerAfkScans(prIds);
+    return NextResponse.json({ ok: true, repo: matched.id, afkScans: prIds.length });
   }
 
   return NextResponse.json({ ok: true, ignored: true, event });
