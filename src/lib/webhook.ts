@@ -16,6 +16,16 @@ setInterval(() => {
  * Track a delivery GUID for replay attack prevention. Returns true if the
  * GUID has not been seen within the replay window, false if it's a replay.
  * Periodically prunes entries older than 5 minutes.
+ *
+ * Trade-off: the GUID cache is in-memory only. A server restart within the
+ * 5-minute window resets the cache, so a replayed delivery GUID from before
+ * the restart would be accepted once. This is acceptable for v1 because:
+ *   - The webhook handler is idempotent (upserts PRs, tolerates re-scans).
+ *   - GitHub rotates delivery GUIDs per attempt; a real attacker would need
+ *     to capture a delivery before the server went down and replay it after
+ *     restart — a narrow window requiring both network access and crash timing.
+ *   - For production hardening, swap this Map for a Redis-backed or DB-backed
+ *     nonce store with TTL.
  */
 export function verifyReplayAttack(deliveryGuid: string): boolean {
   if (!deliveryGuid) return false;
