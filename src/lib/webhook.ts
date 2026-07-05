@@ -100,10 +100,10 @@ export function gitFetch(repoPath: string): boolean {
   }
 }
 
-export async function scanRepoPrs(repoId: string, repoPath: string) {
+export async function scanRepoPrs(repoId: string, repoPath: string, branchName?: string) {
   try {
     const { getRealLocalPrs } = await import("./getRealLocalPrs");
-    await getRealLocalPrs(repoPath, repoId);
+    await getRealLocalPrs(repoPath, repoId, branchName ? [branchName] : undefined);
   } catch (err) {
     console.error(`PR scan failed for ${repoId}:`, err);
   }

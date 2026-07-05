@@ -74,9 +74,11 @@ export async function POST(request: Request) {
   }
 
   if (event === "push") {
+    const ref = payload.ref || "";
+    const branchName = ref.replace(/^refs\/heads\//, "");
     if (matched.localPath) {
       gitFetch(matched.localPath);
-      await scanRepoPrs(matched.id, matched.localPath);
+      await scanRepoPrs(matched.id, matched.localPath, branchName || undefined);
     } else {
       enqueue(matched.id).catch((err) => console.error(`[webhook] enqueue failed for ${matched.id}:`, err));
     }
@@ -84,7 +86,7 @@ export async function POST(request: Request) {
       where: { id: matched.id },
       data: { lastWebhookEventAt: new Date() },
     }).catch((err) => console.error("[webhook] failed to update lastWebhookEventAt:", err));
-    return NextResponse.json({ ok: true, repo: matched.id });
+    return NextResponse.json({ ok: true, repo: matched.id, branch: branchName || undefined });
   }
 
   return NextResponse.json({ ok: true, ignored: true, event });

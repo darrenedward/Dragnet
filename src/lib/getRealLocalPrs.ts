@@ -78,7 +78,7 @@ interface RepoFile {
  * Branches that produce zero file changes against base (already merged
  * or rebased) are skipped — they aren't real pending PRs.
  */
-export async function getRealLocalPrs(repoPath: string, repoId: string) {
+export async function getRealLocalPrs(repoPath: string, repoId: string, branchFilter?: string[]) {
   console.log(`[scan] getRealLocalPrs: scanning repoPath=${repoPath} repoId=${repoId}`);
   try {
     const resolvedPath = path.isAbsolute(repoPath) ? repoPath : path.resolve(/* turbopackIgnore: true */ process.cwd(), repoPath);
@@ -100,9 +100,11 @@ export async function getRealLocalPrs(repoPath: string, repoId: string) {
     const allBranches = await listBranches(resolvedPath);
 
     // Filter to branches matching the pattern, excluding the base branch.
+    // If branchFilter is provided, only scan branches in that list (used by
+    // push webhook to scope the scan to the pushed branch).
     const pattern = repo.branchPattern || "*";
     const matchingBranches = allBranches.filter(
-      (b) => b.name !== baseBranch && branchMatches(pattern, b.name),
+      (b) => b.name !== baseBranch && branchMatches(pattern, b.name) && (!branchFilter || branchFilter.includes(b.name)),
     );
     const liveBranchNames = new Set(matchingBranches.map((b) => b.name));
 
