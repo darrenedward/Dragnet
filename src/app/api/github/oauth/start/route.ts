@@ -27,7 +27,7 @@ export async function GET(req: Request) {
   const params = new URLSearchParams({
     client_id: clientId,
     redirect_uri: `${process.env.APP_URL || "http://localhost:3300"}/api/github/oauth/callback`,
-    scope: "pull_requests:read,metadata,administration:write",
+    scope: "repo,read:org,admin:repo_hooks",
     state: csrf,
   });
 

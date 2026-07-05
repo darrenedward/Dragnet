@@ -5,6 +5,7 @@ import { Activity, BarChart3, CheckCircle2, Folder, GitBranch, Github, Loader2, 
 import type { LlmPresetsState, PullRequest, Repository } from "../lib/types";
 import { getStatusBadgeStyle } from "../lib/types";
 import PrSizeProfileChip from "./PrSizeProfileChip";
+import { fetchJson } from "../lib/http";
 
 interface Props {
   isSidebarOpen: boolean;
@@ -385,7 +386,7 @@ function GithubConnectionPane() {
 
   const fetchConnection = async () => {
     try {
-      const res = await fetch("/api/github/connection");
+      const res = await fetchJson("/api/github/connection");
       if (res.ok) {
         const data = await res.json();
         setConnection(data);
@@ -422,7 +423,7 @@ function GithubConnectionPane() {
   const handleDisconnect = async () => {
     if (!window.confirm("Disconnect GitHub? This will remove the OAuth connection.")) return;
     try {
-      const res = await fetch("/api/github/oauth/disconnect", { method: "POST" });
+      const res = await fetchJson("/api/github/oauth/disconnect", { method: "POST" });
       if (res.ok) {
         setConnection({ connected: false });
       }
