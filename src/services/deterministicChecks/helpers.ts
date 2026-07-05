@@ -6,7 +6,7 @@ import type { DeterministicFinding } from "./types";
  * in the scanned code, just a configuration gap.
  */
 export function skippedFinding(
-  source: "tsc" | "eslint",
+  source: "tsc" | "eslint" | "runner",
   message: string,
 ): DeterministicFinding {
   return {
