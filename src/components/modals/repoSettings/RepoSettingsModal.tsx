@@ -8,9 +8,11 @@ import {
   BarChart3,
   Database,
   FileCode2,
+  Globe,
   Hash,
   Layers,
   RefreshCw,
+  Trash2,
   X,
 } from "lucide-react";
 import type { Repository } from "../../../lib/types";
@@ -39,6 +41,9 @@ export default function RepoSettingsModal({ repo, onClose, onResetIndex, onRefre
   const [statsError, setStatsError] = useState<string | null>(null);
   const [showConfirm, setShowConfirm] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
+  const [deletingWebhook, setDeletingWebhook] = useState(false);
+  const [deletedWebhook, setDeletedWebhook] = useState(false);
+  const [webhookError, setWebhookError] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchStats = async () => {
@@ -55,6 +60,23 @@ export default function RepoSettingsModal({ repo, onClose, onResetIndex, onRefre
     };
     fetchStats();
   }, [repo.id]);
+
+  const handleDeleteWebhook = async () => {
+    setDeletingWebhook(true);
+    setWebhookError(null);
+    try {
+      const res = await fetch(`/api/repos/${repo.id}/webhook`, { method: "DELETE" });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.error || `Failed to delete webhook (${res.status})`);
+      }
+      setDeletedWebhook(true);
+    } catch (err: any) {
+      setWebhookError(err.message);
+    } finally {
+      setDeletingWebhook(false);
+    }
+  };
 
   const handleResetIndex = async () => {
     setIsResetting(true);
@@ -159,6 +181,46 @@ export default function RepoSettingsModal({ repo, onClose, onResetIndex, onRefre
           {!stats && !statsError && (
             <div className="text-slate-500 text-center py-6 animate-pulse">Loading stats…</div>
           )}
+
+          <div className="border-t border-white/10 pt-4 mt-2 space-y-3">
+            <div className="flex items-center justify-between bg-slate-900/40 border border-white/10 rounded-lg p-3">
+              <div className="flex items-center gap-2">
+                <Globe size={14} className={repo.webhookId && !deletedWebhook ? "text-emerald-400" : "text-slate-500"} />
+                <span className="text-xs text-slate-300">
+                  {repo.webhookId && !deletedWebhook ? "Webhook active" : "Webhook not configured"}
+                </span>
+                {repo.webhookId && !deletedWebhook && (
+                  <code className="text-[10px] text-slate-500 bg-slate-950 px-1.5 py-0.5 rounded">
+                    {repo.webhookId}
+                  </code>
+                )}
+              </div>
+              {repo.webhookId && !deletedWebhook && (
+                <button
+                  onClick={handleDeleteWebhook}
+                  disabled={deletingWebhook}
+                  className="flex items-center gap-1 px-2 py-1 bg-rose-600/20 border border-rose-500/30 text-rose-300 hover:bg-rose-600/30 text-[10px] font-bold rounded transition-all cursor-pointer disabled:opacity-50"
+                >
+                  {deletingWebhook ? (
+                    <RefreshCw size={11} className="animate-spin" />
+                  ) : (
+                    <Trash2 size={11} />
+                  )}
+                  <span>{deletingWebhook ? "Deleting…" : "Delete"}</span>
+                </button>
+              )}
+            </div>
+            {webhookError && (
+              <div className="p-2 bg-rose-950/30 border border-rose-800/20 text-rose-400 rounded text-xs">
+                {webhookError}
+              </div>
+            )}
+            {deletedWebhook && (
+              <div className="p-2 bg-emerald-950/30 border border-emerald-800/20 text-emerald-400 rounded text-xs">
+                Webhook deleted. It will no longer receive events.
+              </div>
+            )}
+          </div>
 
           <div className="border-t border-white/10 pt-4 mt-2">
             {!showConfirm ? (

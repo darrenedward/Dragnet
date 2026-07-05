@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { verifyGitlabToken, findRepoByCloneUrl, gitFetch, scanRepoPrs } from "../../../../lib/webhook";
 import { enqueue } from "@/src/services/remoteFetchWorker";
+import { checkDelivery } from "../../../../lib/webhookReplay";
 
 export async function POST(request: Request) {
   const event = request.headers.get("x-gitlab-event");
@@ -8,6 +9,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Missing x-gitlab-event header" }, { status: 400 });
   }
 
+  const deliveryGuid = request.headers.get("x-gitlab-event-uuid") || "";
   const token = request.headers.get("x-gitlab-token") || "";
   const rawBody = await request.text();
 
@@ -38,6 +40,10 @@ export async function POST(request: Request) {
   }
   if (!verifyGitlabToken(token, matched.webhookSecret)) {
     return NextResponse.json({ error: "Invalid token" }, { status: 401 });
+  }
+
+  if (deliveryGuid && checkDelivery(deliveryGuid)) {
+    return NextResponse.json({ error: "Duplicate delivery UUID — replay rejected" }, { status: 429 });
   }
 
   if (event === "Merge Request Hook") {

@@ -31,6 +31,7 @@ export interface Repository {
   testCommand?: string | null;
   isPollingEnabled?: boolean | null;
   skipTier2?: boolean | null;
+  webhookId?: string | null;
 }
 
 export interface PullRequest {

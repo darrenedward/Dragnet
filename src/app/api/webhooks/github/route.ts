@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { verifyGithubSignature, findRepoByCloneUrl, gitFetch, scanRepoPrs } from "../../../../lib/webhook";
 import { enqueue } from "@/src/services/remoteFetchWorker";
+import { checkDelivery } from "../../../../lib/webhookReplay";
 
 export async function POST(request: Request) {
   const event = request.headers.get("x-github-event");
@@ -8,6 +9,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Missing x-github-event header" }, { status: 400 });
   }
 
+  const deliveryGuid = request.headers.get("x-github-delivery") || "";
   const signature = request.headers.get("x-hub-signature-256") || "";
   const rawBody = await request.text();
 
@@ -43,6 +45,10 @@ export async function POST(request: Request) {
   }
   if (!verifyGithubSignature(rawBody, signature, matched.webhookSecret)) {
     return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
+  }
+
+  if (deliveryGuid && checkDelivery(deliveryGuid)) {
+    return NextResponse.json({ error: "Duplicate delivery GUID — replay rejected" }, { status: 429 });
   }
 
   if (event === "pull_request" && payload.action) {
