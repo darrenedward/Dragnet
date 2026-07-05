@@ -153,6 +153,16 @@ describe("runContainerizedChecks", () => {
     expect(mockRunRunner).not.toHaveBeenCalledTimes(2);
   });
 
+  it("skips test execution when install times out", async () => {
+    mockRunRunner.mockResolvedValueOnce({
+      exitCode: -1, stdout: "", stderr: "", timedOut: true,
+    });
+
+    const findings = await runContainerizedChecks(baseOpts);
+    expect(mockRunRunner).toHaveBeenCalledTimes(1);
+    expect(findings).toHaveLength(0);
+  });
+
   it("parses tsc diagnostics from test stdout", async () => {
     mockRunRunner
       .mockResolvedValueOnce({ exitCode: 0, stdout: "", stderr: "", timedOut: false })

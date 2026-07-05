@@ -93,7 +93,7 @@ export async function runContainerizedChecks(
         opts.reviewChunkId,
       );
     }
-    return result.exitCode === 0 || result.timedOut;
+    return result.exitCode === 0;
   };
 
   const runTest = async (): Promise<DeterministicFinding[]> => {
