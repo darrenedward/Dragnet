@@ -58,6 +58,7 @@ model Repository {
   installCommand         String          @default("npm install")
   testCommand            String          @default("npm test && npm run lint")
   isPollingEnabled       Boolean         @default(false)
+  skipTier2              Boolean         @default(false)
   reviewHistory          ReviewHistory[]
   pullRequests           PullRequest[]
   symbols                Symbol[]

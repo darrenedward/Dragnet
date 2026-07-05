@@ -8,6 +8,8 @@ import { verifyFindings, isDocumentationFile, type CandidateFinding } from "./sr
 import { completeReviewRun, setReviewRunTokens, setReviewRunLastCheckpointAt, setReviewChunkLastCheckpointAt } from "./src/lib/reviewFreshness";
 import { safeReadFileSync, resolveSafePath } from "./src/lib/pathSafety";
 import { runDeterministicChecks, runContainerizedChecks, logReview, type DeterministicFinding } from "./src/services/deterministicChecks";
+import { detectBuildSystem } from "./src/lib/buildsystemDetect";
+import { classifyDiff } from "./src/lib/diffClassifier";
 import { buildFindingFingerprint, resolveSymbolsBatch } from "./src/services/largePrReview/fingerprint";
 import { reconcileFindingsAcrossRuns } from "./src/services/largePrReview/reconcile";
 import { classifyProviderOutcome, type OutcomeClass } from "./src/lib/failureClassifier";
@@ -1130,56 +1132,131 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
   const diffPayload = codePayload +
     (contextPayload ? `\n\n=== CONTEXT FILES (NOT REVIEWABLE — DO NOT CITE IN FINDINGS) ===\n${contextPayload}\n` : "");
 
-  // 5a. Run deterministic checks (tsc/eslint) BEFORE the LLM loop.
+  // 5a. Build system detection — scan the repo for config files and
+  //     select the appropriate container image. Falls back to node:20-alpine
+  //     with a logged warning when nothing is recognized.
+  let runnerImage = repo.runnerImage ?? "node:20-alpine";
+  let buildSystemWarn: string | null = null;
+  let tier2Supported = true;
+  if (repo?.path) {
+    try {
+      const detected = await detectBuildSystem(repo.path);
+      runnerImage = detected.image;
+      buildSystemWarn = detected.warn;
+      if (detected.buildSystem === "rust" || detected.buildSystem === "python") {
+        tier2Supported = false;
+      }
+      void logReview(
+        prId, `Build system: ${detected.buildSystem} → ${detected.image}${detected.warn ? ` (${detected.warn})` : ""}`,
+        "info", reviewRunId, reviewChunkId,
+      );
+    } catch (err: any) {
+      console.warn(`[scan] runPrScan: build system detection crashed:`, err);
+    }
+  }
+
+  // 5b. Tier 1: Run deterministic checks (tsc/eslint) BEFORE the LLM loop.
   //     Findings persist with source="tsc"/"eslint" so the UI distinguishes
   //     them from LLM findings, AND feed the LLM context so it doesn't
   //     waste iterations re-reporting type errors it can see are already
   //     flagged. Never throws — failures become severity:info findings.
+  //     Only runs when the repo has a local path (remote repos go straight to Tier 2).
   let deterministicFindings: DeterministicFinding[] = [];
+  let tier1HadErrors = false;
   if (repo?.path) {
     try {
       deterministicFindings = await runDeterministicChecks(repo.path);
+      tier1HadErrors = deterministicFindings.some((f) => f.severity === "error");
       const counts = deterministicFindings.reduce((acc, f) => {
         acc[f.source] = (acc[f.source] ?? 0) + 1; return acc;
       }, {} as Record<string, number>);
       const summary = Object.keys(counts).length === 0
         ? "clean (no tsc/eslint findings)"
         : Object.entries(counts).map(([k, v]) => `${v} ${k}`).join(", ");
-      void logReview(prId, `Deterministic checks: ${summary}`, "info", reviewRunId, reviewChunkId);
-      console.log(`[scan] runPrScan: deterministic checks → ${deterministicFindings.length} finding(s)`);
+      void logReview(prId, `Tier 1 deterministic checks: ${summary}`, "info", reviewRunId, reviewChunkId);
+      console.log(`[scan] runPrScan: Tier 1 deterministic checks → ${deterministicFindings.length} finding(s)`);
     } catch (err: any) {
-      console.warn(`[scan] runPrScan: deterministic checks crashed:`, err);
-      void logReview(prId, `Deterministic checks crashed: ${err.message}`, "warn", reviewRunId, reviewChunkId);
+      console.warn(`[scan] runPrScan: Tier 1 deterministic checks crashed:`, err);
+      void logReview(prId, `Tier 1 deterministic checks crashed: ${err.message}`, "warn", reviewRunId, reviewChunkId);
     }
-  } else if (repo?.cloneUrl) {
+  }
+
+  // 5c. Tier 2: Containerized checks (install + test/lint in ephemeral container).
+  //     Gated: skipped when Tier 1 found errors (uncompilable code), when the
+  //     per-repo "Skip Tier 2" toggle is enabled, or when the build system is
+  //     not yet supported by the container runner (rust/python).
+  const skipTier2 = repo?.skipTier2 ?? false;
+  const tier2ShouldRun =
+    (Boolean(repo?.path) || Boolean(repo?.cloneUrl)) &&
+    !skipTier2 && !tier1HadErrors && tier2Supported;
+
+  if (tier2ShouldRun) {
     try {
       const { decryptSecret, hasMasterKey } = await import("./src/lib/crypto");
       let deployKey: string | undefined;
       let pat: string | undefined;
-      if (repo.deployKeyCipher && repo.deployKeyIv && repo.deployKeyTag && hasMasterKey()) {
+      if (repo?.deployKeyCipher && repo?.deployKeyIv && repo?.deployKeyTag && hasMasterKey()) {
         deployKey = decryptSecret(repo.deployKeyCipher, repo.deployKeyIv, repo.deployKeyTag);
       }
-      if (repo.patCipher && repo.patIv && repo.patTag && hasMasterKey()) {
+      if (repo?.patCipher && repo?.patIv && repo?.patTag && hasMasterKey()) {
         pat = decryptSecret(repo.patCipher, repo.patIv, repo.patTag);
       }
-      deterministicFindings = await runContainerizedChecks({
+
+      const tier2Image = repo.path ? runnerImage : (repo.runnerImage ?? "node:20-alpine");
+      const tier2Findings = await runContainerizedChecks({
         repoId: repo.id,
-        cloneUrl: repo.cloneUrl,
+        cloneUrl: repo.cloneUrl ?? "",
         commitHash: pr.commitHash,
         deployKey,
         pat,
-        runnerImage: repo.runnerImage ?? "node:20-alpine",
+        runnerImage: tier2Image,
         installCommand: repo.installCommand ?? "npm install",
         testCommand: repo.testCommand ?? "npm test && npm run lint",
         prId,
         reviewRunId,
         reviewChunkId,
       });
-      console.log(`[scan] runPrScan: containerized checks → ${deterministicFindings.length} finding(s)`);
+      deterministicFindings = [...deterministicFindings, ...tier2Findings];
+      console.log(`[scan] runPrScan: Tier 2 containerized checks → ${tier2Findings.length} finding(s)`);
     } catch (err: any) {
-      console.warn(`[scan] runPrScan: containerized checks crashed:`, err);
-      void logReview(prId, `Containerized checks crashed: ${err.message}`, "warn", reviewRunId, reviewChunkId);
+      console.warn(`[scan] runPrScan: Tier 2 containerized checks crashed:`, err);
+      void logReview(prId, `Tier 2 containerized checks crashed: ${err.message}`, "warn", reviewRunId, reviewChunkId);
     }
+  } else {
+    const reason = skipTier2
+      ? "per-repo toggle"
+      : tier1HadErrors
+        ? "Tier 1 found errors"
+        : !tier2Supported
+          ? "unsupported build system (rust/python)"
+          : "no repo path or clone URL";
+    void logReview(prId, `Tier 2 skipped: ${reason}`, "info", reviewRunId, reviewChunkId);
+    console.log(`[scan] runPrScan: Tier 2 skipped — ${reason}`);
+  }
+
+  // 5d. Tier 3 gate: skip LLM review when Tier 1+2 findings are empty AND
+  //     the diff only touches trivial files (config, docs, generated).
+  const findingsEmpty = deterministicFindings.length === 0;
+  const diffClass = classifyDiff(files);
+  const skipTier3 = findingsEmpty && diffClass.isTrivial;
+  if (skipTier3) {
+    void logReview(
+      prId,
+      `Tier 3 (LLM review) skipped: Tier 1+2 clean and diff is trivial (${diffClass.trivialFiles}/${diffClass.totalFiles} files are config/docs/generated)`,
+      "info", reviewRunId, reviewChunkId,
+    );
+    console.log(`[scan] runPrScan: Tier 3 skipped — clean + trivial diff (${diffClass.trivialFiles}/${diffClass.totalFiles})`);
+    // Return early: no findings, no rating, but add a note explaining why.
+    const logSummary = buildSystemWarn
+      ? `${buildSystemWarn} No code changes detected — Tier 3 LLM review skipped.`
+      : "PR contains only config, documentation, or generated file changes — Tier 3 LLM review skipped.";
+    return {
+      success: true,
+      rating: null,
+      findings: [],
+      usedModel: "none (skipped)",
+      systemWarn: logSummary,
+    };
   }
 
   const deterministicPayload = deterministicFindings.length > 0

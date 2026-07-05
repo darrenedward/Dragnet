@@ -14,11 +14,6 @@ export interface Repository {
   lastCommitMessage: string;
   reviewsCount: number;
   prCount?: number;
-  /**
-   * ISO timestamp of the last successful indexing run. Null when the repo
-   * has never been indexed — UI gates the Scan button on this and the
-   * /api/prs/[id]/scan route rejects with 409 INDEX_REQUIRED.
-   */
   indexedAt?: string | null;
   provider?: string | null;
   cloneUrl?: string | null;
@@ -26,6 +21,11 @@ export interface Repository {
   patCipher?: string | null;
   deployKeyCipher?: string | null;
   localPath?: string | null;
+  runnerImage?: string | null;
+  installCommand?: string | null;
+  testCommand?: string | null;
+  isPollingEnabled?: boolean | null;
+  skipTier2?: boolean | null;
 }
 
 export interface PullRequest {

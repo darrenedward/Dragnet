@@ -418,6 +418,8 @@ export default function App() {
             setNewDeployKey={ed.setEditDeployKey}
             newPat={ed.editPat}
             setNewPat={ed.setEditPat}
+            editSkipTier2={ed.editSkipTier2}
+            setEditSkipTier2={ed.setEditSkipTier2}
           />
         )}
       </AnimatePresence>
