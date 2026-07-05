@@ -235,6 +235,9 @@ The `<arg>` is a PR `id` (preferred) or `branch` — both accepted. Numeric ordi
   "findings": [              // pre-formatted strings, NOT objects
     "[Correctness|warning|moderate] src/proxy.ts:40 — <explanation>",
     "[Security|suggestion|difficult] src/foo.ts:123 — <explanation>"
+  ],
+  "regressions": [           // pre-formatted strings for findings that reappeared after being resolved
+    "[Correctness|error|trivial] src/auth.ts:120 — <explanation>"
   ]
 }
 ```
@@ -265,6 +268,29 @@ or
 - `readyToMerge: true` → render the stable verdict
 - `readyToMerge: false` → render the unstable verdict
 - If `ratingTrend.length < 2`, stability may indicate "not enough data" — render `○ Gathering data — only 1 scan completed`
+
+**Regression rendering:** when `regressions` has 1+ entries, render as a distinct section above the main findings with a prominent header:
+
+```
+## ⚠ Regressions (reappeared findings)
+
+The following findings were previously resolved but have reappeared in this scan:
+
+### src/auth.ts:120
+**[Correctness|error|trivial]** (confidence: 85%, impact: high)
+Missing null check on user.id before dereference. Can cause runtime crash when user object is incomplete.
+
+Suggested fix:
+```diff
+- const userId = user.id;
++ const userId = user?.id ?? throw new AuthError('Invalid user');
+```
+
+```
+
+- Render regressions **before** the main findings list to maximize visibility.
+- Use a distinct visual treatment (e.g., ⚠ icon, "Regressions" header) to distinguish from new/open findings.
+- If `regressions` is empty or missing, omit the entire section.
 
 **No completed run yet:**
 ```json
