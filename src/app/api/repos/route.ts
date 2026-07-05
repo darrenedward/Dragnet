@@ -8,6 +8,7 @@ import { encryptSecret, hasMasterKey } from "@/src/lib/crypto";
 import { enqueue } from "@/src/services/remoteFetchWorker";
 import { getProviderFromUrl } from "@/src/lib/webhookSetup";
 import { authenticateSessionOrKey } from "@/src/lib/apiAuth";
+import { computeRepoId, computeLocalRepoId, canonicalizeUrl } from "@/src/lib/repoIdentity";
 
 /**
  * Writes `.dragnet/repo-id` into the repo directory after registration so
@@ -110,12 +111,16 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: "Failed to validate git repository: " + err.message }, { status: 500 });
       }
 
+      const localRepoId = computeLocalRepoId(repoPath);
+
       try {
         await prisma.repository.create({
           data: {
             id: cleanId,
             name,
             path: repoPath,
+            repoId: localRepoId,
+            canonicalRemote: null,
             provider: "local",
             baseBranch: baseBranch || "main",
             activeBranch: activeBranch || baseBranch || "main",
@@ -191,6 +196,8 @@ export async function POST(req: Request) {
     }
 
     const cleanId = id || name.toLowerCase().replace(/[^a-z0-9]/g, "-") + "-" + Date.now();
+    const remoteRepoId = computeRepoId(cloneUrl);
+    const canonicalRemote = canonicalizeUrl(cloneUrl);
     const provider = getProviderFromUrl(cloneUrl, cloneUrlHttps);
     const webhookSecret = crypto.randomUUID();
 
@@ -210,12 +217,14 @@ export async function POST(req: Request) {
 
     try {
       await prisma.repository.create({
-        data: {
-          id: cleanId,
-          name,
-          path: null,
-          provider,
-          cloneUrl,
+          data: {
+            id: cleanId,
+            name,
+            path: null,
+            repoId: remoteRepoId,
+            canonicalRemote,
+            provider,
+            cloneUrl,
           cloneUrlHttps: cloneUrlHttps || null,
           webhookSecret,
           baseBranch: baseBranch || "main",

@@ -1,26 +1,77 @@
+import crypto from "node:crypto";
+
+function stripAuth(path: string): string {
+  return path.includes("@") ? path.slice(path.lastIndexOf("@") + 1) : path;
+}
+
+function stripPort(host: string): string {
+  return host.includes(":") ? host.slice(0, host.indexOf(":")) : host;
+}
+
+function stripTrailingGit(path: string): string {
+  return path.replace(/\.git$/, "");
+}
+
+function stripLeadingSlash(path: string): string {
+  return path.startsWith("/") ? path.slice(1) : path;
+}
+
+function stripTrailingSlash(path: string): string {
+  return path.endsWith("/") ? path.slice(0, -1) : path;
+}
+
 export function canonicalizeUrl(remoteUrl: string): string {
+  if (!remoteUrl) throw new Error(`Cannot parse git remote URL: ${remoteUrl}`);
+
   const sshMatch = remoteUrl.match(/^([a-zA-Z0-9._-]+)@([a-zA-Z0-9.-]+):(.+)$/);
   if (sshMatch) {
-    const host = sshMatch[2];
-    const path = sshMatch[3].replace(/\.git$/, "");
+    let host = sshMatch[2].toLowerCase();
+    host = stripPort(host);
+    let path = stripTrailingGit(sshMatch[3]).toLowerCase();
+    path = stripLeadingSlash(path);
+    path = stripTrailingSlash(path);
     return `https://${host}/${path}`;
   }
 
-  const httpsMatch = remoteUrl.match(/^https:\/\/([a-zA-Z0-9.-]+)\/(.+)$/);
+  const httpsMatch = remoteUrl.match(/^https:\/\/(.+)$/);
   if (httpsMatch) {
-    const host = httpsMatch[1];
-    const path = httpsMatch[2].replace(/\.git$/, "");
+    const rest = httpsMatch[1];
+    const atIdx = rest.lastIndexOf("@");
+    const afterUserinfo = atIdx >= 0 ? rest.slice(atIdx + 1) : rest;
+    const slashIdx = afterUserinfo.indexOf("/");
+    let host = slashIdx >= 0 ? afterUserinfo.slice(0, slashIdx) : afterUserinfo;
+    let path = slashIdx >= 0 ? afterUserinfo.slice(slashIdx + 1) : "";
+    host = stripPort(host).toLowerCase();
+    path = stripTrailingGit(path).toLowerCase();
+    path = stripLeadingSlash(path);
+    path = stripTrailingSlash(path);
     return `https://${host}/${path}`;
   }
 
-  const gitMatch = remoteUrl.match(/^git:\/\/([a-zA-Z0-9.-]+)\/(.+)$/);
+  const gitMatch = remoteUrl.match(/^git:\/\/(.+)$/);
   if (gitMatch) {
-    const host = gitMatch[1];
-    const path = gitMatch[2].replace(/\.git$/, "");
+    const rest = gitMatch[1];
+    const slashIdx = rest.indexOf("/");
+    let host = slashIdx >= 0 ? rest.slice(0, slashIdx) : rest;
+    let path = slashIdx >= 0 ? rest.slice(slashIdx + 1) : "";
+    host = stripPort(host).toLowerCase();
+    path = stripTrailingGit(path).toLowerCase();
+    path = stripLeadingSlash(path);
+    path = stripTrailingSlash(path);
     return `https://${host}/${path}`;
   }
 
   throw new Error(`Cannot parse git remote URL: ${remoteUrl}`);
+}
+
+export function computeRepoId(remoteUrl: string): string {
+  const canonical = canonicalizeUrl(remoteUrl);
+  return canonical.replace(/^https:\/\//, "");
+}
+
+export function computeLocalRepoId(localPath: string): string {
+  const hash = crypto.createHash("sha256").update(localPath).digest("hex");
+  return `local/${hash.slice(0, 16)}`;
 }
 
 export function parseOwnerRepoFromUrl(canonicalUrl: string): { owner: string; repo: string } {

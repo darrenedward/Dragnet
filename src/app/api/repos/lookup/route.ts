@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/src/lib/prisma";
 import { authenticateSessionOrKey, generateApiKey } from "@/src/lib/apiAuth";
-import { canonicalizeUrl } from "@/src/lib/repoIdentity";
+import { computeRepoId } from "@/src/lib/repoIdentity";
 
 export async function GET(req: Request) {
   const auth = await authenticateSessionOrKey(req);
@@ -13,27 +13,20 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "remoteUrl query parameter is required" }, { status: 400 });
   }
 
-  let canonical: string;
+  let repoId: string;
   try {
-    canonical = canonicalizeUrl(remoteUrl);
+    repoId = computeRepoId(remoteUrl);
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 400 });
   }
 
   const repo = await prisma.repository.findFirst({
-    where: {
-      OR: [
-        { cloneUrl: { startsWith: canonical } },
-        { cloneUrlHttps: { startsWith: canonical } },
-        { cloneUrl: { endsWith: canonical } },
-        { cloneUrlHttps: { endsWith: canonical } },
-      ],
-    },
+    where: { repoId },
     select: { id: true, name: true },
   });
 
   if (!repo) {
-    return NextResponse.json({ exists: false });
+    return NextResponse.json({ exists: false, repoId });
   }
 
   const key = generateApiKey();
@@ -51,6 +44,7 @@ export async function GET(req: Request) {
   return NextResponse.json({
     exists: true,
     repoId: repo.id,
+    repoIdNormalized: repoId,
     apiKey: key.raw,
     apiBase,
   });

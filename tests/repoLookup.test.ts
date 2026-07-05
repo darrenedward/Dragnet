@@ -69,10 +69,10 @@ describe("GET /api/repos/lookup", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.exists).toBe(false);
-    expect(body.repoId).toBeUndefined();
+    expect(body.repoId).toBe("github.com/unknown/project");
   });
 
-  it("returns repoId and scoped API key when repo found by cloneUrl", async () => {
+  it("returns repoId and scoped API key when repo found by repoId", async () => {
     mockFindFirst.mockResolvedValue({ id: "repo-1", name: "test-repo" });
     mockCreateKey.mockResolvedValue({ id: "key-1" });
 
@@ -81,11 +81,12 @@ describe("GET /api/repos/lookup", () => {
     const body = await res.json();
     expect(body.exists).toBe(true);
     expect(body.repoId).toBe("repo-1");
+    expect(body.repoIdNormalized).toBe("github.com/owner/existing-repo");
     expect(body.apiKey).toBe("dr_test_raw_key_123");
     expect(body.apiBase).toBe("http://localhost");
   });
 
-  it("searches by canonicalized URL in cloneUrl and cloneUrlHttps", async () => {
+  it("searches by repoId column", async () => {
     mockFindFirst.mockResolvedValue({ id: "repo-2", name: "another-repo" });
     mockCreateKey.mockResolvedValue({ id: "key-2" });
 
@@ -94,19 +95,21 @@ describe("GET /api/repos/lookup", () => {
     const body = await res.json();
     expect(body.exists).toBe(true);
     expect(body.repoId).toBe("repo-2");
+    expect(body.repoIdNormalized).toBe("github.com/owner/another-repo");
     expect(body.apiKey).toBe("dr_test_raw_key_123");
 
     expect(mockFindFirst).toHaveBeenCalledWith({
-      where: {
-        OR: [
-          { cloneUrl: { startsWith: "https://github.com/owner/another-repo" } },
-          { cloneUrlHttps: { startsWith: "https://github.com/owner/another-repo" } },
-          { cloneUrl: { endsWith: "https://github.com/owner/another-repo" } },
-          { cloneUrlHttps: { endsWith: "https://github.com/owner/another-repo" } },
-        ],
-      },
+      where: { repoId: "github.com/owner/another-repo" },
       select: { id: true, name: true },
     });
+  });
+
+  it("returns normalized repoId even when repo not found", async () => {
+    const res = await lookup("https://gitlab.com/team/new-project.git");
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.exists).toBe(false);
+    expect(body.repoId).toBe("gitlab.com/team/new-project");
   });
 
   it("creates an ApiKey record scoped to the repo", async () => {

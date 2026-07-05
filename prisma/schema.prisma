@@ -59,6 +59,8 @@ model Repository {
   testCommand            String          @default("npm test && npm run lint")
   isPollingEnabled       Boolean         @default(false)
   skipTier2              Boolean         @default(false)
+  repoId                 String?         @unique
+  canonicalRemote        String?
   reviewHistory          ReviewHistory[]
   pullRequests           PullRequest[]
   symbols                Symbol[]
