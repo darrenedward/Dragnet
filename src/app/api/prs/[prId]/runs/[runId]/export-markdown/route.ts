@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { mkdir, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
+import { getScanStatePath } from "@/src/lib/scanStatePath";
 import { prisma } from "@/src/lib/prisma";
 import { authenticateSessionOrKey } from "@/src/lib/apiAuth";
 import {
@@ -68,7 +69,7 @@ export async function POST(
     }
     const repo = await prisma.repository.findUnique({
       where: { id: run.repoId },
-      select: { name: true, path: true },
+      select: { id: true, name: true, path: true },
     });
     if (!repo) {
       return NextResponse.json({ error: "Repository not found." }, { status: 404 });
@@ -124,12 +125,11 @@ export async function POST(
       });
     }
 
-    // Write into the SCANNED repo's .dragnet/, not the Dragnet install's.
-    // process.cwd() here is the Dragnet server's working directory; using it
-    // would land DevWorld reviews under /home/curryman/Websites/Dragnet/.dragnet/
-    // instead of /home/curryman/Websites/DevWorld/.dragnet/. repo.path is the
-    // absolute path of the project being scanned.
-    const reviewsDir = join(repo.path, ".dragnet", "reviews", slug);
+    // Write into the central scan-state path, not the Dragnet install's.
+    // Slice 2: uses repo.id so artifacts land in the centralised scan state
+    // directory (/var/lib/dragnet/scans/<repoId>/reviews/<slug>/<runId>.md)
+    // instead of per-repo .dragnet/ dirs.
+    const reviewsDir = join(getScanStatePath(repo.id ?? ""), "reviews", slug);
     const finalPath = join(reviewsDir, filename);
     const tmpPath = `${finalPath}.tmp`;
     await mkdir(reviewsDir, { recursive: true });
@@ -142,7 +142,7 @@ export async function POST(
       path: finalPath,
       slug,
       filename,
-      relPath: `.dragnet/reviews/${slug}/${filename}`,
+      relPath: `reviews/${slug}/${filename}`,
     });
   } catch (err: any) {
     return NextResponse.json(

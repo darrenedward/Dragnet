@@ -5,7 +5,13 @@
  *
  * Phase 5 of the provider-resilience umbrella spec.
  *
- * **Layout:** `<repo.path>/.dragnet/checkpoints/<runId>/<checkpointId>.json`
+ * **Layout (centralised):** `<scanStateRoot>/<repoId>/checkpoints/<runId>/<checkpointId>.json`
+ *
+ * **Layout (legacy):** `<repo.path>/.dragnet/checkpoints/<runId>/<checkpointId>.json`
+ *
+ * Slice 2: all functions accept an optional `repoId` parameter. When
+ * provided, the central scan-state path is used. When omitted, the
+ * legacy per-repo `.dragnet/` path is used for back-compat.
  *
  *   - `checkpointId` is `__run` for normal scans, `ReviewChunk.id` for
  *     chunked large-PR scans. Per-chunk ids let a multi-chunk run resume
@@ -14,12 +20,6 @@
  * **Persistence:** atomic write — `mkdir -p`, write to `<file>.tmp` at
  * mode `0600`, rename. Concurrent readers see either the old or new
  * file, never a truncated mix.
- *
- * **Repo path invariant:** lives under `repo.path` (NOT `process.cwd()`).
- * The Dragnet server's cwd is its install dir, not the scanned repo;
- * writing checkpoints there would silently pollute an unrelated project
- * and break `/dragnet` skill lookups. Callers MUST pass the repo path
- * explicitly; null/undefined is a soft error (warn + no-op).
  *
  * **Truncation:** checkpoint files can grow large because tool results
  * (searchCodebase, retrieveFile, etc.) embed code snippets. Before
@@ -35,6 +35,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { getScanStatePath, getLegacyScanStatePath } from "@/src/lib/scanStatePath";
 
 /**
  * Schema version for the on-disk checkpoint format. Bump when the
@@ -101,23 +102,37 @@ export interface CheckpointState {
 }
 
 /**
- * Build the on-disk path for a checkpoint. Exposed for tests and the
- * future resume route to inspect without re-running the path math.
+ * Resolve the base directory for checkpoints. When `repoId` is provided,
+ * uses the central scan-state path; otherwise falls back to the legacy
+ * `<repoPath>/.dragnet/` path for back-compat.
+ */
+function checkpointBaseDir(repoPath: string, repoId?: string): string {
+  return repoId
+    ? path.join(getScanStatePath(repoId), "checkpoints")
+    : path.join(getLegacyScanStatePath(repoPath), "checkpoints");
+}
+
+/**
+ * Build the on-disk path for a checkpoint. Exposed for tests.
+ *
+ * When `repoId` is provided, resolves under the central scan-state root.
+ * When omitted, resolves under `<repoPath>/.dragnet/` (legacy).
  */
 export function checkpointFilePath(
   repoPath: string,
   runId: string,
   checkpointId: string,
+  repoId?: string,
 ): string {
-  return path.join(repoPath, ".dragnet", "checkpoints", runId, `${checkpointId}.json`);
+  return path.join(checkpointBaseDir(repoPath, repoId), runId, `${checkpointId}.json`);
 }
 
 /**
  * Per-run directory. Exposed because `deleteRunCheckpoints` removes it
  * after a successful full run.
  */
-export function checkpointRunDir(repoPath: string, runId: string): string {
-  return path.join(repoPath, ".dragnet", "checkpoints", runId);
+export function checkpointRunDir(repoPath: string, runId: string, repoId?: string): string {
+  return path.join(checkpointBaseDir(repoPath, repoId), runId);
 }
 
 /**
@@ -195,8 +210,9 @@ export function writeCheckpoint(
   runId: string,
   checkpointId: string,
   state: CheckpointState,
+  repoId?: string,
 ): void {
-  const filePath = checkpointFilePath(repoPath, runId, checkpointId);
+  const filePath = checkpointFilePath(repoPath, runId, checkpointId, repoId);
   const dir = path.dirname(filePath);
   try {
     fs.mkdirSync(dir, { recursive: true });
@@ -225,8 +241,9 @@ export function readCheckpoint(
   repoPath: string,
   runId: string,
   checkpointId: string,
+  repoId?: string,
 ): CheckpointState | null {
-  const filePath = checkpointFilePath(repoPath, runId, checkpointId);
+  const filePath = checkpointFilePath(repoPath, runId, checkpointId, repoId);
   try {
     const raw = fs.readFileSync(filePath, "utf8");
     const parsed = JSON.parse(raw);
@@ -264,8 +281,9 @@ export function readCheckpoint(
 export function listRunCheckpoints(
   repoPath: string,
   runId: string,
+  repoId?: string,
 ): CheckpointState[] {
-  const dir = checkpointRunDir(repoPath, runId);
+  const dir = checkpointRunDir(repoPath, runId, repoId);
   let entries: string[];
   try {
     entries = fs.readdirSync(dir);
@@ -279,7 +297,7 @@ export function listRunCheckpoints(
   for (const entry of entries) {
     if (!entry.endsWith(".json")) continue;
     const checkpointId = entry.slice(0, -".json".length);
-    const state = readCheckpoint(repoPath, runId, checkpointId);
+    const state = readCheckpoint(repoPath, runId, checkpointId, repoId);
     if (state) out.push(state);
   }
   return out;
@@ -294,8 +312,9 @@ export function deleteCheckpoint(
   repoPath: string,
   runId: string,
   checkpointId: string,
+  repoId?: string,
 ): void {
-  const filePath = checkpointFilePath(repoPath, runId, checkpointId);
+  const filePath = checkpointFilePath(repoPath, runId, checkpointId, repoId);
   try {
     fs.unlinkSync(filePath);
   } catch (err: any) {
@@ -311,8 +330,8 @@ export function deleteCheckpoint(
  * no-op; per-file errors are logged and swallowed so a single corrupt
  * file doesn't block cleanup of the rest.
  */
-export function deleteRunCheckpoints(repoPath: string, runId: string): void {
-  const dir = checkpointRunDir(repoPath, runId);
+export function deleteRunCheckpoints(repoPath: string, runId: string, repoId?: string): void {
+  const dir = checkpointRunDir(repoPath, runId, repoId);
   let entries: string[];
   try {
     entries = fs.readdirSync(dir);

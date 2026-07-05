@@ -84,10 +84,10 @@ export async function GET(req: Request) {
     const snapshots: RepoHealthSnapshot[] = [];
     for (const repo of repos) {
       const repoPath = repo.localPath || repo.path;
-      if (!repoPath) continue;
       // Skip repos with no health file yet — fresh repos have no state.
-      if (!fs.existsSync(healthFilePath(repoPath))) continue;
-      const file = readHealthFile(repoPath);
+      const healthPath = healthFilePath(repoPath ?? "", repo.id);
+      if (!fs.existsSync(healthPath)) continue;
+      const file = readHealthFile(repoPath ?? "", repo.id);
       const providers: ProviderHealthRow[] = Object.entries(file.providers).map(
         ([key, h]) => toRow(key, h, now),
       );
@@ -97,7 +97,7 @@ export async function GET(req: Request) {
       snapshots.push({
         repoId: repo.id,
         repoName: repo.name,
-        repoPath,
+        repoPath: repoPath ?? "",
         providers: providers.sort((a, b) => a.key.localeCompare(b.key)),
       });
     }
@@ -133,11 +133,11 @@ export async function POST(req: Request) {
       // Reset every repo's health file. Iterate known repos from DB so
       // we don't blindly scan the filesystem.
       const repos = await prisma.repository.findMany({
-        select: { path: true, localPath: true },
+        select: { id: true, path: true, localPath: true },
       });
       for (const repo of repos) {
         const p = repo.localPath || repo.path;
-        if (p) resetProviderHealth(p);
+        resetProviderHealth(p ?? null, undefined, undefined, repo.id);
       }
       return NextResponse.json({ ok: true, scope: "all-repos" });
     }

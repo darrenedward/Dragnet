@@ -313,6 +313,12 @@ describe("persistence", () => {
     expect(healthFilePath("/repo/x")).toBe(path.join("/repo", "x", ".dragnet", "provider-health.json"));
   });
 
+  it("healthFilePath uses central path when repoId provided", () => {
+    expect(healthFilePath("/repo/x", "repo-123")).toBe(
+      path.join("/var/lib/dragnet/scans", "repo-123", "provider-health.json"),
+    );
+  });
+
   it("readHealthFile returns empty when file missing", () => {
     expect(readHealthFile(tmpDir)).toEqual({ providers: {} });
   });
@@ -321,6 +327,35 @@ describe("persistence", () => {
     fs.mkdirSync(path.join(tmpDir, ".dragnet"), { recursive: true });
     fs.writeFileSync(path.join(tmpDir, ".dragnet", "provider-health.json"), "{ not json", "utf8");
     expect(readHealthFile(tmpDir)).toEqual({ providers: {} });
+  });
+
+  it("write+read round trip with repoId writes to central path", () => {
+    const scanRoot = fs.mkdtempSync(path.join(os.tmpdir(), "dragnet-ph-root-"));
+    process.env.DRAGNET_SCAN_STATE_ROOT = scanRoot;
+    const now = Date.now();
+    const file: ProviderHealthFile = {
+      providers: {
+        "openrouter.ai:gpt-5": {
+          consecutiveQualityFailures: 1,
+          openedAt: null,
+          cooldownEndsAt: null,
+          state: "closed",
+          updatedAt: now,
+          presetName: "OpenRouter",
+        },
+      },
+    };
+    writeHealthFile(tmpDir, file, "repo-central");
+    const centralPath = path.join(scanRoot, "repo-central", "provider-health.json");
+    expect(fs.existsSync(centralPath)).toBe(true);
+    // Legacy path should NOT have the file.
+    expect(fs.existsSync(path.join(tmpDir, ".dragnet", "provider-health.json"))).toBe(false);
+    // Read back from central path.
+    const back = readHealthFile(tmpDir, "repo-central");
+    expect(back.providers["openrouter.ai:gpt-5"].consecutiveQualityFailures).toBe(1);
+    // Clean up.
+    delete process.env.DRAGNET_SCAN_STATE_ROOT;
+    fs.rmSync(scanRoot, { recursive: true, force: true });
   });
 
   it("write+read round trip preserves one record", () => {

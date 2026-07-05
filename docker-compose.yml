@@ -21,8 +21,11 @@ services:
       - REPOS_DIR=/app/repos
 
     volumes:
-      # Runtime config: llm-presets.json, checkpoints/, reports/
+      # Runtime config: llm-presets.json
       - ./.dragnet:/app/.dragnet
+      # Centralised scan state — checkpoints, reports, provider health,
+      # review exports. Slice 2: replaces per-repo .dragnet/ artifacts.
+      - dragnet-scan-state:/var/lib/dragnet/scans
       # Cloned repos — persists across restarts so re-scans are fast.
       - ./repos:/app/repos
       # Read-only bind-mount of the host repo directory so the container
@@ -39,3 +42,6 @@ services:
       timeout: 5s
       retries: 3
       start_period: 40s
+
+volumes:
+  dragnet-scan-state:

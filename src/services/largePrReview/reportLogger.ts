@@ -1,21 +1,24 @@
 import { appendFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
+import { getScanStatePath, getLegacyScanStatePath } from "@/src/lib/scanStatePath";
 
 /**
  * Per-scan report writer. Called from logRun() in orchestrator.ts as a
  * best-effort mirror of the DB row — same payload, also appended to disk
- * under <repoPath>/.dragnet/reports/<runId>.md so the /dragnet report
- * skill command can read it later.
+ * under the scan-state path so the /dragnet report skill command can read
+ * it later.
  *
- * Path resolution: repoPath is the SCANNED repo's absolute path (from
- * Repository.path via Prisma). NOT process.cwd() — that would land the
- * file in the Dragnet install dir, not the scanned project. See
- * `project_per_scan_artifacts_use_repo_path` memory.
+ * **Layout (centralised):** `<scanStateRoot>/<repoId>/reports/<runId>.md`
+ * **Layout (legacy):** `<repoPath>/.dragnet/reports/<runId>.md`
  *
- * File extension is `.md` for consistency with `.dragnet/reviews/*.md`
- * (the findings-card artifact). Content is plain text — one line per
- * log entry — but the `.md` extension means editors render it as
- * markdown, which is harmless since plain text is valid markdown.
+ * Slice 2: `appendReport` accepts an optional `repoId` parameter. When
+ * provided, the central scan-state path is used. When omitted, the
+ * legacy per-repo `.dragnet/` path is used for back-compat.
+ *
+ * File extension is `.md` for consistency with reviews/*.md artifacts.
+ * Content is plain text — one line per log entry — but the `.md`
+ * extension means editors render it as markdown, which is harmless
+ * since plain text is valid markdown.
  */
 
 export const REPORTS_DIR_NAME = ".dragnet/reports";
@@ -48,9 +51,13 @@ export function formatReportLine({
 }
 
 /**
- * Best-effort append to <repoPath>/.dragnet/reports/<runId>.md.
+ * Best-effort append to the scan-state reports file.
  *
- * - Returns silently when repoPath is empty (legacy callers / tests).
+ * Accepts an optional `repoId`. When provided, the central scan-state
+ * path is used (`<root>/<repoId>/reports/<runId>.md`). When omitted,
+ * the legacy `<repoPath>/.dragnet/reports/<runId>.md` path is used.
+ *
+ * - Returns silently when no path is available.
  * - Creates the directory if missing.
  * - Catches all fs errors and returns silently — disk logging must
  *   never break a scan. Caller (logRun) has already persisted to the
@@ -61,10 +68,18 @@ export async function appendReport(
   repoPath: string,
   runId: string,
   line: string,
+  repoId?: string,
 ): Promise<void> {
-  if (!repoPath || !runId) return;
+  if (!runId) return;
+  let dir: string;
+  if (repoId) {
+    dir = join(getScanStatePath(repoId), "reports");
+  } else if (repoPath) {
+    dir = join(repoPath, REPORTS_DIR_NAME);
+  } else {
+    return;
+  }
   try {
-    const dir = join(repoPath, REPORTS_DIR_NAME);
     await mkdir(dir, { recursive: true });
     await appendFile(join(dir, `${runId}.md`), `${line}\n`, { encoding: "utf8" });
   } catch {

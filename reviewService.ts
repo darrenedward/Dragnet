@@ -285,8 +285,10 @@ async function persistCheckpoint(
   maxIterations: number,
   provider: string,
   model: string,
+  repoId?: string,
 ): Promise<void> {
-  if (!repoPath || !reviewRunId || !metadata) return;
+  if (!repoPath && !repoId) return;
+  if (!reviewRunId || !metadata) return;
   const checkpointId = checkpointIdFor(reviewChunkId);
   const state: CheckpointState = {
     version: 1,
@@ -303,7 +305,7 @@ async function persistCheckpoint(
     writtenAt: Date.now(),
   };
   try {
-    writeCheckpoint(repoPath, reviewRunId, checkpointId, state);
+    writeCheckpoint(repoPath ?? "", reviewRunId, checkpointId, state, repoId);
     const at = new Date();
     if (reviewChunkId) {
       await setReviewChunkLastCheckpointAt(reviewChunkId, at);
@@ -325,13 +327,15 @@ function clearCheckpoint(
   repoPath: string | null,
   reviewRunId: string | undefined,
   reviewChunkId: string | undefined,
+  repoId?: string,
 ): void {
-  if (!repoPath || !reviewRunId) return;
+  if (!repoPath && !repoId) return;
+  if (!reviewRunId) return;
   try {
     if (reviewChunkId) {
-      deleteCheckpoint(repoPath, reviewRunId, reviewChunkId);
+      deleteCheckpoint(repoPath ?? "", reviewRunId, reviewChunkId, repoId);
     } else {
-      deleteRunCheckpoints(repoPath, reviewRunId);
+      deleteRunCheckpoints(repoPath ?? "", reviewRunId, repoId);
     }
   } catch (err) {
     console.warn(`[checkpoint] failed to clear checkpoint for ${reviewRunId}/${checkpointIdFor(reviewChunkId)}:`, err);
@@ -1490,6 +1494,7 @@ ${diffPayload}${deterministicPayload}`;
               ITERATION_BUDGET,
               endpoint,
               model,
+              pr.repoId,
             );
             if (finalReview) break;
             // Continue loop with the tool results now appended.
@@ -1522,6 +1527,7 @@ ${diffPayload}${deterministicPayload}`;
               ITERATION_BUDGET,
               endpoint,
               model,
+              pr.repoId,
             );
             break;
           }
@@ -1690,9 +1696,9 @@ ${diffPayload}${deterministicPayload}`;
         // of model trouble — but it isn't a clear quality_failure
         // either, so we leave the breaker alone in that band.
         if (outcome === "quality_failure") {
-          recordProviderQualityFailure(breakerRepoPath, endpoint, model, name);
+          recordProviderQualityFailure(breakerRepoPath, endpoint, model, name, pr.repoId);
         } else if (outcome === "success" && ratingThisAttempt !== null && ratingThisAttempt >= 5) {
-          recordProviderSuccess(breakerRepoPath, endpoint, model, name);
+          recordProviderSuccess(breakerRepoPath, endpoint, model, name, pr.repoId);
         }
       }
     }
@@ -1705,7 +1711,7 @@ ${diffPayload}${deterministicPayload}`;
     // checkpoint so it doesn't linger as a false resume target. The abort
     // path in the outer catch keeps the checkpoint and writes a final
     // iteration entry before returning the interrupted result.
-    clearCheckpoint(breakerRepoPath, reviewRunId, reviewChunkId);
+    clearCheckpoint(breakerRepoPath, reviewRunId, reviewChunkId, pr.repoId);
 
     // Phase 2 cost telemetry — persist tokens/cost breakdown to ReviewRun.
     // Best-effort: setReviewRunTokens swallows errors. Only written for

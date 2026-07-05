@@ -47,6 +47,6 @@ ENV HOSTNAME=0.0.0.0
 EXPOSE 3300
 
 # Documented mount points — see docker-compose.yml for the bind mounts.
-VOLUME ["/app/.dragnet", "/app/repos"]
+VOLUME ["/app/.dragnet", "/app/repos", "/var/lib/dragnet/scans"]
 
 CMD ["npm", "run", "start"]
