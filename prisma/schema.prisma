@@ -380,6 +380,7 @@ model ApiKey {
   name      String
   prefix    String
   hash      String   @unique
+  repoId    String?   // optional: scoped to a specific repo (dragnet-init flow)
   createdAt DateTime @default(now())
   lastUsedAt DateTime?
   revoked   Boolean  @default(false)
