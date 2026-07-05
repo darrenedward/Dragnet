@@ -849,6 +849,7 @@ export type RatingTrendEntry = {
   completedAt: Date | null;
   commitHash: string;
   newFindingsCount: number;
+  model: string | null;
 };
 
 /**
@@ -865,7 +866,7 @@ export async function getRecentRuns(
     where: { prId, status: "completed" },
     orderBy: { completedAt: "desc" },
     take: limit,
-    select: { id: true, rating: true, completedAt: true, commitHash: true },
+    select: { id: true, rating: true, completedAt: true, commitHash: true, model: true },
   });
 
   if (runs.length === 0) return [];
@@ -886,5 +887,6 @@ export async function getRecentRuns(
       completedAt: r.completedAt,
       commitHash: r.commitHash,
       newFindingsCount: countMap.get(r.id) ?? 0,
+      model: r.model,
     }));
 }
