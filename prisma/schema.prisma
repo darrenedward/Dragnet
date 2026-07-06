@@ -61,11 +61,13 @@ model Repository {
   skipTier2              Boolean         @default(false)
   repoId                 String?         @unique
   canonicalRemote        String?
+  hostedMode             Boolean         @default(false)
   reviewHistory          ReviewHistory[]
   pullRequests           PullRequest[]
   symbols                Symbol[]
   edges                  Edge[]
   files                  File[]
+  scanTokens             ScanToken[]
 
   @@map("repositories")
 }
@@ -413,6 +415,21 @@ model ApiKey {
   revoked    Boolean   @default(false)
 
   @@map("api_keys")
+}
+
+model ScanToken {
+  id         String     @id @default(cuid())
+  repoId     String
+  label      String
+  prefix     String
+  hash       String     @unique
+  createdAt  DateTime   @default(now())
+  lastUsedAt DateTime?
+  revoked    Boolean    @default(false)
+  repository Repository @relation(fields: [repoId], references: [id], onDelete: Cascade)
+
+  @@index([repoId])
+  @@map("scan_tokens")
 }
 
 model LLMPreset {

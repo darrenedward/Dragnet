@@ -27,6 +27,7 @@ export function useEditRepo({ onUpdated, onWebhookPrompt }: Options) {
   const [editDeployKey, setEditDeployKey] = useState("");
   const [editPat, setEditPat] = useState("");
   const [editSkipTier2, setEditSkipTier2] = useState(false);
+  const [editHostedMode, setEditHostedMode] = useState(false);
 
   const openEditor = (repo: Repository) => {
     setEditingRepo(repo);
@@ -40,6 +41,7 @@ export function useEditRepo({ onUpdated, onWebhookPrompt }: Options) {
     setEditDeployKey("");
     setEditPat("");
     setEditSkipTier2(repo.skipTier2 ?? false);
+    setEditHostedMode(repo.hostedMode ?? false);
     setErrorFeedback(null);
     setShowEditRepoModal(true);
   };
@@ -72,6 +74,7 @@ export function useEditRepo({ onUpdated, onWebhookPrompt }: Options) {
           deployKey: editMode === "ssh" && editDeployKey ? editDeployKey : undefined,
           pat: editMode === "pat" && editPat ? editPat : undefined,
           skipTier2: editSkipTier2,
+          hostedMode: editHostedMode,
         }),
       });
 
@@ -118,5 +121,7 @@ export function useEditRepo({ onUpdated, onWebhookPrompt }: Options) {
     setEditPat,
     editSkipTier2,
     setEditSkipTier2,
+    editHostedMode,
+    setEditHostedMode,
   };
 }

@@ -25,6 +25,8 @@ interface Props {
   setNewPat: (v: string) => void;
   editSkipTier2: boolean;
   setEditSkipTier2: (v: boolean) => void;
+  editHostedMode: boolean;
+  setEditHostedMode: (v: boolean) => void;
 }
 
 export default function EditRepoModal(props: Props) {
@@ -127,6 +129,25 @@ export default function EditRepoModal(props: Props) {
             <p className="text-[10px] text-slate-500 ml-5 leading-snug">
               When enabled, the containerized build and test pipeline is skipped for this repo.
               Typecheck/lint (Tier 1) and LLM review (Tier 3) still run normally.
+            </p>
+          </div>
+
+          <div className="flex flex-col gap-2 p-3 bg-slate-900/40 border border-white/10 rounded">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={props.editHostedMode}
+                onChange={(e) => props.setEditHostedMode(e.target.checked)}
+                className="w-3.5 h-3.5 accent-cyan-500 rounded"
+              />
+              <span className="text-slate-300 text-xs font-mono">
+                Hosted Mode
+              </span>
+            </label>
+            <p className="text-[10px] text-slate-500 ml-5 leading-snug">
+              When enabled, external repos can trigger scans via the hosted scan API
+              with scan tokens. The scan endpoint accepts POST /api/hosted-scan/scan
+              with an <code className="text-cyan-400">hs_</code> token.
             </p>
           </div>
 

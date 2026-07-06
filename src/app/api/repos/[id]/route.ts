@@ -72,6 +72,7 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
       testCommand,
       isPollingEnabled,
       skipTier2,
+      hostedMode,
     } = body;
 
     const current = await prisma.repository.findUnique({ where: { id } });
@@ -97,6 +98,7 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
     if (testCommand !== undefined) updateData.testCommand = testCommand;
     if (isPollingEnabled !== undefined) updateData.isPollingEnabled = Boolean(isPollingEnabled);
     if (skipTier2 !== undefined) updateData.skipTier2 = Boolean(skipTier2);
+    if (hostedMode !== undefined) updateData.hostedMode = Boolean(hostedMode);
 
     const modeChanged = typeof mode === "string" && mode !== current.provider;
     const urlChanged =
