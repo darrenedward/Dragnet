@@ -6,13 +6,10 @@ import {
   AlertCircle,
   AlertTriangle,
   BarChart3,
-  Check,
-  Copy,
   Database,
   FileCode2,
   Globe,
   Hash,
-  Key,
   Layers,
   Plus,
   RefreshCw,
@@ -20,6 +17,7 @@ import {
   X,
 } from "lucide-react";
 import type { Repository } from "../../../lib/types";
+import ApiKeyManager from "../../apiKey/ApiKeyManager";
 
 interface RepoStats {
   indexedAt: string | null;
@@ -50,10 +48,6 @@ export default function RepoSettingsModal({ repo, onClose, onResetIndex, onRefre
   const [settingUpWebhook, setSettingUpWebhook] = useState(false);
   const [setupWebhookSuccess, setSetupWebhookSuccess] = useState(false);
   const [webhookError, setWebhookError] = useState<string | null>(null);
-  const [apiKeyPrefix, setApiKeyPrefix] = useState<string | null>(null);
-  const [regeneratingKey, setRegeneratingKey] = useState(false);
-  const [regeneratedKey, setRegeneratedKey] = useState<string | null>(null);
-  const [copiedKey, setCopiedKey] = useState(false);
 
   useEffect(() => {
     const fetchStats = async () => {
@@ -67,10 +61,6 @@ export default function RepoSettingsModal({ repo, onClose, onResetIndex, onRefre
           throw new Error(data?.error || `Failed to fetch stats (${statsRes.status})`);
         }
         setStats(await statsRes.json());
-        if (repoRes.ok) {
-          const repoData = await repoRes.json();
-          setApiKeyPrefix(repoData.apiKeyPrefix || null);
-        }
       } catch (err: any) {
         setStatsError(err.message);
       }
@@ -283,72 +273,7 @@ export default function RepoSettingsModal({ repo, onClose, onResetIndex, onRefre
           </div>
 
           <div className="border-t border-white/10 pt-4 mt-2 space-y-3">
-            <div className="flex items-center justify-between bg-slate-900/40 border border-white/10 rounded-lg p-3">
-              <div className="flex items-center gap-2">
-                <Key size={14} className="text-amber-400" />
-                <span className="text-xs text-slate-300">API Key</span>
-                {apiKeyPrefix && (
-                  <code className="text-[10px] text-slate-500 bg-slate-950 px-1.5 py-0.5 rounded">
-                    {apiKeyPrefix}
-                  </code>
-                )}
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={async () => {
-                    setRegeneratingKey(true);
-                    setRegeneratedKey(null);
-                    try {
-                      // Revoke existing keys for this repo first
-                      const existingRes = await fetch("/api/keys");
-                      if (existingRes.ok) {
-                        const existingKeys: { id: string; repoId: string | null }[] = await existingRes.json();
-                        const repoKeys = existingKeys.filter((k) => k.repoId === repo.id);
-                        await Promise.all(
-                          repoKeys.map((k) => fetch(`/api/keys/${k.id}`, { method: "DELETE" })),
-                        );
-                      }
-                      const res = await fetch("/api/keys", {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ name: `project:${repo.name}`, repoId: repo.id }),
-                      });
-                      const data = await res.json();
-                      if (res.ok) {
-                        setRegeneratedKey(data.key);
-                        setApiKeyPrefix(data.prefix);
-                        onRefresh();
-                      }
-                    } catch { /* ignore */ }
-                    setRegeneratingKey(false);
-                  }}
-                  disabled={regeneratingKey}
-                  className="flex items-center gap-1 px-2 py-1 bg-amber-600/20 border border-amber-500/30 text-amber-300 hover:bg-amber-600/30 text-[10px] font-bold rounded transition-all cursor-pointer disabled:opacity-50"
-                >
-                  <RefreshCw size={11} className={regeneratingKey ? "animate-spin" : ""} />
-                  <span>{regeneratingKey ? "Regenerating..." : "Regenerate"}</span>
-                </button>
-              </div>
-            </div>
-            {regeneratedKey && (
-              <div className="p-2.5 bg-amber-950/30 border border-amber-500/30 text-amber-300 rounded text-xs space-y-1.5">
-                <div className="flex items-center gap-1.5">
-                  <div className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
-                  <span className="font-bold">New API key — save it now</span>
-                  <button
-                    onClick={() => {
-                      try { navigator.clipboard.writeText(regeneratedKey); } catch { /* ignore */ }
-                      setCopiedKey(true);
-                      setTimeout(() => setCopiedKey(false), 2000);
-                    }}
-                    className="ml-auto p-1 hover:bg-amber-500/10 rounded text-amber-400 hover:text-amber-300 transition-colors"
-                  >
-                    {copiedKey ? <Check size={12} /> : <Copy size={12} />}
-                  </button>
-                </div>
-                <code className="block bg-black/60 p-2 rounded text-[11px] break-all select-all">{regeneratedKey}</code>
-              </div>
-            )}
+            <ApiKeyManager mode="manage" repoId={repo.id} initialPrefix={repo.apiKeyPrefix} repoName={repo.name} onRefresh={onRefresh} />
           </div>
 
           <div className="border-t border-white/10 pt-4 mt-2">

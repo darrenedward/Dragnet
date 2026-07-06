@@ -3,30 +3,33 @@
 import { useState } from "react";
 import { Check, Copy, Eye, EyeOff, Key, RefreshCw, X } from "lucide-react";
 
-type Mode = "reveal";
+type Mode = "reveal" | "manage";
 
 interface Props {
   repoId: string;
   mode: Mode;
-  initialApiKey: string;
-  initialPrefix: string;
+  initialApiKey?: string;
+  initialPrefix?: string | null;
   onClose?: () => void;
   repoName?: string;
+  onRefresh?: () => void;
 }
 
 export default function ApiKeyManager({
   repoId,
   mode,
-  initialApiKey,
-  initialPrefix,
+  initialApiKey = "",
+  initialPrefix = null,
   onClose,
   repoName,
+  onRefresh,
 }: Props) {
   const [apiKey, setApiKey] = useState(initialApiKey);
   const [prefix, setPrefix] = useState(initialPrefix);
   const [showKey, setShowKey] = useState(false);
   const [copied, setCopied] = useState(false);
   const [regenerating, setRegenerating] = useState(false);
+  const [hasRegenerated, setHasRegenerated] = useState(mode === "reveal");
 
   const handleCopy = () => {
     try {
@@ -71,6 +74,8 @@ export default function ApiKeyManager({
       if (res.ok) {
         setApiKey(data.key);
         setPrefix(data.prefix);
+        setHasRegenerated(true);
+        onRefresh?.();
       }
     } catch {
       // Ignore regeneration errors
@@ -170,6 +175,53 @@ export default function ApiKeyManager({
               Done
             </button>
           </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Manage mode: show prefix + Regenerate button, then reveal UI after regenerate
+  if (mode === "manage") {
+    // After regeneration, show the same reveal UI
+    if (hasRegenerated && apiKey) {
+      return (
+        <div className="p-2.5 bg-amber-950/30 border border-amber-500/30 text-amber-300 rounded text-xs space-y-1.5">
+          <div className="flex items-center gap-1.5">
+            <div className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+            <span className="font-bold">New API key — save it now</span>
+            <button
+              onClick={handleCopy}
+              className="ml-auto p-1 hover:bg-amber-500/10 rounded text-amber-400 hover:text-amber-300 transition-colors"
+            >
+              {copied ? <Check size={12} /> : <Copy size={12} />}
+            </button>
+          </div>
+          <code className="block bg-black/60 p-2 rounded text-[11px] break-all select-all">{apiKey}</code>
+        </div>
+      );
+    }
+
+    // Default state: show prefix + Regenerate button
+    return (
+      <div className="flex items-center justify-between bg-slate-900/40 border border-white/10 rounded-lg p-3">
+        <div className="flex items-center gap-2">
+          <Key size={14} className="text-amber-400" />
+          <span className="text-xs text-slate-300">API Key</span>
+          {prefix && (
+            <code className="text-[10px] text-slate-500 bg-slate-950 px-1.5 py-0.5 rounded">
+              {prefix}
+            </code>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleRegenerate}
+            disabled={regenerating}
+            className="flex items-center gap-1 px-2 py-1 bg-amber-600/20 border border-amber-500/30 text-amber-300 hover:bg-amber-600/30 text-[10px] font-bold rounded transition-all cursor-pointer disabled:opacity-50"
+          >
+            <RefreshCw size={11} className={regenerating ? "animate-spin" : ""} />
+            <span>{regenerating ? "Regenerating..." : "Regenerate"}</span>
+          </button>
         </div>
       </div>
     );
