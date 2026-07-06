@@ -60,6 +60,21 @@ interface Props {
     chunksCompleted?: number;
     chunksFailed?: number;
     chunksSkipped?: number;
+    tokensUsed?: {
+      totalCostUsd: number;
+      totalPromptTokens: number;
+      totalCompletionTokens: number;
+      providers: Array<{
+        name: string;
+        model: string;
+        promptTokens: number;
+        completionTokens: number;
+        costUsd: number;
+        outcome: string;
+        iterationsUsed: number;
+        maxIterations: number;
+      }>;
+    } | null;
   } | null;
   stability?: StabilityProp | null;
   chunks?: ReviewChunk[];

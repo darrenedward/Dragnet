@@ -75,6 +75,21 @@ export function useDashboardData() {
     chunksCompleted?: number;
     chunksFailed?: number;
     chunksSkipped?: number;
+    tokensUsed?: {
+      totalCostUsd: number;
+      totalPromptTokens: number;
+      totalCompletionTokens: number;
+      providers: Array<{
+        name: string;
+        model: string;
+        promptTokens: number;
+        completionTokens: number;
+        costUsd: number;
+        outcome: string;
+        iterationsUsed: number;
+        maxIterations: number;
+      }>;
+    } | null;
   } | null>(null);
   const [reviewChunks, setReviewChunks] = useState<ReviewChunk[]>([]);
   // Currently in-progress scan (null when no scan is active). The findings
