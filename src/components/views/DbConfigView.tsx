@@ -51,7 +51,7 @@ export default function DbConfigView({
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: -10 }}
       transition={{ duration: 0.1 }}
-      className="flex flex-col flex-1 overflow-y-auto space-y-5"
+      className="flex flex-col flex-1 min-h-0 overflow-y-auto space-y-5"
     >
       <div className="p-6 bg-[#0F1219] border border-white/10 rounded-xl relative overflow-hidden">
         <div className="absolute top-0 right-0 w-48 h-48 bg-cyan-500/[0.02] rounded-full blur-3xl pointer-events-none" />
