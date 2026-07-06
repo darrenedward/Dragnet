@@ -316,7 +316,36 @@ async function handlePrCheckStatus(args: any): Promise<string> {
   const freshPr = await prisma.pullRequest.findUnique({ where: { id: pr.id } });
   if (!freshPr) return `> **No pull requests found** matching that criteria on this repository.`;
 
-  return formatLatestFindings(freshPr);
+  const latest = await getLatestCompletedReview(pr.id);
+  const displayPr = {
+    ...pr,
+    rating: latest.reviewRun?.rating ?? pr.rating,
+  };
+  const sizeProfile = await loadPrSizeProfile(pr);
+  let out = formatFindings(displayPr, latest.findings, sizeProfile);
+  if (latest.regressions.length > 0) {
+    out += `\n## Regressions (reappeared findings)\n\n`;
+    out += `The following findings were previously resolved but have reappeared:\n\n`;
+    for (const f of latest.regressions) {
+      out += `### ${f.filename}:${f.line}\n**[${f.category}|${f.severity}${f.exploitability ? `|${f.exploitability}` : ""}]** (confidence: ${((f.confidence ?? 0.5) * 100).toFixed(0)}%${f.impact ? `, impact: ${f.impact}` : ""})\n${f.explanation}\n`;
+      if (f.diffSuggestion) {
+        out += `Suggested fix:\n\`\`\`diff\n${f.diffSuggestion}\n\`\`\`\n`;
+      }
+      out += "\n";
+    }
+  }
+  if (!latest.reviewRun) {
+    out += "\n_No completed ReviewRun yet._\n";
+  } else {
+    out += `\n_Reviewed commit ${latest.reviewRun.commitHash.slice(0, 7)}${latest.stale ? " (stale)" : ""}._\n`;
+    if (latest.rejectedCount > 0) {
+      out += `_Verifier filtered ${latest.rejectedCount} finding${latest.rejectedCount === 1 ? "" : "s"}._\n`;
+    }
+    if (latest.reviewRun.refused) {
+      out += `\n> ⚠ **Reviewer flagged incomplete coverage.** ${latest.reviewRun.refusalNote ?? "Parts of the PR were skipped or not fully analyzed."} Re-scan recommended after addressing the underlying cause.\n`;
+    }
+  }
+  return out;
 }
 
 async function handlePrComments(args: any): Promise<string> {
@@ -580,6 +609,11 @@ async function handleLegacyCommand(body: any, defRepo: string | null) {
         sizeProfile,
         findingsCount: latest.findings.filter((f: any) => f.status !== "resolved").length,
         findings: latest.findings
+          .filter((f: any) => f.status !== "resolved")
+          .map((f: any) =>
+            `[${f.category} | ${f.severity}${f.exploitability ? ` | ${f.exploitability}` : ""}] ${f.filename}:${f.line} - ${f.explanation}`,
+          ),
+        regressions: latest.regressions
           .filter((f: any) => f.status !== "resolved")
           .map((f: any) =>
             `[${f.category} | ${f.severity}${f.exploitability ? ` | ${f.exploitability}` : ""}] ${f.filename}:${f.line} - ${f.explanation}`,

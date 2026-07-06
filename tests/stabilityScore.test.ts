@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { computeStability, STABILITY_RATING_THRESHOLD, STABILITY_MIN_ROUNDS } from "../src/lib/stabilityScore";
+import { computeStability, STABILITY_RATING_THRESHOLD, STABILITY_MIN_ROUNDS, STABILITY_WEIGHT_THRESHOLD } from "../src/lib/stabilityScore";
 
-function run(runId: string, rating: number | null, newFindingsCount: number) {
-  return { runId, rating, completedAt: new Date(), commitHash: "h", newFindingsCount };
+function run(runId: string, rating: number | null, newFindingsCount: number, model: string | null = "claude-opus") {
+  return { runId, rating, completedAt: new Date(), commitHash: "h", newFindingsCount, model };
 }
 
 describe("computeStability", () => {

@@ -8,9 +8,11 @@
  */
 
 import process from "node:process";
+import { lookupModelTrustWeight } from "./modelTrustWeights";
 
 export const STABILITY_RATING_THRESHOLD = 8;
 export const STABILITY_MIN_ROUNDS = 3;
+export const STABILITY_WEIGHT_THRESHOLD = 2.5; // weighted sum needed for merge-readiness
 
 export interface RatingTrendEntry {
   runId: string;
@@ -18,6 +20,7 @@ export interface RatingTrendEntry {
   completedAt: Date | null;
   commitHash: string;
   newFindingsCount: number;
+  model: string | null;
 }
 
 export interface StabilityOptions {
@@ -29,6 +32,7 @@ export interface StabilityResult {
   consecutiveCleanRounds: number;
   readyToMerge: boolean;
   lastUnstableRunId: string | null;
+  weightedStability: number; // sum of trust weights for consecutive clean rounds
 }
 
 export interface StabilityProp {
@@ -50,18 +54,23 @@ export function computeStability(
 ): StabilityResult {
   const threshold = opts?.ratingThreshold ?? envInt("DRAGNET_STABILITY_THRESHOLD", STABILITY_RATING_THRESHOLD);
   const minRounds = opts?.minRounds ?? envInt("DRAGNET_STABILITY_MIN_ROUNDS", STABILITY_MIN_ROUNDS);
+  const weightThreshold = envInt("DRAGNET_STABILITY_WEIGHT_THRESHOLD", STABILITY_WEIGHT_THRESHOLD);
 
   if (ratingTrend.length === 0) {
-    return { consecutiveCleanRounds: 0, readyToMerge: false, lastUnstableRunId: null };
+    return { consecutiveCleanRounds: 0, readyToMerge: false, lastUnstableRunId: null, weightedStability: 0 };
   }
 
   let consecutiveCleanRounds = 0;
+  let weightedStability = 0;
   let lastUnstableRunId: string | null = null;
 
   for (let i = ratingTrend.length - 1; i >= 0; i--) {
     const entry = ratingTrend[i];
     if (entry.rating !== null && entry.rating >= threshold && entry.newFindingsCount === 0) {
       consecutiveCleanRounds++;
+      // Add the model's trust weight to the weighted stability sum
+      const modelWeight = entry.model ? lookupModelTrustWeight(entry.model) : 0.5;
+      weightedStability += modelWeight;
     } else {
       lastUnstableRunId = entry.runId;
       break;
@@ -70,7 +79,8 @@ export function computeStability(
 
   return {
     consecutiveCleanRounds,
-    readyToMerge: consecutiveCleanRounds >= minRounds,
+    weightedStability,
+    readyToMerge: weightedStability >= weightThreshold,
     lastUnstableRunId,
   };
 }
