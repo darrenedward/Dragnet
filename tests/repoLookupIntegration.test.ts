@@ -106,20 +106,19 @@ describe("GET /api/repos/lookup integration test", () => {
     expect(result.repoId).toBe("github.com/owner/https-variant");
   });
 
-  // TODO: Re-enable after issue #28 (ssh:// protocol support) is implemented
-  // it("handles ssh:// protocol variant", async () => {
-  //   // Mock repo registered with standard SSH URL
-  //   mockFindFirst.mockResolvedValue({
-  //     id: "repo-4",
-  //     name: "ssh-protocol",
-  //   });
+  it("handles ssh:// protocol variant", async () => {
+    // Mock repo registered with standard SSH URL
+    mockFindFirst.mockResolvedValue({
+      id: "repo-4",
+      name: "ssh-protocol",
+    });
 
-  //   // Query with ssh:// protocol variant
-  //   const result = await lookupRepo("ssh://git@github.com/owner/ssh-protocol.git");
+    // Query with ssh:// protocol variant
+    const result = await lookupRepo("ssh://git@github.com/owner/ssh-protocol.git");
 
-  //   expect(result.exists).toBe(true);
-  //   expect(result.repoId).toBe("github.com/owner/ssh-protocol");
-  // });
+    expect(result.exists).toBe(true);
+    expect(result.repoId).toBe("github.com/owner/ssh-protocol");
+  });
 
   it("returns exists:false for unregistered repo", async () => {
     mockFindFirst.mockResolvedValue(null);
