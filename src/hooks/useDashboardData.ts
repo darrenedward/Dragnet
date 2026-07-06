@@ -151,6 +151,7 @@ export function useDashboardData() {
   const [newCloneUrlHttps, setNewCloneUrlHttps] = useState("");
   const [newDeployKey, setNewDeployKey] = useState("");
   const [newPat, setNewPat] = useState("");
+  const [newGithubRepoId, setNewGithubRepoId] = useState<number | null>(null);
   const [newBaseBranch, setNewBaseBranch] = useState("main");
   const [newTriggerMode, setNewTriggerMode] = useState<"auto" | "mention">("auto");
   const [newQuietPeriod, setNewQuietPeriod] = useState(10);
@@ -796,12 +797,20 @@ export function useDashboardData() {
       return;
     }
 
-    if (!newRepoPath.trim() && !newCloneUrl.trim()) {
-      setErrorFeedback("Either Directory Path or Clone URL is required.");
-      return;
+    // Determine mode based on which fields are populated
+    let mode: "local" | "ssh" | "pat" | "github";
+    if (newRepoPath.trim()) {
+      mode = "local";
+    } else if (newGithubRepoId) {
+      mode = "github";
+    } else {
+      mode = newRepoMode;
     }
 
-    const mode = newRepoPath.trim() ? "local" : newRepoMode;
+    if (mode !== "local" && mode !== "github" && !newCloneUrl.trim()) {
+      setErrorFeedback("Either Directory Path, Clone URL, or GitHub repository selection is required.");
+      return;
+    }
 
     try {
       const res = await fetchJson("/api/repos", {
@@ -815,6 +824,7 @@ export function useDashboardData() {
           cloneUrlHttps: newCloneUrlHttps.trim() || undefined,
           deployKey: newDeployKey || undefined,
           pat: newPat || undefined,
+          githubRepoId: newGithubRepoId || undefined,
           baseBranch: newBaseBranch,
           triggerMode: newTriggerMode,
           quietPeriodSeconds: Number(newQuietPeriod),
@@ -837,6 +847,7 @@ export function useDashboardData() {
           setNewCloneUrlHttps("");
           setNewDeployKey("");
           setNewPat("");
+          setNewGithubRepoId(null);
         }
         setNewRepoName("");
         setNewRepoPath("");
@@ -1010,6 +1021,8 @@ export function useDashboardData() {
     setNewDeployKey,
     newPat,
     setNewPat,
+    newGithubRepoId,
+    setNewGithubRepoId,
     newBaseBranch,
     setNewBaseBranch,
     newBranchPattern,

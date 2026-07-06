@@ -394,6 +394,8 @@ export default function App() {
             setNewDeployKey={d.setNewDeployKey}
             newPat={d.newPat}
             setNewPat={d.setNewPat}
+            newGithubRepoId={d.newGithubRepoId}
+            setNewGithubRepoId={d.setNewGithubRepoId}
           />
         )}
       </AnimatePresence>
