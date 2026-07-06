@@ -54,7 +54,7 @@ export interface PrDependency {
 export interface PrTopology {
   /** Count of PRs below this one in the stack (0 = standalone). */
   stackDepth: number;
-  /** PRs that must merge first, closest dep first (root-first order). */
+  /** PRs that must merge first, root-first order (deepest dependency first). */
   dependencies: PrDependency[];
   /** Dependencies that have no completed ReviewRun. */
   unscannedDepsCount: number;
@@ -108,6 +108,10 @@ export function computeStackTopology(
       });
       cursor = dep.targetBranch;
     }
+
+    // Reverse: walk produces closest-first but the contract is
+    // root-first (deepest dep first), per merge.md "stack-root-first order".
+    dependencies.reverse();
 
     result.set(pr.id, {
       stackDepth: dependencies.length,

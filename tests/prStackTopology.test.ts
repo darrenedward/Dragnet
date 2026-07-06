@@ -47,7 +47,7 @@ describe("computeStackTopology", () => {
     expect(result.get(prs[1].id)!.dependencies[0].sourceBranch).toBe("feat/a");
   });
 
-  it("detects a 3-PR stack in root-first order", () => {
+  it("detects a 3-PR stack in root-first order (deepest dep first)", () => {
     const prs = [
       pr({ sourceBranch: "feat/a", targetBranch: "main" }),
       pr({ sourceBranch: "feat/b", targetBranch: "feat/a" }),
@@ -60,8 +60,8 @@ describe("computeStackTopology", () => {
     expect(result.get(prs[2].id)!.stackDepth).toBe(2);
 
     const deps = result.get(prs[2].id)!.dependencies;
-    expect(deps[0].sourceBranch).toBe("feat/b");
-    expect(deps[1].sourceBranch).toBe("feat/a");
+    expect(deps[0].sourceBranch).toBe("feat/a"); // root (deepest) first
+    expect(deps[1].sourceBranch).toBe("feat/b");
   });
 
   it("handles multiple independent stacks", () => {
