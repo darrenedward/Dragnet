@@ -40,9 +40,10 @@ export default function ApiKeysPanel() {
     setError(null);
     setNewKeyValue(null);
     try {
-      const existing = await (await fetch("/api/keys")).json();
+      const existing = (await (await fetch("/api/keys")).json()) as ApiKeyView[];
+      const globalKeys = existing.filter((k) => !k.repoId);
       await Promise.all(
-        (existing as { id: string }[]).map((k) =>
+        globalKeys.map((k) =>
           fetch(`/api/keys/${k.id}`, { method: "DELETE" })
         )
       );

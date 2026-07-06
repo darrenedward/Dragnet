@@ -322,9 +322,9 @@ function ResultBanner({
       ? "bg-cyan-500/10 border-cyan-500/20 text-cyan-400"
       : "bg-rose-500/10 border-rose-500/20 text-rose-400";
   return (
-    <div className={`p-4 rounded-lg text-xs font-mono border animate-fadeIn ${toneClass}`}>
+    <div className={`p-4 rounded-lg text-xs font-mono border animate-fadeIn overflow-x-auto ${toneClass}`}>
       <div className="font-bold uppercase mb-1">{label}</div>
-      <div>{result.message}</div>
+      <div className="whitespace-pre-wrap break-words">{result.message}</div>
     </div>
   );
 }
