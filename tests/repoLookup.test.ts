@@ -80,8 +80,7 @@ describe("GET /api/repos/lookup", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.exists).toBe(true);
-    expect(body.repoId).toBe("repo-1");
-    expect(body.repoIdNormalized).toBe("github.com/owner/existing-repo");
+    expect(body.repoId).toBe("github.com/owner/existing-repo");
     expect(body.apiKey).toBe("dr_test_raw_key_123");
     expect(body.apiBase).toBe("http://localhost");
   });
@@ -94,8 +93,7 @@ describe("GET /api/repos/lookup", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.exists).toBe(true);
-    expect(body.repoId).toBe("repo-2");
-    expect(body.repoIdNormalized).toBe("github.com/owner/another-repo");
+    expect(body.repoId).toBe("github.com/owner/another-repo");
     expect(body.apiKey).toBe("dr_test_raw_key_123");
 
     expect(mockFindFirst).toHaveBeenCalledWith({

@@ -43,8 +43,7 @@ export async function GET(req: Request) {
 
   return NextResponse.json({
     exists: true,
-    repoId: repo.id,
-    repoIdNormalized: repoId,
+    repoId,
     apiKey: key.raw,
     apiBase,
   });
