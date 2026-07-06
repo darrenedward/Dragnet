@@ -168,6 +168,12 @@ export function useDashboardData() {
   const [newPat, setNewPat] = useState("");
   const [newGithubRepoId, setNewGithubRepoId] = useState<number | null>(null);
   const [createdApiKey, setCreatedApiKey] = useState<{ raw: string; prefix: string } | null>(null);
+  const [addRepoSuccess, setAddRepoSuccess] = useState<{
+    apiKey: string;
+    apiKeyPrefix: string;
+    repoId: string;
+    repoName: string;
+  } | null>(null);
   const [newBaseBranch, setNewBaseBranch] = useState("main");
   const [newTriggerMode, setNewTriggerMode] = useState<"auto" | "mention">("auto");
   const [newQuietPeriod, setNewQuietPeriod] = useState(10);
@@ -850,14 +856,20 @@ export function useDashboardData() {
 
       const data = await res.json();
       if (res.ok) {
-        setShowAddRepoModal(false);
         setErrorFeedback(null);
         await fetchRepos();
         setSelectedRepoId(data.id);
         await fetchPrsForSelectedRepo(data.id, false);
 
         if (data.apiKey) {
-          setCreatedApiKey({ raw: data.apiKey, prefix: data.apiKeyPrefix });
+          setAddRepoSuccess({
+            apiKey: data.apiKey,
+            apiKeyPrefix: data.apiKeyPrefix,
+            repoId: data.id,
+            repoName: newRepoName.trim(),
+          });
+        } else {
+          setShowAddRepoModal(false);
         }
 
         if (mode !== "local") {
@@ -1058,6 +1070,8 @@ export function useDashboardData() {
     setLastRegisteredRepo,
     createdApiKey,
     setCreatedApiKey,
+    addRepoSuccess,
+    setAddRepoSuccess,
     // daemon callback
     handleTriggerReviewPass,
   };

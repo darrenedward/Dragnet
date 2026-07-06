@@ -6,6 +6,7 @@ import { AlertCircle, Database, Globe, Github, X } from "lucide-react";
 import LocalTab from "./LocalTab";
 import RemoteTab from "./RemoteTab";
 import GitHubTab from "./GitHubTab";
+import ApiKeyManager from "../../apiKey/ApiKeyManager";
 
 interface Props {
   onClose: () => void;
@@ -39,6 +40,19 @@ interface Props {
   // github fields
   newGithubRepoId: number | null;
   setNewGithubRepoId: (v: number | null) => void;
+  // success state
+  addRepoSuccess: {
+    apiKey: string;
+    apiKeyPrefix: string;
+    repoId: string;
+    repoName: string;
+  } | null;
+  setAddRepoSuccess: (v: {
+    apiKey: string;
+    apiKeyPrefix: string;
+    repoId: string;
+    repoName: string;
+  } | null) => void;
 }
 
 type Tab = "local" | "remote" | "github";
@@ -60,7 +74,36 @@ export default function AddRepoModal(props: Props) {
     newDeployKey, setNewDeployKey,
     newPat, setNewPat,
     newGithubRepoId, setNewGithubRepoId,
+    addRepoSuccess,
+    setAddRepoSuccess,
   } = props;
+
+  const handleDone = () => {
+    setAddRepoSuccess(null);
+    onClose();
+  };
+
+  // Show success state with API key
+  if (addRepoSuccess) {
+    return (
+      <div className="fixed inset-0 bg-black/80 backdrop-blur-xs flex items-center justify-center z-50 p-4 select-none">
+        <motion.div
+          initial={{ scale: 0.95, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          exit={{ scale: 0.95, opacity: 0 }}
+        >
+          <ApiKeyManager
+            repoId={addRepoSuccess.repoId}
+            mode="reveal"
+            initialApiKey={addRepoSuccess.apiKey}
+            initialPrefix={addRepoSuccess.apiKeyPrefix}
+            repoName={addRepoSuccess.repoName}
+            onClose={handleDone}
+          />
+        </motion.div>
+      </div>
+    );
+  }
 
   return (
     <div className="fixed inset-0 bg-black/80 backdrop-blur-xs flex items-center justify-center z-50 p-4 select-none">
