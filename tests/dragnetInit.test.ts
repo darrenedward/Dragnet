@@ -78,7 +78,7 @@ describe("runInit", () => {
     mockFetch = vi.fn().mockResolvedValue({
       json: () => Promise.resolve({
         exists: true,
-        repoId: "repo-1",
+        repoId: "github.com/owner/repo",
         apiKey: "dr_abc123",
         apiBase: "http://localhost:3300",
       }),
@@ -100,7 +100,7 @@ describe("runInit", () => {
     const result = await runInit(defaultOpts());
 
     expect(result).toEqual({
-      repoId: "repo-1",
+      repoId: "github.com/owner/repo",
       apiKey: "dr_abc123",
       apiBase: "http://localhost:3300",
     });
@@ -112,7 +112,7 @@ describe("runInit", () => {
 
     expect(mockWriteFileSync).toHaveBeenCalledWith(
       "/tmp/test-repo/.dragnet/repo.json",
-      expect.stringContaining("repo-1"),
+      expect.stringContaining("github.com/owner/repo"),
       { mode: 0o600 },
     );
   });
