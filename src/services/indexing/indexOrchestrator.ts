@@ -99,7 +99,7 @@ export class IndexingService {
   ): Promise<IndexRunResult> {
     const resolvedPath = path.isAbsolute(repoPath)
       ? repoPath
-      : path.resolve(process.cwd(), repoPath);
+      : path.resolve(/* turbopackIgnore: true */ process.cwd(), repoPath);
     if (!fs.existsSync(resolvedPath)) {
       throw new Error(`Repository local path "${repoPath}" could not be located.`);
     }
@@ -365,7 +365,7 @@ export class IndexingService {
 
         const resolvedPath = path.isAbsolute(repoPath)
           ? repoPath
-          : path.resolve(process.cwd(), repoPath);
+          : path.resolve(/* turbopackIgnore: true */ process.cwd(), repoPath);
 
         for (const sym of symbolsToEnrich) {
           // Defense-in-depth: sym.filePath comes from the indexer (relative

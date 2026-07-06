@@ -21,6 +21,7 @@ import CodebaseGraph from "./components/CodebaseGraph";
 import DbConfigView from "./components/views/DbConfigView";
 import LlmConfigView from "./components/views/LlmConfigView";
 import DashboardSidebar from "./components/DashboardSidebar";
+import SystemSetupBanner from "./components/SystemSetupBanner";
 import PrsView from "./components/views/PrsView";
 import AddRepoModal from "./components/modals/addRepo";
 import EditRepoModal from "./components/modals/editRepo";
@@ -28,13 +29,15 @@ import RepoSettingsModal from "./components/modals/repoSettings/RepoSettingsModa
 import WebhookPrompt from "./components/modals/addRepo/WebhookPrompt";
 import { useDashboardData } from "./hooks/useDashboardData";
 import { useEditRepo } from "./hooks/useEditRepo";
-import { type ActiveTab, type Repository } from "./lib/types";
+import { fetchJson } from "./lib/http";
+import { type ActiveTab, type ConfigHealthReport, type Repository } from "./lib/types";
 
 export default function App() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [activeTab, setActiveTab] = useState<ActiveTab>("prs");
   const [pendingWebhook, setPendingWebhook] = useState<{ repoId: string; repoName: string; hasPat: boolean } | null>(null);
   const [settingsRepo, setSettingsRepo] = useState<Repository | null>(null);
+  const [configHealth, setConfigHealth] = useState<ConfigHealthReport | null>(null);
 
   const d = useDashboardData();
   const ed = useEditRepo({
@@ -52,6 +55,19 @@ export default function App() {
       d.setLastRegisteredRepo(null);
     }
   }, [d.lastRegisteredRepo]);
+
+  const fetchConfigHealth = async () => {
+    try {
+      const res = await fetchJson("/api/config/health");
+      if (res.ok) setConfigHealth(await res.json());
+    } catch (err) {
+      console.error("Failed loading configuration health:", err);
+    }
+  };
+
+  useEffect(() => {
+    fetchConfigHealth();
+  }, []);
 
   const activeRepo = d.repos.find((r) => r.id === d.selectedRepoId);
   const activeAPR = d.prs.find((p) => p.id === d.selectedPrId && p.repoId === d.selectedRepoId);
@@ -103,6 +119,13 @@ export default function App() {
           </div>
         </div>
       </header>
+
+      <SystemSetupBanner
+        health={configHealth}
+        onOpenDbSettings={() => setActiveTab("db_config")}
+        onOpenSettings={() => setActiveTab("llm_config")}
+        onRefresh={fetchConfigHealth}
+      />
 
       {/* 2. Main Workspace Layout */}
       <main className="flex flex-1 overflow-hidden relative">

@@ -7,7 +7,7 @@ import os from "node:os";
 const REPOS_SUBDIR = ".repos";
 
 function cloneDir(): string {
-  return process.env.REPOS_DIR || path.join(process.cwd(), REPOS_SUBDIR);
+  return process.env.REPOS_DIR || path.join(/* turbopackIgnore: true */ process.cwd(), REPOS_SUBDIR);
 }
 
 export interface CloneOpts {

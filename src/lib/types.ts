@@ -114,6 +114,26 @@ export interface DbConfig {
   sqliteFile: string;
 }
 
+export interface ConfigHealthItem {
+  id: string;
+  label: string;
+  variables: string[];
+  status: "missing" | "invalid";
+  severity: "blocking" | "warning";
+  feature: string;
+  message: string;
+  action: string;
+  restartRequired: boolean;
+}
+
+export interface ConfigHealthReport {
+  ok: boolean;
+  status: "ok" | "needs_setup";
+  summary: string;
+  items: ConfigHealthItem[];
+  generatedAt: string;
+}
+
 export interface LlmPresetView {
   id: string;
   name: string;
