@@ -144,6 +144,7 @@ vi.mock("../src/services/largePrReview/fingerprint", () => ({
 
 vi.mock("../src/services/largePrReview/reconcile", () => ({
   reconcileFindingsAcrossRuns: vi.fn().mockResolvedValue([]),
+  dedupFindingsWithinRun: vi.fn().mockResolvedValue(0),
 }));
 
 // Provider-response shapers.

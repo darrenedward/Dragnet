@@ -11,7 +11,7 @@ import { runDeterministicChecks, runContainerizedChecks, logReview, type Determi
 import { detectBuildSystem } from "./src/lib/buildsystemDetect";
 import { classifyDiff } from "./src/lib/diffClassifier";
 import { buildFindingFingerprint, resolveSymbolsBatch } from "./src/services/largePrReview/fingerprint";
-import { reconcileFindingsAcrossRuns } from "./src/services/largePrReview/reconcile";
+import { dedupFindingsWithinRun, reconcileFindingsAcrossRuns } from "./src/services/largePrReview/reconcile";
 import { classifyProviderOutcome, type OutcomeClass } from "./src/lib/failureClassifier";
 import { computeCost } from "./src/lib/llmPricing";
 import { recordProviderQualityFailure, recordProviderSuccess } from "./src/lib/providerHealth";
@@ -2002,9 +2002,15 @@ ${diffPayload}${deterministicPayload}`;
   // completeReviewRun swallows errors. Await it so callers that immediately
   // refetch the latest completed run don't race the status write.
   if (reviewRunId && !reviewChunkId) {
-    // Reconcile against prior runs BEFORE completing so the skill sees a
-    // consistent view (matched findings deduped, resolved findings hidden).
-    // Best-effort: a reconcile failure shouldn't block run completion.
+    // Intra-run dedup first: collapse duplicates within this run by fingerprint.
+    // Then reconcile against prior runs so the skill sees a consistent view
+    // (matched findings deduped, resolved findings hidden).
+    // Both are best-effort — a failure shouldn't block run completion.
+    try {
+      await dedupFindingsWithinRun(reviewRunId);
+    } catch (err) {
+      console.error(`[scan] dedupFindingsWithinRun failed for run ${reviewRunId}:`, err);
+    }
     try {
       await reconcileFindingsAcrossRuns(prId, reviewRunId);
     } catch (err) {
