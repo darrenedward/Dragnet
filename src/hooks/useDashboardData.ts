@@ -167,7 +167,7 @@ export function useDashboardData() {
   const [newDeployKey, setNewDeployKey] = useState("");
   const [newPat, setNewPat] = useState("");
   const [newGithubRepoId, setNewGithubRepoId] = useState<number | null>(null);
-  const [createdApiKey, setCreatedApiKey] = useState<{ raw: string; prefix: string } | null>(null);
+  const [createdApiKey, setCreatedApiKey] = useState<{ repoId: string; raw: string; prefix: string } | null>(null);
   const [newBaseBranch, setNewBaseBranch] = useState("main");
   const [newTriggerMode, setNewTriggerMode] = useState<"auto" | "mention">("auto");
   const [newQuietPeriod, setNewQuietPeriod] = useState(10);
@@ -850,14 +850,16 @@ export function useDashboardData() {
 
       const data = await res.json();
       if (res.ok) {
-        setShowAddRepoModal(false);
         setErrorFeedback(null);
         await fetchRepos();
         setSelectedRepoId(data.id);
         await fetchPrsForSelectedRepo(data.id, false);
 
         if (data.apiKey) {
-          setCreatedApiKey({ raw: data.apiKey, prefix: data.apiKeyPrefix });
+          // Keep modal open — it transitions to success state showing the key.
+          setCreatedApiKey({ repoId: data.id, raw: data.apiKey, prefix: data.apiKeyPrefix });
+        } else {
+          setShowAddRepoModal(false);
         }
 
         if (mode !== "local") {

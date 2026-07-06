@@ -12,7 +12,6 @@ import {
   ListTodo,
   Cpu,
 } from "lucide-react";
-import ApiKeyBanner from "./components/ApiKeyBanner";
 import PRDTracker from "./components/PRDTracker";
 import ErrorBoundary from "./components/ErrorBoundary";
 import Toaster from "./components/Toaster";
@@ -386,24 +385,18 @@ export default function App() {
         />
       )}
 
-      {d.createdApiKey && (
-        <ApiKeyBanner
-          raw={d.createdApiKey.raw}
-          prefix={d.createdApiKey.prefix}
-          onDismiss={() => d.setCreatedApiKey(null)}
-        />
-      )}
-
       {/* MODAL: Register a New Project Path */}
       <AnimatePresence>
         {d.showAddRepoModal && (
           <AddRepoModal
             onClose={() => {
               d.setShowAddRepoModal(false);
+              d.setCreatedApiKey(null);
               d.setErrorFeedback(null);
             }}
             onSubmit={d.handleAddRepo}
             errorFeedback={d.errorFeedback}
+            createdApiKey={d.createdApiKey}
             newRepoName={d.newRepoName}
             setNewRepoName={d.setNewRepoName}
             newRepoPath={d.newRepoPath}
