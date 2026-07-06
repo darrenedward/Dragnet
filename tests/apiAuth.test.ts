@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   mockFindUnique: vi.fn(),
+  mockRequireSession: vi.fn(),
 }));
 
 vi.mock("@/src/lib/prisma", () => ({
@@ -11,6 +12,10 @@ vi.mock("@/src/lib/prisma", () => ({
       update: vi.fn().mockResolvedValue({}),
     },
   },
+}));
+
+vi.mock("@/src/lib/api-auth", () => ({
+  requireSession: mocks.mockRequireSession,
 }));
 
 async function getMod() {
@@ -72,6 +77,7 @@ describe("authenticateApiRequest", () => {
     mocks.mockFindUnique.mockResolvedValue({
       id: "key-1",
       repoId: null,
+      userId: null,
       revoked: true,
       lastUsedAt: null,
     });
@@ -88,6 +94,7 @@ describe("authenticateApiRequest", () => {
     mocks.mockFindUnique.mockResolvedValue({
       id: "key-1",
       repoId: "repo-abc",
+      userId: null,
       revoked: false,
       lastUsedAt: null,
     });
@@ -104,6 +111,7 @@ describe("authenticateApiRequest", () => {
     mocks.mockFindUnique.mockResolvedValue({
       id: "key-1",
       repoId: null,
+      userId: null,
       revoked: false,
       lastUsedAt: null,
     });
@@ -114,6 +122,40 @@ describe("authenticateApiRequest", () => {
     const result = await mod.authenticateApiRequest(req);
     expect(result.ok).toBe(true);
     expect(result.repoId).toBeNull();
+  });
+
+  it("returns userId when key is owned by a user", async () => {
+    mocks.mockFindUnique.mockResolvedValue({
+      id: "key-1",
+      repoId: null,
+      userId: "user-42",
+      revoked: false,
+      lastUsedAt: null,
+    });
+    const mod = await getMod();
+    const req = new Request("http://localhost/api/test", {
+      headers: { Authorization: "Bearer dr_a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2" },
+    });
+    const result = await mod.authenticateApiRequest(req);
+    expect(result.ok).toBe(true);
+    expect(result.userId).toBe("user-42");
+  });
+
+  it("returns null userId for legacy keys (no owner)", async () => {
+    mocks.mockFindUnique.mockResolvedValue({
+      id: "key-1",
+      repoId: "repo-abc",
+      userId: null,
+      revoked: false,
+      lastUsedAt: null,
+    });
+    const mod = await getMod();
+    const req = new Request("http://localhost/api/test", {
+      headers: { Authorization: "Bearer dr_a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2" },
+    });
+    const result = await mod.authenticateApiRequest(req);
+    expect(result.ok).toBe(true);
+    expect(result.userId).toBeNull();
   });
 
   it("key not found in DB", async () => {
@@ -131,27 +173,69 @@ describe("authenticateApiRequest", () => {
 describe("enforceRepoScope", () => {
   it("allows global key (repoId null) to access any repo", async () => {
     const mod = await getMod();
-    const result = mod.enforceRepoScope({ ok: true, repoId: null }, "repo-abc");
+    const result = mod.enforceRepoScope({ ok: true, repoId: null, userId: null }, "repo-abc");
     expect(result).toBeNull();
   });
 
   it("allows repo-scoped key to access its own repo", async () => {
     const mod = await getMod();
-    const result = mod.enforceRepoScope({ ok: true, repoId: "repo-abc" }, "repo-abc");
+    const result = mod.enforceRepoScope({ ok: true, repoId: "repo-abc", userId: null }, "repo-abc");
     expect(result).toBeNull();
   });
 
   it("rejects repo-scoped key accessing a different repo", async () => {
     const mod = await getMod();
-    const result = mod.enforceRepoScope({ ok: true, repoId: "repo-abc" }, "repo-xyz");
+    const result = mod.enforceRepoScope({ ok: true, repoId: "repo-abc", userId: null }, "repo-xyz");
     expect(result).toBeInstanceOf(Object);
     expect((result as any).error).toContain("does not have access");
   });
 
   it("rejects when auth failed", async () => {
     const mod = await getMod();
-    const result = mod.enforceRepoScope({ ok: false, error: "Unauthorized", repoId: null }, "repo-abc");
+    const result = mod.enforceRepoScope({ ok: false, error: "Unauthorized", repoId: null, userId: null }, "repo-abc");
     expect(result).toBeInstanceOf(Object);
     expect((result as any).error).toContain("Unauthorized");
+  });
+});
+
+describe("authenticateSessionOrKey", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns userId from session when no Bearer header", async () => {
+    mocks.mockRequireSession.mockResolvedValue({ user: { id: "user-99", email: "alice@example.com" } });
+    const mod = await getMod();
+    const req = new Request("http://localhost/api/test");
+    const result = await mod.authenticateSessionOrKey(req);
+    expect(result.ok).toBe(true);
+    expect(result.userId).toBe("user-99");
+    expect(result.repoId).toBeNull();
+  });
+
+  it("falls back to API key auth when Bearer header is present", async () => {
+    mocks.mockFindUnique.mockResolvedValue({
+      id: "key-1",
+      repoId: null,
+      userId: "user-77",
+      revoked: false,
+      lastUsedAt: null,
+    });
+    const mod = await getMod();
+    const req = new Request("http://localhost/api/test", {
+      headers: { Authorization: "Bearer dr_a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2" },
+    });
+    const result = await mod.authenticateSessionOrKey(req);
+    expect(result.ok).toBe(true);
+    expect(result.userId).toBe("user-77");
+  });
+
+  it("returns error with null userId when both auth methods fail", async () => {
+    mocks.mockRequireSession.mockRejectedValue(new Error("Unauthorized"));
+    const mod = await getMod();
+    const req = new Request("http://localhost/api/test");
+    const result = await mod.authenticateSessionOrKey(req);
+    expect(result.ok).toBe(false);
+    expect(result.userId).toBeNull();
   });
 });

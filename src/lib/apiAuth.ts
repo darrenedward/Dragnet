@@ -16,23 +16,29 @@ function hashKey(raw: string): string | null {
   return crypto.createHash("sha256").update(raw).digest("hex");
 }
 
-export type AuthResult = { ok: boolean; error?: string; repoId: string | null };
+export type AuthResult = {
+  ok: boolean;
+  error?: string;
+  repoId: string | null;
+  /** User that owns the credential used to authenticate. Null for legacy keys (no userId column at creation). */
+  userId: string | null;
+};
 
 export async function authenticateApiRequest(req: Request): Promise<AuthResult> {
   const auth = req.headers.get("authorization");
   if (!auth || !auth.startsWith("Bearer ")) {
-    return { ok: false, error: "Missing or invalid Authorization header. Use: Authorization: Bearer dr_<key>", repoId: null };
+    return { ok: false, error: "Missing or invalid Authorization header. Use: Authorization: Bearer dr_<key>", repoId: null, userId: null };
   }
 
   const raw = auth.slice("Bearer ".length).trim();
   const hash = hashKey(raw);
   if (!hash) {
-    return { ok: false, error: "Invalid API key format. Keys start with 'dr_'.", repoId: null };
+    return { ok: false, error: "Invalid API key format. Keys start with 'dr_'.", repoId: null, userId: null };
   }
 
   const key = await prisma.apiKey.findUnique({ where: { hash } });
   if (!key || key.revoked) {
-    return { ok: false, error: "API key not found or has been revoked.", repoId: null };
+    return { ok: false, error: "API key not found or has been revoked.", repoId: null, userId: null };
   }
 
   // Throttle lastUsedAt updates to once per 5 min per key — high-traffic
@@ -45,7 +51,7 @@ export async function authenticateApiRequest(req: Request): Promise<AuthResult> 
       .catch(() => {});
   }
 
-  return { ok: true, repoId: key.repoId ?? null };
+  return { ok: true, repoId: key.repoId ?? null, userId: key.userId ?? null };
 }
 
 /**
@@ -109,13 +115,15 @@ export async function authenticateSessionOrKey(req: Request): Promise<AuthResult
     return authenticateApiRequest(req);
   }
   try {
-    await requireSession(req);
-    return { ok: true, repoId: null };
+    const session = await requireSession(req);
+    const userId = session?.user?.id ?? null;
+    return { ok: true, repoId: null, userId };
   } catch {
     return {
       ok: false,
       error: "Authentication required. Send a Bearer API key (Authorization: Bearer dr_…) or a valid session cookie.",
       repoId: null,
+      userId: null,
     };
   }
 }

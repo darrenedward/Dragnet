@@ -11,14 +11,29 @@ export async function GET(req: Request) {
   }
   const keys = await prisma.apiKey.findMany({
     orderBy: { createdAt: "desc" },
-    select: { id: true, name: true, prefix: true, repoId: true, createdAt: true, lastUsedAt: true, revoked: true },
+    include: {
+      user: { select: { id: true, name: true, email: true } },
+    },
   });
-  return NextResponse.json(keys);
+  return NextResponse.json(
+    keys.map((k) => ({
+      id: k.id,
+      name: k.name,
+      prefix: k.prefix,
+      repoId: k.repoId,
+      userId: k.userId,
+      user: k.user,
+      createdAt: k.createdAt,
+      lastUsedAt: k.lastUsedAt,
+      revoked: k.revoked,
+    })),
+  );
 }
 
 export async function POST(req: Request) {
+  let session;
   try {
-    await requireSession(req);
+    session = await requireSession(req);
   } catch {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
@@ -30,7 +45,12 @@ export async function POST(req: Request) {
 
   const { raw, prefix, hash } = generateApiKey();
 
-  const data: { name: string; prefix: string; hash: string; repoId?: string } = { name, prefix, hash };
+  const data: { name: string; prefix: string; hash: string; repoId?: string; userId?: string } = {
+    name,
+    prefix,
+    hash,
+    userId: session.user.id,
+  };
   if (body.repoId && typeof body.repoId === "string") {
     data.repoId = body.repoId;
   }
@@ -42,6 +62,7 @@ export async function POST(req: Request) {
     prefix,
     name,
     repoId: data.repoId || null,
+    userId: data.userId,
     message: "Copy this key now — it won't be shown again.",
   });
 }

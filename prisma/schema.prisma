@@ -316,6 +316,7 @@ model User {
   members          Member[]
   organizations    Organization[]
   oauthConnections OAuthConnection[]
+  apiKeys          ApiKey[]
 
   @@map("users")
 }
@@ -410,10 +411,13 @@ model ApiKey {
   prefix     String
   hash       String    @unique
   repoId     String? // optional: scoped to a specific repo (dragnet-init flow)
+  userId     String? // optional: user that owns this key (null = legacy key, pre-#48)
+  user       User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
   createdAt  DateTime  @default(now())
   lastUsedAt DateTime?
   revoked    Boolean   @default(false)
 
+  @@index([userId])
   @@map("api_keys")
 }
 
