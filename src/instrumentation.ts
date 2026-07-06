@@ -26,9 +26,9 @@ export async function register(): Promise<void> {
   const { seedFromLegacyFile, preloadCache } = await import("./lib/llmPresets");
   void seedFromLegacyFile().then(() => preloadCache());
 
-  // Start the polling worker only when enabled via environment variable.
-  // Keeping this opt-in avoids unnecessary GitHub API calls for deployments
-  // that rely exclusively on webhooks.
+  // Start the local-repo polling worker (prPollingWorker) only when enabled
+  // via environment variable. Keeping this opt-in avoids unnecessary GitHub
+  // API calls for deployments that rely exclusively on webhooks.
   if (process.env.DRAGNET_POLLING_ENABLED === "1") {
     try {
       const apiKey = process.env.DRAGNET_API_KEY;
@@ -59,6 +59,18 @@ export async function register(): Promise<void> {
       });
     } catch (err: any) {
       console.warn("[instrumentation] polling worker failed to start:", err.message);
+    }
+  }
+
+  // Start the hosted-mode outbound poller (discovers PRs from GitHub/GitLab
+  // API for hosted-mode repos and auto-triggers scans). Uses its own env var
+  // and interval so it's independent from the local-repo polling worker.
+  if (process.env.DRAGNET_HOSTED_POLLING_ENABLED === "1") {
+    try {
+      const { startHostedPoller } = await import("./services/hostedScan/poller");
+      startHostedPoller();
+    } catch (err: any) {
+      console.warn("[instrumentation] hosted poller failed to start:", err.message);
     }
   }
 }
