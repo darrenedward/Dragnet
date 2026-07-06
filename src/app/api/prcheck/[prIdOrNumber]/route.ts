@@ -143,6 +143,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ prIdOrNu
       reviewConfigHash: configHash,
       model: chatChain[0]?.model ?? null,
       triggerReason: "prcheck",
+      createdByUserId: auth.userId,
     });
 
     const scanResult = tier.tier === "normal"

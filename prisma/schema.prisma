@@ -143,12 +143,15 @@ model ReviewRun {
   forced           Boolean         @default(false)
   tokensUsed       Json? // Phase 2 cost telemetry: { totalCostUsd, totalPromptTokens, totalCompletionTokens, providers[] }
   lastCheckpointAt DateTime? // Phase 5 resume: last successful checkpoint write for an in-progress run
+  createdByUserId  String?
+  createdByUser    User?           @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
   pullRequest      PullRequest     @relation(fields: [prId], references: [id], onDelete: Cascade)
   reviewFindings   ReviewFinding[]
   reviewChunks     ReviewChunk[]
 
   @@index([prId, status, completedAt])
   @@index([repoId, status, completedAt])
+  @@index([createdByUserId])
   @@map("review_runs")
 }
 
@@ -317,6 +320,7 @@ model User {
   organizations    Organization[]
   oauthConnections OAuthConnection[]
   apiKeys          ApiKey[]
+  reviewRuns       ReviewRun[]
 
   @@map("users")
 }

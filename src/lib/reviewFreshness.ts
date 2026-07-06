@@ -319,6 +319,7 @@ export async function createReviewRun(opts: {
   model?: string | null;
   triggerReason?: string;
   forced?: boolean;
+  createdByUserId?: string | null;
 }): Promise<string> {
   const id = `run-${randomUUID()}`;
   await prisma.reviewRun.create({
@@ -336,6 +337,7 @@ export async function createReviewRun(opts: {
       rating: null,
       triggerReason: opts.triggerReason ?? "manual",
       forced: opts.forced ?? false,
+      createdByUserId: opts.createdByUserId ?? null,
     },
   });
   return id;

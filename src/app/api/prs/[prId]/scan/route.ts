@@ -338,6 +338,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
       model: chatChain[0]?.model ?? null,
       triggerReason: "manual",
       forced: force,
+      createdByUserId: auth.userId,
     });
     if (resumeRunId) {
       // Resume re-uses the prior run row — flip it back to in_progress

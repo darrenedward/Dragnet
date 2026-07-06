@@ -152,6 +152,7 @@ export async function POST(req: Request) {
       reviewConfigHash: configHash,
       model: chatChain[0]?.model ?? null,
       triggerReason: "prepush",
+      createdByUserId: auth.userId,
     });
 
     const result = tier.tier === "normal"

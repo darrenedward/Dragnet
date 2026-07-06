@@ -14,6 +14,8 @@ interface ReviewRunSummary {
   triggerReason: string | null;
   commitHash: string;
   forced: boolean;
+  createdByUserId: string | null;
+  createdByUser: { id: string; name: string | null; email: string } | null;
 }
 
 interface LogEntry {
@@ -233,6 +235,12 @@ export default function ScanHistory({ prId, currentRunId }: Props) {
                         · {run.triggerReason}
                       </span>
                     )}
+                    <span
+                      className="text-[9px] font-mono text-slate-500 shrink-0"
+                      title={run.createdByUser?.email ?? undefined}
+                    >
+                      · {run.createdByUser ? (run.createdByUser.name || run.createdByUser.email) : "System"}
+                    </span>
                     {run.forced && (
                       <span className="text-[9px] font-mono uppercase text-amber-400/80 shrink-0">· forced</span>
                     )}

@@ -35,7 +35,7 @@ import { computeStability } from "@/src/lib/stabilityScore";
  * Returns `conflict: true` if another scan is already running on the PR
  * (caller surfaces a SCAN_IN_PROGRESS message instead of starting a race).
  */
-async function startTrackedReview(pr: any, repo: any): Promise<
+async function startTrackedReview(pr: any, repo: any, userId: string | null): Promise<
   | { sourceBranch: string; sizeProfile: PrSizeProfile }
   | { conflict: true; runId: string; startedAt: Date }
 > {
@@ -95,6 +95,7 @@ async function startTrackedReview(pr: any, repo: any): Promise<
     reviewConfigHash: configHash,
     model: chatChain[0]?.model ?? null,
     triggerReason: "prcheck",
+    createdByUserId: userId,
   });
 
   const runPromise = tier.tier === "normal"
@@ -273,7 +274,7 @@ async function formatLatestFindings(pr: any): Promise<string> {
   return out;
 }
 
-async function handlePrCheck(args: any): Promise<string> {
+async function handlePrCheck(args: any, userId: string | null): Promise<string> {
   const pr = await resolvePrFromArgs(args);
   if (!pr) return `> **No pull requests found** matching that criteria on this repository.\n>\n> To review a PR, create a feature branch and push it, or check available PRs with \`prlist\`.`;
 
@@ -295,7 +296,7 @@ async function handlePrCheck(args: any): Promise<string> {
     }
   }
 
-  const started = await startTrackedReview(pr, repo);
+  const started = await startTrackedReview(pr, repo, userId);
   if ("conflict" in started) {
     return `> ⚠ **Scan already in progress** for PR \`${pr.sourceBranch}\` (started ${started.startedAt.toISOString()}). Re-run \`prcheck ${pr.sourceBranch}\` after it completes.`;
   }
@@ -303,7 +304,7 @@ async function handlePrCheck(args: any): Promise<string> {
   return `> **Review started** for PR \`${started.sourceBranch}\`.\n>\n> Size: ${formatSizeProfile(started.sizeProfile)}\n>\n> This runs in the background. Check results with \`prcheckstatus ${started.sourceBranch}\` or view in the Dragnet dashboard.\n>\n> Alternatively, use \`prcomments ${started.sourceBranch}\` for the latest persisted findings.`;
 }
 
-async function handlePrCheckStatus(args: any): Promise<string> {
+async function handlePrCheckStatus(args: any, _userId: string | null): Promise<string> {
   const pr = await resolvePrFromArgs(args);
   if (!pr) return `> **No pull requests found** matching that criteria on this repository.`;
 
@@ -348,7 +349,7 @@ async function handlePrCheckStatus(args: any): Promise<string> {
   return out;
 }
 
-async function handlePrComments(args: any): Promise<string> {
+async function handlePrComments(args: any, _userId: string | null): Promise<string> {
   const pr = await resolvePrFromArgs(args);
   if (!pr) return `> **No pull requests found** matching that criteria on this repository.`;
   const latest = await getLatestCompletedReview(pr.id);
@@ -403,7 +404,7 @@ async function buildPrList(repoId: string) {
   return { prs, topology, scannedPrIds };
 }
 
-async function handlePrList(args: any): Promise<string> {
+async function handlePrList(args: any, _userId: string | null): Promise<string> {
   if (!args.repoId) return 'Pass "repoId" to list PRs.';
   const { prs, topology } = await buildPrList(args.repoId);
   if (prs.length === 0) return "> **No pull requests found** for this repo.";
@@ -421,7 +422,7 @@ async function handlePrList(args: any): Promise<string> {
   return out;
 }
 
-type Handler = (args: any) => Promise<string>;
+type Handler = (args: any, userId: string | null) => Promise<string>;
 const toolHandlers: Record<string, Handler> = {
   prcheck: handlePrCheck,
   prcheckstatus: handlePrCheckStatus,
@@ -444,12 +445,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ args?: 
   const body = await req.json().catch(() => null);
 
   if (body && body.jsonrpc && body.method) {
-    return handleJsonRpc(body, defRepo);
+    return handleJsonRpc(body, defRepo, auth.userId);
   }
-  return handleLegacyCommand(body, defRepo);
+  return handleLegacyCommand(body, defRepo, auth.userId);
 }
 
-async function handleJsonRpc(body: any, defRepo: string | null) {
+async function handleJsonRpc(body: any, defRepo: string | null, userId: string | null) {
   const { method, id, params } = body;
   if (id === undefined || id === null) return new Response(null, { status: 202 });
 
@@ -474,7 +475,7 @@ async function handleJsonRpc(body: any, defRepo: string | null) {
     if (!toolName || !toolHandlers[toolName]) {
       return NextResponse.json({ jsonrpc: "2.0", id, error: { code: -32601, message: `Unknown tool: ${toolName}` } });
     }
-    const result = await toolHandlers[toolName](args);
+    const result = await toolHandlers[toolName](args, userId);
     return NextResponse.json({ jsonrpc: "2.0", id, result: { content: [{ type: "text", text: result }] } });
   }
 
@@ -489,7 +490,7 @@ async function resolvePr(body: any, argVal: string): Promise<any | null> {
   return pr;
 }
 
-async function handleLegacyCommand(body: any, defRepo: string | null) {
+async function handleLegacyCommand(body: any, defRepo: string | null, userId: string | null) {
   const { command } = body || {};
   if (!command || typeof command !== "string") {
     return NextResponse.json({ status: "Error", message: "Send a command." }, { status: 400 });
@@ -531,7 +532,7 @@ async function handleLegacyCommand(body: any, defRepo: string | null) {
           await IndexingService.indexFolder(pr.repoId, repo.path);
         }
       }
-      const started = await startTrackedReview(pr, repo);
+const started = await startTrackedReview(pr, repo, userId);
       if ("conflict" in started) {
         return NextResponse.json({
           status: "Conflict",
