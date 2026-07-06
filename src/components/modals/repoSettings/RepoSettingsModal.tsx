@@ -297,7 +297,17 @@ export default function RepoSettingsModal({ repo, onClose, onResetIndex, onRefre
                 <button
                   onClick={async () => {
                     setRegeneratingKey(true);
+                    setRegeneratedKey(null);
                     try {
+                      // Revoke existing keys for this repo first
+                      const existingRes = await fetch("/api/keys");
+                      if (existingRes.ok) {
+                        const existingKeys: { id: string; repoId: string | null }[] = await existingRes.json();
+                        const repoKeys = existingKeys.filter((k) => k.repoId === repo.id);
+                        await Promise.all(
+                          repoKeys.map((k) => fetch(`/api/keys/${k.id}`, { method: "DELETE" })),
+                        );
+                      }
                       const res = await fetch("/api/keys", {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },

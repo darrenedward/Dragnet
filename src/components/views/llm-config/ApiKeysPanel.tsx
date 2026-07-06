@@ -8,6 +8,7 @@ interface ApiKeyView {
   id: string;
   name: string;
   prefix: string;
+  repoId: string | null;
   createdAt: string;
   lastUsedAt: string | null;
   revoked: boolean;
