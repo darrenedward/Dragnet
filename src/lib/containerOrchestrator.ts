@@ -1,4 +1,4 @@
-import { execFile as cpExecFile, execSync } from "node:child_process";
+import { execFile as cpExecFile, spawn, execSync } from "node:child_process";
 import { type RunOptions, type RunResult } from "./containerOrchestratorTypes";
 
 function asyncExecFile(file: string, args: string[], options: { encoding: string; signal: AbortSignal }): Promise<{ stdout: string; stderr: string }> {
@@ -9,6 +9,58 @@ function asyncExecFile(file: string, args: string[], options: { encoding: string
       } else {
         resolve({ stdout: stdout as string, stderr: stderr as string });
       }
+    });
+  });
+}
+
+function asyncSpawnWithTimeout(
+  file: string,
+  args: string[],
+  timeoutMs: number,
+): Promise<{ stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(file, args, { stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    let didTimeout = false;
+
+    child.stdout!.setEncoding("utf8");
+    child.stdout!.on("data", (data: string) => {
+      stdout += data;
+    });
+
+    child.stderr!.setEncoding("utf8");
+    child.stderr!.on("data", (data: string) => {
+      stderr += data;
+    });
+
+    const timer = setTimeout(() => {
+      didTimeout = true;
+      child.kill("SIGTERM");
+    }, timeoutMs);
+
+    child.on("close", (exitCode) => {
+      clearTimeout(timer);
+      if (didTimeout) {
+        const err = new Error("timed out") as Error & Record<string, unknown>;
+        err.name = "AbortError";
+        err.stdout = stdout;
+        err.stderr = stderr;
+        reject(err);
+      } else if (exitCode !== 0 && exitCode !== null) {
+        const err = new Error(`Process exited with code ${exitCode}`) as Error & Record<string, unknown>;
+        err.exitCode = exitCode;
+        err.stdout = stdout;
+        err.stderr = stderr;
+        reject(err);
+      } else {
+        resolve({ stdout, stderr });
+      }
+    });
+
+    child.on("error", (err) => {
+      clearTimeout(timer);
+      reject(err);
     });
   });
 }
@@ -130,16 +182,14 @@ export class ContainerOrchestrator {
     let timedOut = false;
 
     try {
-      const { stdout: out } = await asyncExecFile(engine, args, {
-        encoding: "utf8",
-        signal: AbortSignal.timeout(timeoutMs),
-      }) as { stdout: string; stderr: string };
-      stdout = out;
+      const result = await asyncSpawnWithTimeout(engine, args, timeoutMs);
+      stdout = result.stdout;
     } catch (err: any) {
       if (err.name === "AbortError") {
         timedOut = true;
         exitCode = -1;
-        stderr = `Command execution timed out after ${timeoutMs / 1000}s`;
+        stdout = err.stdout ?? "";
+        stderr = (err.stderr ?? "") + `\nCommand execution timed out after ${timeoutMs / 1000}s`;
       } else {
         exitCode = err.exitCode ?? -1;
         stdout = err.stdout ?? "";

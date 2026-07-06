@@ -5,6 +5,8 @@ import type { ContainerizedCheckOptions } from "../src/services/deterministicChe
 const mockSyncToCommit = vi.fn();
 const mockRunRunner = vi.fn();
 
+const mockReviewLogCreate = vi.fn().mockResolvedValue({});
+
 vi.mock("../src/lib/gitService", () => ({
   gitService: {
     syncToCommit: (...args: unknown[]) => mockSyncToCommit(...args),
@@ -27,7 +29,7 @@ vi.mock("../src/lib/containerOrchestrator", () => ({
 vi.mock("../src/lib/prisma", () => ({
   prisma: {
     reviewLog: {
-      create: vi.fn().mockResolvedValue({}),
+      create: (...args: unknown[]) => mockReviewLogCreate(...args),
     },
   },
 }));
@@ -151,6 +153,16 @@ describe("runContainerizedChecks", () => {
     expect(mockRunRunner).not.toHaveBeenCalledTimes(2);
   });
 
+  it("skips test execution when install times out", async () => {
+    mockRunRunner.mockResolvedValueOnce({
+      exitCode: -1, stdout: "", stderr: "", timedOut: true,
+    });
+
+    const findings = await runContainerizedChecks(baseOpts);
+    expect(mockRunRunner).toHaveBeenCalledTimes(1);
+    expect(findings).toHaveLength(0);
+  });
+
   it("parses tsc diagnostics from test stdout", async () => {
     mockRunRunner
       .mockResolvedValueOnce({ exitCode: 0, stdout: "", stderr: "", timedOut: false })
@@ -230,6 +242,31 @@ describe("runContainerizedChecks", () => {
     expect(findings[0].severity).toBe("info");
     expect(findings[0].category).toBe("Skipped");
     expect(findings[0].explanation).toContain("exited with code 1");
+  });
+
+  it("logs container output with 'info' level, not 'tool_call'", async () => {
+    mockRunRunner
+      .mockResolvedValueOnce({ exitCode: 0, stdout: "installed", stderr: "", timedOut: false })
+      .mockResolvedValueOnce({ exitCode: 0, stdout: "tests passed", stderr: "", timedOut: false });
+
+    await runContainerizedChecks(baseOpts);
+
+    const containerLogCalls = mockReviewLogCreate.mock.calls.filter(
+      (c: any) => {
+        const msg = c[0]?.data?.message ?? "";
+        return msg.startsWith("[install]") || msg.startsWith("[test]");
+      },
+    );
+
+    expect(containerLogCalls.length).toBeGreaterThan(0);
+    for (const call of containerLogCalls) {
+      expect(call[0].data.level).toBe("info");
+    }
+
+    const toolCallLogs = mockReviewLogCreate.mock.calls.filter(
+      (c: any) => c[0]?.data?.level === "tool_call",
+    );
+    expect(toolCallLogs).toHaveLength(0);
   });
 
   it("runs with custom runnerImage and commands", async () => {

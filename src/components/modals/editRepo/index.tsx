@@ -23,6 +23,8 @@ interface Props {
   setNewDeployKey: (v: string) => void;
   newPat: string;
   setNewPat: (v: string) => void;
+  editSkipTier2: boolean;
+  setEditSkipTier2: (v: boolean) => void;
 }
 
 export default function EditRepoModal(props: Props) {
@@ -109,6 +111,24 @@ export default function EditRepoModal(props: Props) {
               setNewRepoMode={(v) => setNewRepoMode(v)}
             />
           )}
+
+          <div className="flex flex-col gap-2 p-3 bg-slate-900/40 border border-white/10 rounded">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={props.editSkipTier2}
+                onChange={(e) => props.setEditSkipTier2(e.target.checked)}
+                className="w-3.5 h-3.5 accent-cyan-500 rounded"
+              />
+              <span className="text-slate-300 text-xs font-mono">
+                Skip Tier 2 (containerized build/test)
+              </span>
+            </label>
+            <p className="text-[10px] text-slate-500 ml-5 leading-snug">
+              When enabled, the containerized build and test pipeline is skipped for this repo.
+              Typecheck/lint (Tier 1) and LLM review (Tier 3) still run normally.
+            </p>
+          </div>
 
           <div className="flex gap-2.5 mt-2.5 pt-4 border-t border-white/10">
             <button

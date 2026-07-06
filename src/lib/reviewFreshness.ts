@@ -122,6 +122,28 @@ export interface LatestReviewResult {
     source: string | null;
     timestamp: string;
   }>;
+  regressions: Array<{
+    id: string;
+    prId: string;
+    reviewRunId: string | null;
+    repoId: string;
+    category: string;
+    severity: string;
+    exploitability: string | null;
+    impact: string | null;
+    filename: string;
+    line: number | null;
+    explanation: string;
+    diffSuggestion: string | null;
+    evidenceChain: string | null;
+    confidence: number | null;
+    verificationStatus: string | null;
+    verificationNote: string | null;
+    source: string | null;
+    timestamp: string;
+    isRegression: boolean;
+    regressedFromRunId: string | null;
+  }>;
   rejectedCount: number;
   rejectedFindings: Array<{
     id: string;
@@ -606,6 +628,7 @@ export async function getLatestCompletedReview(
     return {
       reviewRun: null,
       findings: [],
+      regressions: [],
       rejectedFindings: [],
       rejectedCount: 0,
       stale: false,
@@ -619,7 +642,7 @@ export async function getLatestCompletedReview(
   const currentDiffHash = computeDiffHash(prFiles);
   const stale = latestRun.diffHash !== "" && latestRun.diffHash !== currentDiffHash;
 
-  const [findings, rejectedFindings] = await Promise.all([
+  const [findings, rejectedFindings, regressions] = await Promise.all([
     prisma.reviewFinding.findMany({
       where: {
         reviewRunId: latestRun.id,
@@ -627,6 +650,7 @@ export async function getLatestCompletedReview(
           { verificationStatus: null },
           { verificationStatus: { not: "rejected" } },
         ],
+        isRegression: false, // exclude regressions from main findings list
       },
       orderBy: { line: "asc" },
     }),
@@ -638,11 +662,19 @@ export async function getLatestCompletedReview(
         explanation: true, verificationNote: true, source: true,
       },
     }),
+    prisma.reviewFinding.findMany({
+      where: {
+        reviewRunId: latestRun.id,
+        isRegression: true,
+      },
+      orderBy: { line: "asc" },
+    }),
   ]);
 
   return {
     reviewRun: latestRun,
     findings,
+    regressions,
     rejectedFindings,
     rejectedCount: rejectedFindings.length,
     stale,
@@ -817,6 +849,7 @@ export type RatingTrendEntry = {
   completedAt: Date | null;
   commitHash: string;
   newFindingsCount: number;
+  model: string | null;
 };
 
 /**
@@ -833,7 +866,7 @@ export async function getRecentRuns(
     where: { prId, status: "completed" },
     orderBy: { completedAt: "desc" },
     take: limit,
-    select: { id: true, rating: true, completedAt: true, commitHash: true },
+    select: { id: true, rating: true, completedAt: true, commitHash: true, model: true },
   });
 
   if (runs.length === 0) return [];
@@ -854,5 +887,6 @@ export async function getRecentRuns(
       completedAt: r.completedAt,
       commitHash: r.commitHash,
       newFindingsCount: countMap.get(r.id) ?? 0,
+      model: r.model,
     }));
 }

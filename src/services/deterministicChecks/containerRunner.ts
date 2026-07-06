@@ -23,7 +23,7 @@ function volumeName(repoId: string): string {
   return `dragnet-repo-${repoId}`;
 }
 
-function parseGenericErrors(stderr: string): DeterministicFinding[] {
+export function parseGenericErrors(stderr: string): DeterministicFinding[] {
   const diagnostics: DeterministicFinding[] = [];
   const lines = stderr.split("\n");
   for (const line of lines) {
@@ -36,7 +36,7 @@ function parseGenericErrors(stderr: string): DeterministicFinding[] {
         severity: "error",
         category: "Build Error",
         explanation: fileMatch[2],
-        source: "tsc",
+        source: "runner",
       });
     }
   }
@@ -93,7 +93,7 @@ export async function runContainerizedChecks(
         opts.reviewChunkId,
       );
     }
-    return result.exitCode === 0 || result.timedOut;
+    return result.exitCode === 0;
   };
 
   const runTest = async (): Promise<DeterministicFinding[]> => {
@@ -133,7 +133,7 @@ export async function runContainerizedChecks(
         severity: "info",
         category: "Skipped",
         explanation: `Test command exited with code ${result.exitCode} but output could not be parsed. Check runner logs for details.`,
-        source: "tsc",
+        source: "runner",
       },
     ];
   };
@@ -161,7 +161,7 @@ export async function runContainerizedChecks(
     void logReview(
       opts.prId,
       log,
-      "tool_call",
+      "info",
       opts.reviewRunId,
       opts.reviewChunkId,
     );

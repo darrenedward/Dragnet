@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { verifyGitlabToken, findRepoByCloneUrl, gitFetch, scanRepoPrs } from "../../../../lib/webhook";
 import { enqueue } from "@/src/services/remoteFetchWorker";
+import { checkDelivery } from "../../../../lib/webhookReplay";
+import { runPrScan } from "../../../../../reviewService";
 
 export async function POST(request: Request) {
   const event = request.headers.get("x-gitlab-event");
@@ -8,6 +10,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Missing x-gitlab-event header" }, { status: 400 });
   }
 
+  const deliveryGuid = request.headers.get("x-gitlab-event-uuid") || "";
   const token = request.headers.get("x-gitlab-token") || "";
   const rawBody = await request.text();
 
@@ -40,28 +43,62 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid token" }, { status: 401 });
   }
 
+  if (deliveryGuid && checkDelivery(deliveryGuid)) {
+    return NextResponse.json({ error: "Duplicate delivery UUID — replay rejected" }, { status: 429 });
+  }
+
+  const triggerAfkScans = (prIds: string[]) => {
+    for (const prId of prIds) {
+      runPrScan(prId).catch((err) =>
+        console.error(`[webhook] AFK scan failed for ${prId}:`, err),
+      );
+    }
+  };
+
   if (event === "Merge Request Hook") {
     const mr = payload.object_attributes;
     if (!mr) {
       return NextResponse.json({ error: "Missing merge request" }, { status: 400 });
     }
+    const prIds: string[] = [];
     if (matched.localPath) {
       gitFetch(matched.localPath);
-      await scanRepoPrs(matched.id, matched.localPath);
+      const ids = await scanRepoPrs(matched.id, matched.localPath);
+      prIds.push(...ids);
     } else {
-      enqueue(matched.id).catch((err) => console.error(`[webhook] enqueue failed for ${matched.id}:`, err));
+      const localPath = await enqueue(matched.id).catch((err) => {
+        console.error(`[webhook] enqueue failed for ${matched.id}:`, err);
+        return null;
+      });
+      if (localPath) {
+        gitFetch(localPath);
+        const ids = await scanRepoPrs(matched.id, localPath);
+        prIds.push(...ids);
+      }
     }
-    return NextResponse.json({ ok: true, repo: matched.id, mr: mr.iid });
+    triggerAfkScans(prIds);
+    return NextResponse.json({ ok: true, repo: matched.id, mr: mr.iid, afkScans: prIds.length });
   }
 
   if (event === "Push Hook") {
+    const prIds: string[] = [];
     if (matched.localPath) {
       gitFetch(matched.localPath);
-      await scanRepoPrs(matched.id, matched.localPath);
+      const ids = await scanRepoPrs(matched.id, matched.localPath);
+      prIds.push(...ids);
     } else {
-      enqueue(matched.id).catch((err) => console.error(`[webhook] enqueue failed for ${matched.id}:`, err));
+      const localPath = await enqueue(matched.id).catch((err) => {
+        console.error(`[webhook] enqueue failed for ${matched.id}:`, err);
+        return null;
+      });
+      if (localPath) {
+        gitFetch(localPath);
+        const ids = await scanRepoPrs(matched.id, localPath);
+        prIds.push(...ids);
+      }
     }
-    return NextResponse.json({ ok: true, repo: matched.id });
+    triggerAfkScans(prIds);
+    return NextResponse.json({ ok: true, repo: matched.id, afkScans: prIds.length });
   }
 
   return NextResponse.json({ ok: true, ignored: true, event });

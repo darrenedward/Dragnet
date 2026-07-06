@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/src/lib/prisma";
 import { getRealLocalPrs } from "@/src/lib/getRealLocalPrs";
-import { authenticateSessionOrKey } from "@/src/lib/apiAuth";
+import { authenticateSessionOrKey, enforceRepoScope } from "@/src/lib/apiAuth";
 import { computePrSizeProfile } from "@/src/lib/prSizeProfile";
 import { readPrCommitCount } from "@/src/lib/prSizeProfile.server";
 
@@ -55,6 +55,8 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: 401 });
   try {
     const { id } = await params;
+    const scopeErr = enforceRepoScope(auth, id);
+    if (scopeErr) return NextResponse.json(scopeErr, { status: 403 });
     const repo = await prisma.repository.findUnique({ where: { id } });
     if (!repo) {
       return NextResponse.json({ error: "Repository not found" }, { status: 404 });
@@ -94,6 +96,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: 401 });
   try {
     const { id } = await params;
+    const scopeErr = enforceRepoScope(auth, id);
+    if (scopeErr) return NextResponse.json(scopeErr, { status: 403 });
     const repo = await prisma.repository.findUnique({ where: { id } });
     if (!repo) {
       return NextResponse.json({ error: "Repository not found" }, { status: 404 });

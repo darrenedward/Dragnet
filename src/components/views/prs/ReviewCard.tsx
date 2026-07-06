@@ -7,6 +7,7 @@ import type { StabilityProp } from "../../../lib/stabilityScore";
 import PrSizeProfileChip from "../../PrSizeProfileChip";
 import FindingsList from "./FindingsList";
 import LargePrModePanel from "./LargePrModePanel";
+import CostBanner from "./CostBanner";
 
 export interface ReviewRunMeta {
   id: string;
@@ -23,6 +24,21 @@ export interface ReviewRunMeta {
   chunksCompleted?: number;
   chunksFailed?: number;
   chunksSkipped?: number;
+  tokensUsed?: {
+    totalCostUsd: number;
+    totalPromptTokens: number;
+    totalCompletionTokens: number;
+    providers: Array<{
+      name: string;
+      model: string;
+      promptTokens: number;
+      completionTokens: number;
+      costUsd: number;
+      outcome: string;
+      iterationsUsed: number;
+      maxIterations: number;
+    }>;
+  } | null;
 }
 
 /**
@@ -186,6 +202,11 @@ export default function ReviewCard({
               {reviewRun.completedAt && (
                 <span className="text-slate-600">
                   {formatRelativeTime(reviewRun.completedAt)}
+                </span>
+              )}
+              {reviewRun && (
+                <span className="ml-1">
+                  <CostBanner tokensUsed={reviewRun.tokensUsed ?? null} />
                 </span>
               )}
             </span>

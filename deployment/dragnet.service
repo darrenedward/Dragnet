@@ -1,0 +1,53 @@
+[Unit]
+Description=Dragnet code review platform
+Documentation=https://github.com/user/dragnet
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=dragnet
+Group=dragnet
+WorkingDirectory=/opt/dragnet
+
+# Hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+PrivateDevices=yes
+RemoveIPC=yes
+
+# Paths
+StateDirectory=dragnet
+RuntimeDirectory=dragnet
+StateDirectoryMode=0750
+RuntimeDirectoryMode=0750
+ReadWritePaths=/var/lib/dragnet /run/dragnet /opt/dragnet/.dragnet
+
+# Executable (Next.js production server)
+ExecStart=/usr/bin/node /opt/dragnet/node_modules/.bin/next start -p 3300
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+
+# Environment
+Environment=NODE_ENV=production
+Environment=PORT=3300
+EnvironmentFile=-/etc/dragnet.env
+
+[Install]
+WantedBy=multi-user.target

@@ -10,7 +10,7 @@ import { computePrSizeProfile } from "@/src/lib/prSizeProfile";
 import { readPrCommitCount } from "@/src/lib/prSizeProfile.server";
 import { assertTier, buildDiffManifest, runLargePrReview } from "@/src/services/largePrReview";
 import { readLimits } from "@/src/lib/prSizeConfig";
-import { authenticateSessionOrKey } from "@/src/lib/apiAuth";
+import { authenticateSessionOrKey, enforcePrRepoScope } from "@/src/lib/apiAuth";
 import {
   computeDiffHash,
   computeReviewConfigHash,
@@ -32,6 +32,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
   const auth = await authenticateSessionOrKey(req);
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: 401 });
   const { prId } = await params;
+  const prScopeErr = await enforcePrRepoScope(auth, prId);
+  if (prScopeErr) return NextResponse.json(prScopeErr, { status: 403 });
   await req.json().catch(() => ({}));
   console.log(`[scan] route: POST received for prId=${prId}`);
 

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getActiveScan, getLatestCompletedReview, getRecentRuns } from "@/src/lib/reviewFreshness";
 import { computeStability } from "@/src/lib/stabilityScore";
-import { authenticateSessionOrKey } from "@/src/lib/apiAuth";
+import { authenticateSessionOrKey, enforcePrRepoScope } from "@/src/lib/apiAuth";
 import { prisma } from "@/src/lib/prisma";
 import { computePrSizeProfile } from "@/src/lib/prSizeProfile";
 import { readPrCommitCount } from "@/src/lib/prSizeProfile.server";
@@ -47,6 +47,8 @@ export async function GET(req: Request, { params }: { params: Promise<{ prId: st
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: 401 });
   try {
     const { prId } = await params;
+    const prScopeErr = await enforcePrRepoScope(auth, prId);
+    if (prScopeErr) return NextResponse.json(prScopeErr, { status: 403 });
 
     const [latest, pr, files, activeScan] = await Promise.all([
       getLatestCompletedReview(prId),

@@ -44,7 +44,7 @@ const globalForTreeSitter = globalThis as unknown & {
  * environments where postinstall hasn't run (e.g. some CI pipelines).
  */
 function resolveGrammarPath(filename: string): string {
-  const cwd = process.cwd();
+  const cwd = /* turbopackIgnore: true */ process.cwd();
   const publicPath = path.join(cwd, "public", "grammars", filename);
   const nmPath = path.join(
     cwd,
@@ -58,13 +58,13 @@ function resolveGrammarPath(filename: string): string {
 
 async function loadLanguageFromDisk(filename: string): Promise<Language> {
   const publicPath = path.join(
-    process.cwd(),
+    /* turbopackIgnore: true */ process.cwd(),
     "public",
     "grammars",
     filename,
   );
   const nmPath = path.join(
-    process.cwd(),
+    /* turbopackIgnore: true */ process.cwd(),
     "node_modules",
     "tree-sitter-typescript",
     filename,
@@ -95,7 +95,7 @@ export async function getParser(): Promise<Parser> {
 
   await Parser.init({
     locateFile: (filename: string) =>
-      path.join(process.cwd(), "public", "grammars", filename),
+      path.join(/* turbopackIgnore: true */ process.cwd(), "public", "grammars", filename),
   });
 
   const parser = new Parser();

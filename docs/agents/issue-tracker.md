@@ -2,6 +2,9 @@
 
 Issues and PRDs for this repo live as GitHub issues. Use the `gh` CLI for all operations.
 
+Feature-specific PRD documents checked into the repo go in `docs/` (e.g. `docs/prd-container-runner.md`).
+The main product PRD stays at `prd.md` in the repo root — it is the canonical product spec referenced by README, CLAUDE.md, and roadmap.md.
+
 ## Conventions
 
 - **Create an issue**: `gh issue create --title "..." --body "..."`. Use a heredoc for multi-line bodies.

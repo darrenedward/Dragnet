@@ -2,9 +2,10 @@
 
 import { useState } from "react";
 import { motion } from "motion/react";
-import { AlertCircle, Database, Globe, X } from "lucide-react";
+import { AlertCircle, Database, Globe, Github, X } from "lucide-react";
 import LocalTab from "./LocalTab";
 import RemoteTab from "./RemoteTab";
+import GitHubTab from "./GitHubTab";
 
 interface Props {
   onClose: () => void;
@@ -35,9 +36,12 @@ interface Props {
   setNewDeployKey: (v: string) => void;
   newPat: string;
   setNewPat: (v: string) => void;
+  // github fields
+  newGithubRepoId: number | null;
+  setNewGithubRepoId: (v: number | null) => void;
 }
 
-type Tab = "local" | "remote";
+type Tab = "local" | "remote" | "github";
 
 export default function AddRepoModal(props: Props) {
   const [tab, setTab] = useState<Tab>("local");
@@ -45,7 +49,17 @@ export default function AddRepoModal(props: Props) {
   const {
     onClose, onSubmit, errorFeedback,
     newRepoName, setNewRepoName,
-    ...rest
+    newBaseBranch, setNewBaseBranch,
+    newBranchPattern, setNewBranchPattern,
+    newTriggerMode, setNewTriggerMode,
+    newQuietPeriod, setNewQuietPeriod,
+    newRepoPath, setNewRepoPath,
+    newRepoMode, setNewRepoMode,
+    newCloneUrl, setNewCloneUrl,
+    newCloneUrlHttps, setNewCloneUrlHttps,
+    newDeployKey, setNewDeployKey,
+    newPat, setNewPat,
+    newGithubRepoId, setNewGithubRepoId,
   } = props;
 
   return (
@@ -60,11 +74,17 @@ export default function AddRepoModal(props: Props) {
           <div className="flex items-center gap-2">
             {tab === "local" ? (
               <Database size={16} className="text-cyan-400 animate-pulse" />
+            ) : tab === "github" ? (
+              <Github size={16} className="text-cyan-400 animate-pulse" />
             ) : (
               <Globe size={16} className="text-cyan-400 animate-pulse" />
             )}
             <span className="text-sm font-bold text-white tracking-tight uppercase font-mono">
-              {tab === "local" ? "Link Local Repo Directory" : "Register Remote Repository"}
+              {tab === "local"
+                ? "Link Local Repo Directory"
+                : tab === "github"
+                  ? "Import from GitHub"
+                  : "Register Remote Repository"}
             </span>
           </div>
           <button
@@ -99,6 +119,18 @@ export default function AddRepoModal(props: Props) {
           >
             Remote Repository
           </button>
+          <button
+            type="button"
+            onClick={() => setTab("github")}
+            className={`flex-1 py-2.5 text-xs font-bold uppercase tracking-wider transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+              tab === "github"
+                ? "text-cyan-400 border-b-2 border-cyan-400 bg-cyan-400/5"
+                : "text-slate-500 hover:text-slate-300"
+            }`}
+          >
+            <Github size={12} />
+            <span>GitHub</span>
+          </button>
         </div>
 
         <form onSubmit={onSubmit} className="p-5 flex flex-col gap-4 text-xs font-mono">
@@ -121,9 +153,56 @@ export default function AddRepoModal(props: Props) {
           </Field>
 
           {tab === "local" ? (
-            <LocalTab {...rest} />
+            <LocalTab
+              newRepoPath={newRepoPath}
+              setNewRepoPath={setNewRepoPath}
+              newBaseBranch={newBaseBranch}
+              setNewBaseBranch={setNewBaseBranch}
+              newBranchPattern={newBranchPattern}
+              setNewBranchPattern={setNewBranchPattern}
+              newTriggerMode={newTriggerMode}
+              setNewTriggerMode={setNewTriggerMode}
+              newQuietPeriod={newQuietPeriod}
+              setNewQuietPeriod={setNewQuietPeriod}
+            />
+          ) : tab === "github" ? (
+            <GitHubTab
+              onRepoSelect={(repoId, defaultBranch) => {
+                setNewGithubRepoId(repoId);
+                if (!newBaseBranch) {
+                  setNewBaseBranch(defaultBranch);
+                }
+              }}
+              newBaseBranch={newBaseBranch}
+              setNewBaseBranch={setNewBaseBranch}
+              newBranchPattern={newBranchPattern}
+              setNewBranchPattern={setNewBranchPattern}
+              newTriggerMode={newTriggerMode}
+              setNewTriggerMode={setNewTriggerMode}
+              newQuietPeriod={newQuietPeriod}
+              setNewQuietPeriod={setNewQuietPeriod}
+            />
           ) : (
-            <RemoteTab {...rest} />
+            <RemoteTab
+              newRepoMode={newRepoMode}
+              setNewRepoMode={setNewRepoMode}
+              newCloneUrl={newCloneUrl}
+              setNewCloneUrl={setNewCloneUrl}
+              newCloneUrlHttps={newCloneUrlHttps}
+              setNewCloneUrlHttps={setNewCloneUrlHttps}
+              newDeployKey={newDeployKey}
+              setNewDeployKey={setNewDeployKey}
+              newPat={newPat}
+              setNewPat={setNewPat}
+              newBaseBranch={newBaseBranch}
+              setNewBaseBranch={setNewBaseBranch}
+              newBranchPattern={newBranchPattern}
+              setNewBranchPattern={setNewBranchPattern}
+              newTriggerMode={newTriggerMode}
+              setNewTriggerMode={setNewTriggerMode}
+              newQuietPeriod={newQuietPeriod}
+              setNewQuietPeriod={setNewQuietPeriod}
+            />
           )}
 
           <div className="flex gap-2.5 mt-2.5 pt-4 border-t border-white/10">
@@ -138,7 +217,7 @@ export default function AddRepoModal(props: Props) {
               type="submit"
               className="flex-1 bg-cyan-500 hover:bg-cyan-400 hover:shadow-[0_0_12px_rgba(6,182,212,0.3)] text-black py-2.5 rounded font-bold transition-all cursor-pointer text-center block"
             >
-              {tab === "local" ? "Register Link" : "Register Remote"}
+              {tab === "local" ? "Register Link" : tab === "github" ? "Import Repository" : "Register Remote"}
             </button>
           </div>
         </form>

@@ -1,0 +1,13 @@
+{
+  "name": "dragnet-init",
+  "version": "0.1.0",
+  "description": "Initialize a Dragnet repo identity — establishes local repo .dragnet/repo.json",
+  "type": "module",
+  "bin": {
+    "dragnet-init": "bin/dragnet-init.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT"
+}

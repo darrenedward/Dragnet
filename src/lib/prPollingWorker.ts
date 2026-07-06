@@ -16,6 +16,7 @@
  * Platform support: GitHub only in v1. GitLab stub returns early.
  */
 
+import { execFileSync } from "child_process";
 import { prisma } from "./prisma";
 
 export type TriggerScan = (
@@ -36,6 +37,36 @@ interface GhPullsEntry {
   number: number;
   head: { sha: string; ref: string };
   state: string;
+}
+
+/**
+ * Fetch the live target branch (baseRefName) from GitHub for a given PR
+ * number using the `gh` CLI.  Returns null if `gh` is not installed, the
+ * PR doesn't exist, or any other error occurs — callers must gracefully
+ * skip rather than fail.
+ */
+export function fetchGhTargetBranch(prNumber: number): string | null {
+  try {
+    const output = execFileSync(
+      "gh",
+      ["pr", "view", String(prNumber), "--json", "baseRefName"],
+      { stdio: ["ignore", "pipe", "ignore"], timeout: 10_000, encoding: "utf8" },
+    ).trim();
+    const parsed: Record<string, unknown> = JSON.parse(output);
+    return typeof parsed.baseRefName === "string" && parsed.baseRefName.length > 0
+      ? parsed.baseRefName
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Internal type for the DB shape returned by fetchPollingRepos. */
+interface LocalPrRow {
+  id: string;
+  sourceBranch: string;
+  commitHash: string;
+  targetBranch: string;
 }
 
 /**
@@ -106,8 +137,29 @@ export async function pollOnce(triggerScan: TriggerScan): Promise<void> {
     for (const ghPr of ghPrs) {
       const localPr = repo.pullRequests.find(
         (p) => p.sourceBranch === ghPr.head.ref,
-      );
+      ) as LocalPrRow | undefined;
       if (!localPr) continue; // PR not yet registered in Dragnet
+
+      // ── Sync targetBranch from GitHub (stale in stacked-PR workflows) ──
+      const liveTargetBranch = fetchGhTargetBranch(ghPr.number);
+      if (liveTargetBranch && liveTargetBranch !== localPr.targetBranch) {
+        console.log(
+          `[poll] ${repo.name} #${ghPr.number} targetBranch changed: ` +
+            `${localPr.targetBranch} → ${liveTargetBranch}`,
+        );
+        try {
+          await prisma.pullRequest.update({
+            where: { id: localPr.id },
+            data: { targetBranch: liveTargetBranch },
+          });
+        } catch (err: any) {
+          console.warn(
+            `[poll] targetBranch update failed for ${repo.name}/${localPr.id}:`,
+            err.message,
+          );
+        }
+      }
+
       if (ghPr.head.sha === localPr.commitHash) continue; // no change
 
       console.log(
@@ -144,8 +196,7 @@ async function fetchPollingRepos() {
       patIv: true,
       patTag: true,
       pullRequests: {
-        where: { status: { in: ["Pending", "In Progress"] } },
-        select: { id: true, sourceBranch: true, commitHash: true },
+        select: { id: true, sourceBranch: true, commitHash: true, targetBranch: true },
       },
     },
   });

@@ -17,6 +17,12 @@ export interface ReconcilePlan {
   unmatchedPriorIds: string[];
 }
 
+export interface RegressionFinding {
+  currentFindingId: string;
+  priorFindingId: string;
+  regressedFromRunId: string;
+}
+
 /**
  * Pure-function core of cross-run reconciliation. Given the current run's
  * findings and the prior OPEN findings for the same PR, return a plan: which
@@ -75,6 +81,69 @@ export function planReconcile(
 }
 
 /**
+ * Detect regressions — findings that were previously resolved on a symbol but
+ * have reappeared with the same fingerprint in a new run. A regression is
+ * flagged when:
+ *   - A new finding's fingerprint matches a prior RESOLVED finding
+ *   - AND the sourceHash has changed (code at anchor shifted)
+ *
+ * If sourceHash is unchanged, we treat it as false positive recovery (LLM
+ * missed it last round) and do NOT flag as regression.
+ *
+ * Pure function — safe to unit-test without a database.
+ *
+ * Defense-in-depth: one current finding can match at most one prior (first
+ * match wins, consumed). This prevents ambiguous regression links.
+ */
+export function detectRegressions(
+  currentFindings: Array<{
+    id: string;
+    fingerprint: string | null;
+    sourceHashAtInsert: string | null;
+  }>,
+  resolvedFindings: Array<{
+    id: string;
+    fingerprint: string | null;
+    sourceHashAtInsert: string | null;
+    resolvedAtRunId: string;
+  }>,
+): RegressionFinding[] {
+  const regressions: RegressionFinding[] = [];
+  const consumedCurrentIds = new Set<string>();
+
+  for (const prior of resolvedFindings) {
+    if (!prior.fingerprint) continue;
+
+    // Find a matching current finding that hasn't been consumed
+    const match = currentFindings.find((cur) => {
+      if (consumedCurrentIds.has(cur.id)) return false;
+      if (!cur.fingerprint || cur.fingerprint !== prior.fingerprint) return false;
+      return true;
+    });
+
+    if (!match) continue;
+
+    // Check if sourceHash changed (code at anchor shifted)
+    const currentHash = match.sourceHashAtInsert;
+    const priorHash = prior.sourceHashAtInsert;
+
+    // Regression if: hashes differ OR either hash is null (conservative)
+    const isRegression = currentHash !== priorHash || currentHash === null || priorHash === null;
+
+    if (isRegression) {
+      regressions.push({
+        currentFindingId: match.id,
+        priorFindingId: prior.id,
+        regressedFromRunId: prior.resolvedAtRunId,
+      });
+      consumedCurrentIds.add(match.id);
+    }
+  }
+
+  return regressions;
+}
+
+/**
  * Cross-run finding reconciliation. After a scan (and intra-run dedup), match
  * the current run's findings against prior OPEN findings for the same PR by
  * fingerprint. Preserves `firstSeenRunId` on match (so "open since R1" works
@@ -121,7 +190,22 @@ export async function reconcileFindingsAcrossRuns(
     },
   });
 
-  if (currentFindings.length === 0 && priorFindings.length === 0) {
+  // Query resolved findings to detect regressions (findings that reappeared after being resolved)
+  const resolvedFindings = await prisma.reviewFinding.findMany({
+    where: {
+      prId,
+      status: "resolved",
+      resolvedAtRunId: { not: null },
+    },
+    select: {
+      id: true,
+      fingerprint: true,
+      sourceHashAtInsert: true,
+      resolvedAtRunId: true,
+    },
+  });
+
+  if (currentFindings.length === 0 && priorFindings.length === 0 && resolvedFindings.length === 0) {
     return result;
   }
 
@@ -164,7 +248,6 @@ export async function reconcileFindingsAcrossRuns(
         console.warn(
           `[dedup] possible detection regression: prior finding ${prior.id} not re-detected but code at anchor unchanged`,
         );
-        result.regressions++;
       }
     }
     if (resolvedIds.length > 0) {
@@ -174,6 +257,22 @@ export async function reconcileFindingsAcrossRuns(
       });
       result.resolved = resolvedIds.length;
     }
+  }
+
+  // Detect and persist regressions (resolved findings that reappeared)
+  if (resolvedFindings.length > 0 && currentFindings.length > 0) {
+    const regressions = detectRegressions(currentFindings, resolvedFindings);
+
+    for (const regression of regressions) {
+      await prisma.reviewFinding.update({
+        where: { id: regression.currentFindingId },
+        data: {
+          isRegression: true,
+          regressedFromRunId: regression.regressedFromRunId,
+        },
+      });
+    }
+    result.regressions = regressions.length;
   }
 
   return result;

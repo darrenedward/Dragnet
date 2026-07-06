@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/src/lib/prisma";
 import { IndexingService } from "@/src/services/indexingService";
-import { authenticateSessionOrKey } from "@/src/lib/apiAuth";
+import { authenticateSessionOrKey, enforceRepoScope } from "@/src/lib/apiAuth";
 
 export const runtime = "nodejs";
 
@@ -13,6 +13,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: 401 });
   try {
     const { id } = await params;
+    const scopeErr = enforceRepoScope(auth, id);
+    if (scopeErr) return NextResponse.json(scopeErr, { status: 403 });
     const repo = await prisma.repository.findUnique({ where: { id } });
     if (!repo) {
       return NextResponse.json({ error: "Repository record not found" }, { status: 404 });

@@ -26,6 +26,12 @@ export interface Repository {
   patCipher?: string | null;
   deployKeyCipher?: string | null;
   localPath?: string | null;
+  runnerImage?: string | null;
+  installCommand?: string | null;
+  testCommand?: string | null;
+  isPollingEnabled?: boolean | null;
+  skipTier2?: boolean | null;
+  webhookId?: string | null;
 }
 
 export interface PullRequest {
@@ -106,6 +112,26 @@ export interface DbConfig {
   password: string;
   database: string;
   sqliteFile: string;
+}
+
+export interface ConfigHealthItem {
+  id: string;
+  label: string;
+  variables: string[];
+  status: "missing" | "invalid";
+  severity: "blocking" | "warning";
+  feature: string;
+  message: string;
+  action: string;
+  restartRequired: boolean;
+}
+
+export interface ConfigHealthReport {
+  ok: boolean;
+  status: "ok" | "needs_setup";
+  summary: string;
+  items: ConfigHealthItem[];
+  generatedAt: string;
 }
 
 export interface LlmPresetView {

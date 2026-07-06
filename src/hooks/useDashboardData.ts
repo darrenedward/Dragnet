@@ -75,6 +75,21 @@ export function useDashboardData() {
     chunksCompleted?: number;
     chunksFailed?: number;
     chunksSkipped?: number;
+    tokensUsed?: {
+      totalCostUsd: number;
+      totalPromptTokens: number;
+      totalCompletionTokens: number;
+      providers: Array<{
+        name: string;
+        model: string;
+        promptTokens: number;
+        completionTokens: number;
+        costUsd: number;
+        outcome: string;
+        iterationsUsed: number;
+        maxIterations: number;
+      }>;
+    } | null;
   } | null>(null);
   const [reviewChunks, setReviewChunks] = useState<ReviewChunk[]>([]);
   // Currently in-progress scan (null when no scan is active). The findings
@@ -151,6 +166,8 @@ export function useDashboardData() {
   const [newCloneUrlHttps, setNewCloneUrlHttps] = useState("");
   const [newDeployKey, setNewDeployKey] = useState("");
   const [newPat, setNewPat] = useState("");
+  const [newGithubRepoId, setNewGithubRepoId] = useState<number | null>(null);
+  const [createdApiKey, setCreatedApiKey] = useState<{ raw: string; prefix: string } | null>(null);
   const [newBaseBranch, setNewBaseBranch] = useState("main");
   const [newTriggerMode, setNewTriggerMode] = useState<"auto" | "mention">("auto");
   const [newQuietPeriod, setNewQuietPeriod] = useState(10);
@@ -796,12 +813,20 @@ export function useDashboardData() {
       return;
     }
 
-    if (!newRepoPath.trim() && !newCloneUrl.trim()) {
-      setErrorFeedback("Either Directory Path or Clone URL is required.");
-      return;
+    // Determine mode based on which fields are populated
+    let mode: "local" | "ssh" | "pat" | "github";
+    if (newRepoPath.trim()) {
+      mode = "local";
+    } else if (newGithubRepoId) {
+      mode = "github";
+    } else {
+      mode = newRepoMode;
     }
 
-    const mode = newRepoPath.trim() ? "local" : newRepoMode;
+    if (mode !== "local" && mode !== "github" && !newCloneUrl.trim()) {
+      setErrorFeedback("Either Directory Path, Clone URL, or GitHub repository selection is required.");
+      return;
+    }
 
     try {
       const res = await fetchJson("/api/repos", {
@@ -815,6 +840,7 @@ export function useDashboardData() {
           cloneUrlHttps: newCloneUrlHttps.trim() || undefined,
           deployKey: newDeployKey || undefined,
           pat: newPat || undefined,
+          githubRepoId: newGithubRepoId || undefined,
           baseBranch: newBaseBranch,
           triggerMode: newTriggerMode,
           quietPeriodSeconds: Number(newQuietPeriod),
@@ -830,6 +856,10 @@ export function useDashboardData() {
         setSelectedRepoId(data.id);
         await fetchPrsForSelectedRepo(data.id, false);
 
+        if (data.apiKey) {
+          setCreatedApiKey({ raw: data.apiKey, prefix: data.apiKeyPrefix });
+        }
+
         if (mode !== "local") {
           setLastRegisteredRepo({ id: data.id, name: newRepoName.trim(), hasPat: !!newPat });
           setNewRepoMode("ssh");
@@ -837,6 +867,7 @@ export function useDashboardData() {
           setNewCloneUrlHttps("");
           setNewDeployKey("");
           setNewPat("");
+          setNewGithubRepoId(null);
         }
         setNewRepoName("");
         setNewRepoPath("");
@@ -1010,6 +1041,8 @@ export function useDashboardData() {
     setNewDeployKey,
     newPat,
     setNewPat,
+    newGithubRepoId,
+    setNewGithubRepoId,
     newBaseBranch,
     setNewBaseBranch,
     newBranchPattern,
@@ -1023,6 +1056,8 @@ export function useDashboardData() {
     handleAddRepo,
     lastRegisteredRepo,
     setLastRegisteredRepo,
+    createdApiKey,
+    setCreatedApiKey,
     // daemon callback
     handleTriggerReviewPass,
   };

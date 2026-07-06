@@ -54,6 +54,18 @@ describe("checkpoint paths", () => {
     );
   });
 
+  it("builds central path under scan state root when repoId provided", () => {
+    expect(checkpointFilePath("/r", "run-1", "__run", "repo-123")).toBe(
+      path.join("/var/lib/dragnet/scans", "repo-123", "checkpoints", "run-1", "__run.json"),
+    );
+  });
+
+  it("checkpointRunDir uses repoId path when provided", () => {
+    expect(checkpointRunDir("/r", "run-1", "repo-123")).toBe(
+      path.join("/var/lib/dragnet/scans", "repo-123", "checkpoints", "run-1"),
+    );
+  });
+
   it("uses ReviewChunk.id verbatim as checkpointId for chunked scans", () => {
     const id = "chunk_abc123";
     expect(checkpointFilePath("/r", "run-1", id)).toBe(
@@ -90,6 +102,24 @@ describe("writeCheckpoint / readCheckpoint round trip", () => {
     expect(back!.messages[2]).toEqual({ role: "assistant", content: "thinking..." });
     // Single assistant turn => cutoffIdx = 0 => tool message kept whole.
     expect(back!.messages[3]).toEqual({ role: "tool", content: "x".repeat(10_000) });
+  });
+
+  it("writes and reads from central path when repoId provided", () => {
+    const scanRoot = fs.mkdtempSync(path.join(os.tmpdir(), "dragnet-cp-root-"));
+    process.env.DRAGNET_SCAN_STATE_ROOT = scanRoot;
+    const state = makeState();
+    writeCheckpoint(tmpDir, "run-1", RUN_CHECKPOINT_ID, state, "repo-abc");
+    const centralPath = path.join(scanRoot, "repo-abc", "checkpoints", "run-1", "__run.json");
+    // Should NOT write under tmpDir/.dragnet/ when repoId is given.
+    expect(fs.existsSync(path.join(tmpDir, ".dragnet"))).toBe(false);
+    // The central path should have the file.
+    expect(fs.existsSync(centralPath)).toBe(true);
+    const back = readCheckpoint(tmpDir, "run-1", RUN_CHECKPOINT_ID, "repo-abc");
+    expect(back).not.toBeNull();
+    expect(back!.runId).toBe("run-1");
+    // Clean up.
+    delete process.env.DRAGNET_SCAN_STATE_ROOT;
+    fs.rmSync(scanRoot, { recursive: true, force: true });
   });
 
   it("writes at file mode 0600 (owner read/write only)", () => {

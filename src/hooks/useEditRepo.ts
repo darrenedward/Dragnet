@@ -26,6 +26,7 @@ export function useEditRepo({ onUpdated, onWebhookPrompt }: Options) {
   const [editCloneUrlHttps, setEditCloneUrlHttps] = useState("");
   const [editDeployKey, setEditDeployKey] = useState("");
   const [editPat, setEditPat] = useState("");
+  const [editSkipTier2, setEditSkipTier2] = useState(false);
 
   const openEditor = (repo: Repository) => {
     setEditingRepo(repo);
@@ -38,6 +39,7 @@ export function useEditRepo({ onUpdated, onWebhookPrompt }: Options) {
     setEditCloneUrlHttps(repo.cloneUrlHttps || "");
     setEditDeployKey("");
     setEditPat("");
+    setEditSkipTier2(repo.skipTier2 ?? false);
     setErrorFeedback(null);
     setShowEditRepoModal(true);
   };
@@ -69,6 +71,7 @@ export function useEditRepo({ onUpdated, onWebhookPrompt }: Options) {
           cloneUrlHttps: editMode !== "local" ? editCloneUrlHttps.trim() || undefined : undefined,
           deployKey: editMode === "ssh" && editDeployKey ? editDeployKey : undefined,
           pat: editMode === "pat" && editPat ? editPat : undefined,
+          skipTier2: editSkipTier2,
         }),
       });
 
@@ -113,5 +116,7 @@ export function useEditRepo({ onUpdated, onWebhookPrompt }: Options) {
     setEditDeployKey,
     editPat,
     setEditPat,
+    editSkipTier2,
+    setEditSkipTier2,
   };
 }

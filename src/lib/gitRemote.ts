@@ -7,7 +7,7 @@ import os from "node:os";
 const REPOS_SUBDIR = ".repos";
 
 function cloneDir(): string {
-  return process.env.REPOS_DIR || path.join(process.cwd(), REPOS_SUBDIR);
+  return process.env.REPOS_DIR || path.join(/* turbopackIgnore: true */ process.cwd(), REPOS_SUBDIR);
 }
 
 export interface CloneOpts {
@@ -15,6 +15,7 @@ export interface CloneOpts {
   cloneUrl: string;
   deployKey?: string;
   pat?: string;
+  installationToken?: string;
 }
 
 export interface FetchOpts {
@@ -22,6 +23,7 @@ export interface FetchOpts {
   cloneUrl: string;
   deployKey?: string;
   pat?: string;
+  installationToken?: string;
 }
 
 export function cloneRepo(opts: CloneOpts): string {
@@ -29,7 +31,8 @@ export function cloneRepo(opts: CloneOpts): string {
   const dest = path.join(root, opts.repoId);
   mkdirSync(root, { recursive: true });
 
-  const url = interpolatePat(opts.cloneUrl, opts.pat);
+  const effectivePat = opts.installationToken || opts.pat;
+  const url = interpolatePat(opts.cloneUrl, effectivePat);
   using ssh = opts.deployKey
     ? buildSshEnv(opts.deployKey, `clone-${opts.repoId}`)
     : { env: undefined as Record<string, string> | undefined, [Symbol.dispose]() {} };
@@ -44,7 +47,8 @@ export function cloneRepo(opts: CloneOpts): string {
 }
 
 export function fetchRepo(opts: FetchOpts): void {
-  const url = interpolatePat(opts.cloneUrl, opts.pat);
+  const effectivePat = opts.installationToken || opts.pat;
+  const url = interpolatePat(opts.cloneUrl, effectivePat);
   using ssh = opts.deployKey
     ? buildSshEnv(opts.deployKey, `fetch-${crypto.randomUUID().slice(0, 8)}`)
     : { env: undefined as Record<string, string> | undefined, [Symbol.dispose]() {} };

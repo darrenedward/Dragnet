@@ -11,7 +11,7 @@ export async function GET(req: Request) {
   }
   const keys = await prisma.apiKey.findMany({
     orderBy: { createdAt: "desc" },
-    select: { id: true, name: true, prefix: true, createdAt: true, lastUsedAt: true, revoked: true },
+    select: { id: true, name: true, prefix: true, repoId: true, createdAt: true, lastUsedAt: true, revoked: true },
   });
   return NextResponse.json(keys);
 }
@@ -30,14 +30,18 @@ export async function POST(req: Request) {
 
   const { raw, prefix, hash } = generateApiKey();
 
-  await prisma.apiKey.create({
-    data: { name, prefix, hash },
-  });
+  const data: { name: string; prefix: string; hash: string; repoId?: string } = { name, prefix, hash };
+  if (body.repoId && typeof body.repoId === "string") {
+    data.repoId = body.repoId;
+  }
+
+  await prisma.apiKey.create({ data });
 
   return NextResponse.json({
     key: raw,
     prefix,
     name,
+    repoId: data.repoId || null,
     message: "Copy this key now — it won't be shown again.",
   });
 }

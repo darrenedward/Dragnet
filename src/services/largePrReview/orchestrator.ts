@@ -6,6 +6,7 @@ import { aggregateResults } from "./aggregator";
 import { chunkDiff } from "./chunker";
 import { assertTier, buildDiffManifest } from "./manifest";
 import { appendReport, formatReportLine } from "./reportLogger";
+import { getInstallationToken } from "@/src/lib/githubApp";
 import type {
   ChunkPlan,
   DiffManifest,
@@ -97,9 +98,10 @@ export async function runLargePrReview({
 
   const repo = await prisma.repository.findUnique({
     where: { id: run.repoId },
-    select: { securitySensitivePaths: true, path: true },
+    select: { securitySensitivePaths: true, path: true, installationId: true },
   });
   const repoPath = repo?.path ?? "";
+  const installationId = repo?.installationId;
   const limits = readLimits();
   let manifest = buildDiffManifest(files, undefined, {
     normalMaxLines: limits.normalMaxLines,
@@ -195,6 +197,27 @@ export async function runLargePrReview({
     if (consecutiveErrorKey && consecutiveErrorCount >= 3) {
       await markSkipped(reviewRunId, chunkId, `Circuit breaker: repeated ${consecutiveErrorKey}`);
       continue;
+    }
+
+    // Refresh the GitHub installation token before each chunk to ensure
+    // it hasn't expired during long-running scans (e.g., multi-chunk PRs
+    // that span hours). The token is cached for 50 minutes, so this is
+    // efficient but ensures fresh tokens between chunks.
+    if (installationId) {
+      try {
+        await getInstallationToken(installationId);
+      } catch (err) {
+        // Log a warning but continue - the chunk may still succeed with
+        // the cached token, or fail with a clearer error message.
+        const message = err instanceof Error ? err.message : String(err);
+        await logRun(
+          prId,
+          reviewRunId,
+          repoPath,
+          `Failed to refresh installation token: ${message}. Continuing with cached token if available.`,
+          "warn",
+        );
+      }
     }
 
     await prisma.reviewChunk.update({
@@ -324,9 +347,10 @@ export async function retryFailedChunks(
 
   const repo = await prisma.repository.findUnique({
     where: { id: run.repoId },
-    select: { path: true },
+    select: { path: true, installationId: true },
   });
   const repoPath = repo?.path ?? "";
+  const installationId = repo?.installationId;
 
   // Resume scope: any chunk not in a terminal state. Covers failed retries,
   // pending chunks that never started, and `running` chunks left dangling
@@ -375,6 +399,23 @@ export async function retryFailedChunks(
       break;
     }
     const files = prFiles.filter((file) => chunk.filePaths.includes(file.filename));
+
+    // Refresh the GitHub installation token before each chunk retry.
+    if (installationId) {
+      try {
+        await getInstallationToken(installationId);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        await logRun(
+          run.prId,
+          reviewRunId,
+          repoPath,
+          `Failed to refresh installation token during retry: ${message}. Continuing with cached token if available.`,
+          "warn",
+        );
+      }
+    }
+
     await prisma.reviewChunk.update({
       where: { id: chunk.id },
       data: { status: "running", startedAt: new Date(), completedAt: null, errorMessage: null },
