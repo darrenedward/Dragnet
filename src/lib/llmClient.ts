@@ -5,7 +5,6 @@ import {
   getFallbackChatPreset,
   getFallbackEmbeddingPreset,
   apiKeyHash,
-  migrateFromEnvLocalIfNeeded,
   resolveMaxIterations,
   type Preset,
 } from "@/src/lib/llmPresets";
@@ -102,27 +101,23 @@ function clientFor(preset: Preset): OpenAI {
  * no chatModel configured (callers should bail to a fallback).
  */
 export function getChatClient(): OpenAI | null {
-  migrateFromEnvLocalIfNeeded();
   const preset = getPrimaryChatPreset();
   if (!preset || !preset.chatModel) return null;
   return clientFor(preset);
 }
 
 export function getEmbeddingClient(): OpenAI | null {
-  migrateFromEnvLocalIfNeeded();
   const preset = getPrimaryEmbeddingPreset();
   if (!preset || !preset.embeddingModel) return null;
   return clientFor(preset);
 }
 
 export function getChatModel(): string | null {
-  migrateFromEnvLocalIfNeeded();
   const preset = getPrimaryChatPreset();
   return preset?.chatModel || null;
 }
 
 export function getEmbeddingModel(): string | null {
-  migrateFromEnvLocalIfNeeded();
   const preset = getPrimaryEmbeddingPreset();
   return preset?.embeddingModel || null;
 }
@@ -163,7 +158,6 @@ export interface ChainEntry {
  * `repoPath` and get the unfiltered chain.
  */
 export function getChatChain(opts?: { repoPath?: string | null }): ChainEntry[] {
-  migrateFromEnvLocalIfNeeded();
   const chain: ChainEntry[] = [];
   const seen = new Set<string>();
 
@@ -230,7 +224,6 @@ function filterOpenProviders(chain: ChainEntry[], repoPath: string): ChainEntry[
  * Ordered list of embedding providers. Same shape/semantics as getChatChain.
  */
 export function getEmbeddingChain(): ChainEntry[] {
-  migrateFromEnvLocalIfNeeded();
   const chain: ChainEntry[] = [];
   const seen = new Set<string>();
 

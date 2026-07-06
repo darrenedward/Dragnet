@@ -414,3 +414,23 @@ model ApiKey {
 
   @@map("api_keys")
 }
+
+model LLMPreset {
+  id                 String   @id @default(cuid())
+  name               String
+  endpoint           String
+  apiKeyCipher       String?
+  apiKeyIv           String?
+  apiKeyTag          String?
+  chatModel          String
+  embeddingModel     String
+  maxIterations      Int      @default(16)
+  isChatPrimary      Boolean  @default(false)
+  isEmbeddingPrimary Boolean  @default(false)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([isChatPrimary])
+  @@index([isEmbeddingPrimary])
+  @@map("llm_presets")
+}

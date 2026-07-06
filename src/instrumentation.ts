@@ -22,6 +22,10 @@ export async function register(): Promise<void> {
   const { reapStaleRuns } = await import("./services/runReaper");
   void reapStaleRuns();
 
+  // Seed LLM presets from legacy file if DB is empty, then preload cache.
+  const { seedFromLegacyFile, preloadCache } = await import("./lib/llmPresets");
+  void seedFromLegacyFile().then(() => preloadCache());
+
   // Start the polling worker only when enabled via environment variable.
   // Keeping this opt-in avoids unnecessary GitHub API calls for deployments
   // that rely exclusively on webhooks.

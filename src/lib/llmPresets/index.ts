@@ -8,8 +8,11 @@ export {
   MAX_ITERATIONS_BOUNDS,
   resolveMaxIterations,
   apiKeyHash,
-  encryptApiKey,
-  decryptApiKey,
+} from "./types";
+
+export { encryptApiKey, decryptApiKey } from "./crypto";
+
+export {
   listPresets,
   getPrimaryChatPreset,
   getPrimaryEmbeddingPreset,
@@ -26,6 +29,8 @@ export {
   setChatPrimary,
   setEmbeddingPrimary,
   preloadCache,
-  seedFromLegacyFile,
-  fetchRemoteModels,
-} from "./llmPresets/index";
+} from "./service";
+
+export { seedFromLegacyFile } from "./seed";
+
+export { fetchRemoteModels } from "./fetchRemoteModels";
