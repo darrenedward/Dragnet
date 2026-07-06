@@ -27,7 +27,13 @@ export default function ApiKeysPanel() {
   const fetchKeys = async () => {
     try {
       const res = await fetch("/api/keys");
-      if (res.ok) setKeys(await res.json());
+      if (res.ok) {
+        const all = (await res.json()) as ApiKeyView[];
+        // Project-scoped keys (repoId !== null) are managed per-project via
+        // RepoSettingsModal → API Key section. This panel is for global /
+        // standalone keys only (CI, admin automation, multi-project tooling).
+        setKeys(all.filter((k) => k.repoId === null));
+      }
     } catch { /* ignore */ }
   };
 
@@ -40,13 +46,6 @@ export default function ApiKeysPanel() {
     setError(null);
     setNewKeyValue(null);
     try {
-      const existing = (await (await fetch("/api/keys")).json()) as ApiKeyView[];
-      const globalKeys = existing.filter((k) => !k.repoId);
-      await Promise.all(
-        globalKeys.map((k) =>
-          fetch(`/api/keys/${k.id}`, { method: "DELETE" })
-        )
-      );
       const res = await fetch("/api/keys", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -103,7 +102,7 @@ export default function ApiKeysPanel() {
               API Keys
             </h3>
             <p className="text-xs text-slate-400">
-              API keys for remote clients (Claude Code, Cursor, etc.). Set the <code className="text-cyan-400">Authorization: Bearer</code> header when calling Dragnet's endpoints.
+              Global keys for CI, automation, and multi-project tooling. Set <code className="text-cyan-400">Authorization: Bearer</code> on requests. Per-project keys live in each project&apos;s Settings → API Key.
             </p>
           </div>
         </div>
@@ -164,6 +163,11 @@ export default function ApiKeysPanel() {
                   {copied ? <Check size={14} /> : <Copy size={14} />}
                 </button>
               </div>
+            </div>
+            <div className="bg-black/40 rounded-lg p-2.5 text-[10px] font-mono text-slate-400 leading-relaxed">
+              <div className="text-slate-500 mb-1 uppercase tracking-wider text-[9px]">Use in your shell:</div>
+              <div className="text-cyan-400">export DRAGNET_API_KEY={showKey ? newKeyValue : "dr_…"}</div>
+              <div className="text-cyan-400">export DRAGNET_URL=http://localhost:3300</div>
             </div>
           </div>
         ) : (
