@@ -61,6 +61,15 @@ export function canonicalizeUrl(remoteUrl: string): string {
     return `https://${host}/${path}`;
   }
 
+  // ssh:// protocol: ssh://git@host:port/path or ssh://host/path
+  const sshProtocolMatch = remoteUrl.match(/^ssh:\/\/(?:([^@]+)@)?([^:/]+)(?::\d+)?\/(.+)$/);
+  if (sshProtocolMatch) {
+    let host = sshProtocolMatch[2].toLowerCase();
+    let path = stripTrailingGit(sshProtocolMatch[3]).toLowerCase();
+    path = stripTrailingSlash(path);
+    return `https://${host}/${path}`;
+  }
+
   throw new Error(`Cannot parse git remote URL: ${remoteUrl}`);
 }
 

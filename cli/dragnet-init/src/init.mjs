@@ -23,6 +23,14 @@ export function canonicalizeUrl(remoteUrl) {
     return `https://${host}/${path}`;
   }
 
+  // ssh:// protocol: ssh://git@host:port/path or ssh://host/path
+  const sshProtocolMatch = remoteUrl.match(/^ssh:\/\/(?:[^@]+@)?([^:/]+)(?::\d+)?\/(.+)$/);
+  if (sshProtocolMatch) {
+    const host = sshProtocolMatch[1];
+    const path = sshProtocolMatch[2].replace(/\.git$/, "");
+    return `https://${host}/${path}`;
+  }
+
   throw new Error(`Cannot parse git remote URL: ${remoteUrl}`);
 }
 
