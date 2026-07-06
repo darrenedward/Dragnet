@@ -9,7 +9,6 @@ interface ApiKeyView {
   name: string;
   prefix: string;
   repoId: string | null;
-  userId: string | null;
   user: { id: string; name: string | null; email: string } | null;
   createdAt: string;
   lastUsedAt: string | null;

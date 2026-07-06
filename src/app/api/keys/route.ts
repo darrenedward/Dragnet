@@ -45,11 +45,16 @@ export async function POST(req: Request) {
 
   const { raw, prefix, hash } = generateApiKey();
 
-  const data: { name: string; prefix: string; hash: string; repoId?: string; userId?: string } = {
+  const userId = session.user?.id;
+  if (!userId) {
+    return NextResponse.json({ error: "Session has no associated user." }, { status: 401 });
+  }
+
+  const data: { name: string; prefix: string; hash: string; repoId?: string; userId: string } = {
     name,
     prefix,
     hash,
-    userId: session.user.id,
+    userId,
   };
   if (body.repoId && typeof body.repoId === "string") {
     data.repoId = body.repoId;
@@ -62,7 +67,6 @@ export async function POST(req: Request) {
     prefix,
     name,
     repoId: data.repoId || null,
-    userId: data.userId,
     message: "Copy this key now — it won't be shown again.",
   });
 }

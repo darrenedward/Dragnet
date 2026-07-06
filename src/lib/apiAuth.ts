@@ -20,7 +20,6 @@ export type AuthResult = {
   ok: boolean;
   error?: string;
   repoId: string | null;
-  /** User that owns the credential used to authenticate. Null for legacy keys (no userId column at creation). */
   userId: string | null;
 };
 

@@ -96,8 +96,19 @@ describe("POST /api/keys", () => {
     expect(res.status).toBe(200);
     const callArgs = mocks.mockCreate.mock.calls[0][0];
     expect(callArgs.data.userId).toBe("user-7");
+  });
+
+  it("rejects with 401 when session has no user", async () => {
+    mocks.mockRequireSession.mockResolvedValue({});
+    const req = new Request("http://localhost/api/keys", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Orphan Key" }),
+    });
+    const res = await POST(req);
+    expect(res.status).toBe(401);
     const data = await res.json();
-    expect(data.userId).toBe("user-7");
+    expect(data.error).toContain("Session has no associated user");
   });
 });
 
