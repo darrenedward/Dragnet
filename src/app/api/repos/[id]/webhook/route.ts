@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/src/lib/prisma";
-import { authenticateSessionOrKey } from "@/src/lib/apiAuth";
+import { authenticateSessionOrKey, enforceRepoScope } from "@/src/lib/apiAuth";
 import { setupWebhookWithPat, deleteWebhook, getManualWebhookInstructions } from "@/src/lib/webhookSetup";
 
 export async function POST(
@@ -12,6 +12,8 @@ export async function POST(
 
   try {
     const { id } = await params;
+    const scopeErr = enforceRepoScope(auth, id);
+    if (scopeErr) return NextResponse.json(scopeErr, { status: 403 });
     const repo = await prisma.repository.findUnique({ where: { id } });
     if (!repo) {
       return NextResponse.json({ error: "Repository not found" }, { status: 404 });
@@ -51,6 +53,8 @@ export async function GET(
 
   try {
     const { id } = await params;
+    const scopeErr = enforceRepoScope(auth, id);
+    if (scopeErr) return NextResponse.json(scopeErr, { status: 403 });
     const repo = await prisma.repository.findUnique({ where: { id } });
     if (!repo) {
       return NextResponse.json({ error: "Repository not found" }, { status: 404 });
@@ -74,6 +78,8 @@ export async function DELETE(
 
   try {
     const { id } = await params;
+    const scopeErr = enforceRepoScope(auth, id);
+    if (scopeErr) return NextResponse.json(scopeErr, { status: 403 });
     await deleteWebhook(id);
     return NextResponse.json({ success: true });
   } catch (err: any) {

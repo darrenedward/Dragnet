@@ -30,14 +30,18 @@ export async function POST(req: Request) {
 
   const { raw, prefix, hash } = generateApiKey();
 
-  await prisma.apiKey.create({
-    data: { name, prefix, hash },
-  });
+  const data: { name: string; prefix: string; hash: string; repoId?: string } = { name, prefix, hash };
+  if (body.repoId && typeof body.repoId === "string") {
+    data.repoId = body.repoId;
+  }
+
+  await prisma.apiKey.create({ data });
 
   return NextResponse.json({
     key: raw,
     prefix,
     name,
+    repoId: data.repoId || null,
     message: "Copy this key now — it won't be shown again.",
   });
 }

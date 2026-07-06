@@ -10,7 +10,7 @@
 # Configuration (set these in your shell/profile or .env):
 #   DRAGNET_URL      - default: http://localhost:3300
 #   DRAGNET_API_KEY  - your key from Dragnet UI → LLM Settings → API Keys
-#                      (or written to .dragnet/cred.json by the install modal)
+#                      (or from the project settings → API Key section)
 
 DRAGNET_URL="${DRAGNET_URL:-http://localhost:3300}"
 DRAGNET_API_KEY="${DRAGNET_API_KEY:-}"
@@ -20,14 +20,8 @@ if [ -z "$REPO_PATH" ]; then
   exit 0
 fi
 
-# Fall back to .dragnet/cred.json if the env var isn't set (non-interactive
-# shells don't source ~/.zshrc, so this is how agents and CI authenticate).
-if [ -z "$DRAGNET_API_KEY" ] && [ -f "$REPO_PATH/.dragnet/cred.json" ]; then
-  DRAGNET_API_KEY=$(jq -r .key "$REPO_PATH/.dragnet/cred.json" 2>/dev/null)
-fi
-
 if [ -z "$DRAGNET_API_KEY" ]; then
-  echo "⚠ Dragnet: no API key. Set \$DRAGNET_API_KEY or write .dragnet/cred.json"
+  echo "⚠ Dragnet: no API key. Set \$DRAGNET_API_KEY"
   echo "  Generate one from Dragnet UI → LLM Settings → API Keys."
   echo "  Push blocked. Set the key or use --no-verify to bypass."
   exit 1

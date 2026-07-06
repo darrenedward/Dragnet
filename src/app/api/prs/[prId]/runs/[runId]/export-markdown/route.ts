@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { getScanStatePath } from "@/src/lib/scanStatePath";
 import { prisma } from "@/src/lib/prisma";
-import { authenticateSessionOrKey } from "@/src/lib/apiAuth";
+import { authenticateSessionOrKey, enforcePrRepoScope } from "@/src/lib/apiAuth";
 import {
   buildReviewMarkdown,
   sanitizeBranchSlug,
@@ -34,6 +34,8 @@ export async function POST(
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: 401 });
 
   const { prId, runId } = await params;
+  const prScopeErr = await enforcePrRepoScope(auth, prId);
+  if (prScopeErr) return NextResponse.json(prScopeErr, { status: 403 });
   try {
     const run = await prisma.reviewRun.findUnique({
       where: { id: runId },

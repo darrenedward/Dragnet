@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/src/lib/prisma";
-import { authenticateSessionOrKey } from "@/src/lib/apiAuth";
+import { authenticateSessionOrKey, enforceRepoScope } from "@/src/lib/apiAuth";
 import { currentHeadCommit } from "@/src/lib/indexFreshness";
 
 export const runtime = "nodejs";
@@ -10,6 +10,8 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: 401 });
   try {
     const { id } = await params;
+    const scopeErr = enforceRepoScope(auth, id);
+    if (scopeErr) return NextResponse.json(scopeErr, { status: 403 });
     const repo = await prisma.repository.findUnique({
       where: { id },
       select: { id: true, name: true, path: true, indexedAt: true, lastCommitHash: true },

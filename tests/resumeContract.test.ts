@@ -168,6 +168,7 @@ vi.mock("../src/services/largePrReview/reconcile", () => ({
 
 vi.mock("../src/lib/apiAuth", () => ({
   authenticateSessionOrKey: vi.fn().mockResolvedValue({ ok: true }),
+  enforcePrRepoScope: vi.fn().mockResolvedValue(null),
 }));
 
 vi.mock("../src/lib/indexFreshness", () => ({

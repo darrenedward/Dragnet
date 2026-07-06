@@ -1,38 +1,14 @@
 import crypto from "node:crypto";
-import fs from "node:fs";
-import path from "node:path";
 import { NextResponse } from "next/server";
 import { prisma } from "@/src/lib/prisma";
 import { getRealLocalPrs } from "@/src/lib/getRealLocalPrs";
 import { encryptSecret, hasMasterKey } from "@/src/lib/crypto";
 import { enqueue } from "@/src/services/remoteFetchWorker";
 import { getProviderFromUrl } from "@/src/lib/webhookSetup";
-import { authenticateSessionOrKey } from "@/src/lib/apiAuth";
+import { authenticateSessionOrKey, generateApiKey } from "@/src/lib/apiAuth";
 import { requireSession } from "@/src/lib/api-auth";
 import { computeRepoId, computeLocalRepoId, canonicalizeUrl } from "@/src/lib/repoIdentity";
 import { getInstallationToken } from "@/src/lib/githubApp";
-
-/**
- * Writes `.dragnet/repo-id` into the repo directory after registration so
- * the /dragnet skill (and CLI tools) can discover the repoId without an env
- * var or a session-authenticated API call. Mode 0600 to match the existing
- * `.dragnet/{cred,llm-presets}.json` pattern.
- *
- * Failure is non-fatal — the repo still registers. The skill will surface
- * a clear "set DRAGNET_REPO_ID" message if it can't read this file.
- */
-function writeRepoIdMarker(repoPath: string, repoId: string): void {
-  try {
-    const dragnetDir = path.join(repoPath, ".dragnet");
-    if (!fs.existsSync(dragnetDir)) {
-      fs.mkdirSync(dragnetDir, { recursive: true, mode: 0o700 });
-    }
-    const markerPath = path.join(dragnetDir, "repo-id");
-    fs.writeFileSync(markerPath, repoId + "\n", { mode: 0o600 });
-  } catch (err: any) {
-    console.warn(`[repos] failed to write .dragnet/repo-id marker for ${repoId}:`, err.message);
-  }
-}
 
 export async function GET(req: Request) {
   const auth = await authenticateSessionOrKey(req);
@@ -157,8 +133,23 @@ export async function POST(req: Request) {
       }
 
       await getRealLocalPrs(repoPath, cleanId);
-      writeRepoIdMarker(repoPath, cleanId);
-      return NextResponse.json({ success: true, id: cleanId }, { status: 201 });
+
+      const localKey = generateApiKey();
+      await prisma.apiKey.create({
+        data: {
+          name: `project:${name}`,
+          prefix: localKey.prefix,
+          hash: localKey.hash,
+          repoId: cleanId,
+        },
+      });
+
+      return NextResponse.json({
+        success: true,
+        id: cleanId,
+        apiKey: localKey.raw,
+        apiKeyPrefix: localKey.prefix,
+      }, { status: 201 });
     }
 
     // --- GitHub App repo (imported from installation) ---
@@ -276,7 +267,23 @@ export async function POST(req: Request) {
         prisma.repository.update({ where: { id: cleanId }, data: { status: "error" } }).catch(() => {});
       });
 
-      return NextResponse.json({ success: true, id: cleanId, webhookSecret }, { status: 201 });
+      const ghKey = generateApiKey();
+      await prisma.apiKey.create({
+        data: {
+          name: `project:${name}`,
+          prefix: ghKey.prefix,
+          hash: ghKey.hash,
+          repoId: cleanId,
+        },
+      });
+
+      return NextResponse.json({
+        success: true,
+        id: cleanId,
+        webhookSecret,
+        apiKey: ghKey.raw,
+        apiKeyPrefix: ghKey.prefix,
+      }, { status: 201 });
     }
 
     // --- Remote repo (ssh or pat) ---
@@ -377,7 +384,23 @@ export async function POST(req: Request) {
       prisma.repository.update({ where: { id: cleanId }, data: { status: "error" } }).catch(() => {});
     });
 
-    return NextResponse.json({ success: true, id: cleanId, webhookSecret }, { status: 201 });
+    const remoteKey = generateApiKey();
+    await prisma.apiKey.create({
+      data: {
+        name: `project:${name}`,
+        prefix: remoteKey.prefix,
+        hash: remoteKey.hash,
+        repoId: cleanId,
+      },
+    });
+
+    return NextResponse.json({
+      success: true,
+      id: cleanId,
+      webhookSecret,
+      apiKey: remoteKey.raw,
+      apiKeyPrefix: remoteKey.prefix,
+    }, { status: 201 });
   } catch (err: any) {
     console.error("Error inserting repository:", err);
     return NextResponse.json({ error: err.message }, { status: 500 });
