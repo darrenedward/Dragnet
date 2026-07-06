@@ -432,6 +432,25 @@ model ScanToken {
   @@map("scan_tokens")
 }
 
+model WebhookDelivery {
+  id           String    @id
+  repoId       String
+  provider     String    // "github" | "gitlab"
+  eventType    String    // e.g. "pull_request", "push", "Merge Request Hook"
+  deliveryGuid String
+  status       String    // "received" | "completed" | "failed" | "ignored"
+  hostedMode   Boolean   @default(false)
+  prNumber     Int?
+  error        String?
+  createdAt    DateTime  @default(now())
+  completedAt  DateTime?
+
+  @@index([repoId, createdAt])
+  @@index([deliveryGuid])
+  @@index([status])
+  @@map("webhook_deliveries")
+}
+
 model LLMPreset {
   id                 String   @id @default(cuid())
   name               String

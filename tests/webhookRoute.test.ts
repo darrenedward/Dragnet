@@ -9,6 +9,10 @@ const mocks = vi.hoisted(() => ({
   mockEnqueue: vi.fn(),
   mockCheckDelivery: vi.fn(),
   mockRunPrScan: vi.fn(),
+  mockTriggerHostedScan: vi.fn(),
+  mockCreateDeliveryLog: vi.fn(),
+  mockUpdateDeliveryStatus: vi.fn(),
+  mockGetOpenPrIds: vi.fn(),
 }));
 
 vi.mock("../src/lib/webhook", () => ({
@@ -16,6 +20,7 @@ vi.mock("../src/lib/webhook", () => ({
   findRepoByCloneUrl: mocks.mockFindRepo,
   gitFetch: mocks.mockGitFetch,
   scanRepoPrs: mocks.mockScanRepoPrs,
+  getOpenPrIds: mocks.mockGetOpenPrIds,
 }));
 
 vi.mock("@/src/services/remoteFetchWorker", () => ({
@@ -28,6 +33,15 @@ vi.mock("../src/lib/webhookReplay", () => ({
 
 vi.mock("@/reviewService", () => ({
   runPrScan: mocks.mockRunPrScan,
+}));
+
+vi.mock("../src/services/hostedScan/orchestrator", () => ({
+  triggerHostedScan: mocks.mockTriggerHostedScan,
+}));
+
+vi.mock("../src/lib/webhookDelivery", () => ({
+  createDeliveryLog: mocks.mockCreateDeliveryLog,
+  updateDeliveryStatus: mocks.mockUpdateDeliveryStatus,
 }));
 
 import { POST } from "../src/app/api/webhooks/github/route";
@@ -70,6 +84,7 @@ describe("webhooks/github/route POST", () => {
       id: "repo-1",
       localPath: "/tmp/repo",
       webhookSecret: "test-secret",
+      hostedMode: false,
     });
     mocks.mockVerifySignature.mockImplementation(
       (payload: string, signature: string, secret: string) => {
@@ -80,6 +95,10 @@ describe("webhooks/github/route POST", () => {
     mocks.mockCheckDelivery.mockReturnValue(false);
     mocks.mockScanRepoPrs.mockResolvedValue(["pr-1"]);
     mocks.mockRunPrScan.mockResolvedValue(undefined);
+    mocks.mockCreateDeliveryLog.mockResolvedValue("del-1");
+    mocks.mockUpdateDeliveryStatus.mockResolvedValue(undefined);
+    mocks.mockTriggerHostedScan.mockResolvedValue({ ok: true, prId: "pr-42" });
+    mocks.mockGetOpenPrIds.mockResolvedValue(["pr-1"]);
   });
 
   afterEach(() => {
@@ -153,6 +172,7 @@ describe("webhooks/github/route POST", () => {
       id: "repo-1",
       localPath: "/tmp/repo",
       webhookSecret: null,
+      hostedMode: false,
     });
     const req = buildRequest({
       body: { repository: { clone_url: "https://github.com/owner/repo.git" } },
@@ -231,6 +251,7 @@ describe("webhooks/github/route POST", () => {
       id: "repo-1",
       localPath: null,
       webhookSecret: "test-secret",
+      hostedMode: false,
     });
     const req = buildRequest({
       event: "pull_request",
@@ -269,6 +290,7 @@ describe("webhooks/github/route POST", () => {
       id: "repo-1",
       localPath: null,
       webhookSecret: "test-secret",
+      hostedMode: false,
     });
     const req = buildRequest({
       event: "push",
@@ -291,6 +313,7 @@ describe("webhooks/github/route POST", () => {
       id: "repo-1",
       localPath: null,
       webhookSecret: "test-secret",
+      hostedMode: false,
     });
     mocks.mockEnqueue.mockRejectedValue(new Error("network error"));
     const req = buildRequest({
@@ -352,5 +375,210 @@ describe("webhooks/github/route POST", () => {
     expect(mocks.mockRunPrScan).not.toHaveBeenCalled();
     const body = await res.json();
     expect(body.afkScans).toBe(0);
+  });
+
+  describe("hosted mode", () => {
+    beforeEach(() => {
+      mocks.mockFindRepo.mockResolvedValue({
+        id: "repo-1",
+        localPath: null,
+        webhookSecret: "test-secret",
+        hostedMode: true,
+      });
+    });
+
+    it("calls triggerHostedScan for pull_request events on hosted repos", async () => {
+      mocks.mockTriggerHostedScan.mockResolvedValue({ ok: true, prId: "pr-hosted-42" });
+
+      const req = buildRequest({
+        event: "pull_request",
+        body: {
+          action: "opened",
+          repository: { clone_url: "https://github.com/owner/repo.git" },
+          pull_request: {
+            number: 42,
+            title: "My PR",
+            head: { ref: "feature-x", sha: "abc123" },
+            base: { ref: "main" },
+            user: { login: "octocat" },
+            body: "Description here",
+          },
+        },
+      });
+      const res = await POST(req);
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.hosted).toBe(true);
+      expect(body.pr).toBe(42);
+      expect(body.prId).toBe("pr-hosted-42");
+
+      expect(mocks.mockTriggerHostedScan).toHaveBeenCalledWith("repo-1", {
+        prNumber: 42,
+        title: "My PR",
+        headBranch: "feature-x",
+        baseBranch: "main",
+        commitHash: "abc123",
+        author: "octocat",
+        description: "Description here",
+      });
+
+      expect(mocks.mockGitFetch).not.toHaveBeenCalled();
+      expect(mocks.mockScanRepoPrs).not.toHaveBeenCalled();
+      expect(mocks.mockEnqueue).not.toHaveBeenCalled();
+    });
+
+    it("calls triggerHostedScan with defaults for missing pull_request optional fields", async () => {
+      const req = buildRequest({
+        event: "pull_request",
+        body: {
+          action: "opened",
+          repository: { clone_url: "https://github.com/owner/repo.git" },
+          pull_request: {
+            number: 7,
+            head: { ref: "patch-1", sha: "def456" },
+            base: { ref: "main" },
+          },
+        },
+      });
+      const res = await POST(req);
+      expect(res.status).toBe(200);
+      expect(mocks.mockTriggerHostedScan).toHaveBeenCalledWith("repo-1", {
+        prNumber: 7,
+        title: "Untitled",
+        headBranch: "patch-1",
+        baseBranch: "main",
+        commitHash: "def456",
+        author: "webhook",
+        description: undefined,
+      });
+    });
+
+    it("returns 400 when pull_request data is missing head/ref fields", async () => {
+      const req = buildRequest({
+        event: "pull_request",
+        body: {
+          action: "opened",
+          repository: { clone_url: "https://github.com/owner/repo.git" },
+          pull_request: { number: 1 },
+        },
+      });
+      const res = await POST(req);
+      expect(res.status).toBe(400);
+    });
+
+    it("returns 400 when triggerHostedScan fails", async () => {
+      mocks.mockTriggerHostedScan.mockResolvedValue({ ok: false, error: "Scan limit reached" });
+
+      const req = buildRequest({
+        event: "pull_request",
+        body: {
+          action: "synchronize",
+          repository: { clone_url: "https://github.com/owner/repo.git" },
+          pull_request: {
+            number: 99,
+            head: { ref: "bugfix", sha: "ghi789" },
+            base: { ref: "main" },
+          },
+        },
+      });
+      const res = await POST(req);
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.error).toContain("Scan limit reached");
+    });
+
+    it("scans open PRs for push events on hosted repos", async () => {
+      mocks.mockGetOpenPrIds.mockResolvedValue(["pr-open-1", "pr-open-2"]);
+
+      const req = buildRequest({
+        event: "push",
+        body: {
+          repository: { clone_url: "https://github.com/owner/repo.git" },
+          ref: "refs/heads/main",
+        },
+      });
+      const res = await POST(req);
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.hosted).toBe(true);
+      expect(body.afkScans).toBe(2);
+
+      expect(mocks.mockGetOpenPrIds).toHaveBeenCalledWith("repo-1");
+      expect(mocks.mockRunPrScan).toHaveBeenCalledWith("pr-open-1");
+      expect(mocks.mockRunPrScan).toHaveBeenCalledWith("pr-open-2");
+      expect(mocks.mockGitFetch).not.toHaveBeenCalled();
+      expect(mocks.mockScanRepoPrs).not.toHaveBeenCalled();
+    });
+
+    it("returns afkScans 0 for push events when no open PRs exist", async () => {
+      mocks.mockGetOpenPrIds.mockResolvedValue([]);
+
+      const req = buildRequest({
+        event: "push",
+        body: {
+          repository: { clone_url: "https://github.com/owner/repo.git" },
+          ref: "refs/heads/main",
+        },
+      });
+      const res = await POST(req);
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.hosted).toBe(true);
+      expect(body.afkScans).toBe(0);
+      expect(mocks.mockRunPrScan).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("delivery logging", () => {
+    it("creates a delivery log and updates on successful pull_request", async () => {
+      const req = buildRequest({
+        event: "pull_request",
+        body: {
+          action: "opened",
+          repository: { clone_url: "https://github.com/owner/repo.git" },
+          pull_request: { number: 1 },
+        },
+      });
+      await POST(req);
+
+      expect(mocks.mockCreateDeliveryLog).toHaveBeenCalledWith({
+        repoId: "repo-1",
+        provider: "github",
+        eventType: "pull_request",
+        deliveryGuid: "abc-123",
+        hostedMode: false,
+      });
+    });
+
+    it("creates a delivery log for push events", async () => {
+      const req = buildRequest({
+        event: "push",
+        body: {
+          repository: { clone_url: "https://github.com/owner/repo.git" },
+        },
+      });
+      await POST(req);
+
+      expect(mocks.mockCreateDeliveryLog).toHaveBeenCalledWith({
+        repoId: "repo-1",
+        provider: "github",
+        eventType: "push",
+        deliveryGuid: "abc-123",
+        hostedMode: false,
+      });
+    });
+
+    it("creates a delivery log for ignored events", async () => {
+      const req = buildRequest({
+        event: "issues",
+        body: {
+          repository: { clone_url: "https://github.com/owner/repo.git" },
+        },
+      });
+      await POST(req);
+
+      expect(mocks.mockCreateDeliveryLog).toHaveBeenCalled();
+      expect(mocks.mockUpdateDeliveryStatus).toHaveBeenCalledWith("del-1", "ignored");
+    });
   });
 });

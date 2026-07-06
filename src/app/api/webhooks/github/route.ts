@@ -1,8 +1,11 @@
 import { NextResponse } from "next/server";
-import { verifyGithubSignature, findRepoByCloneUrl, gitFetch, scanRepoPrs } from "../../../../lib/webhook";
+import { verifyGithubSignature, findRepoByCloneUrl, gitFetch, scanRepoPrs, getOpenPrIds } from "../../../../lib/webhook";
 import { enqueue } from "@/src/services/remoteFetchWorker";
 import { checkDelivery } from "../../../../lib/webhookReplay";
 import { runPrScan } from "../../../../../reviewService";
+import { triggerHostedScan } from "@/src/services/hostedScan/orchestrator";
+import { createDeliveryLog, updateDeliveryStatus } from "../../../../lib/webhookDelivery";
+import type { HostedPrData } from "@/src/services/hostedScan/orchestrator";
 
 export async function POST(request: Request) {
   const event = request.headers.get("x-github-event");
@@ -60,7 +63,41 @@ export async function POST(request: Request) {
     }
   };
 
+  const logDelivery = deliveryGuid
+    ? await createDeliveryLog({
+        repoId: matched.id,
+        provider: "github",
+        eventType: event,
+        deliveryGuid,
+        hostedMode: matched.hostedMode,
+      })
+    : null;
+
   if (event === "pull_request" && payload.action) {
+    if (matched.hostedMode) {
+      const pr = payload.pull_request;
+      if (!pr?.head?.ref || !pr?.base?.ref || !pr?.head?.sha) {
+        if (logDelivery) await updateDeliveryStatus(logDelivery, "failed", "Missing pull_request data");
+        return NextResponse.json({ error: "Missing pull_request data (head.ref, base.ref, head.sha)" }, { status: 400 });
+      }
+      const prData: HostedPrData = {
+        prNumber: pr.number,
+        title: pr.title || "Untitled",
+        headBranch: pr.head.ref,
+        baseBranch: pr.base.ref,
+        commitHash: pr.head.sha,
+        author: pr.user?.login || "webhook",
+        description: pr.body || undefined,
+      };
+      const result = await triggerHostedScan(matched.id, prData);
+      if (!result.ok) {
+        if (logDelivery) await updateDeliveryStatus(logDelivery, "failed", (result as { error: string }).error);
+        return NextResponse.json({ error: (result as { error: string }).error }, { status: 400 });
+      }
+      if (logDelivery) await updateDeliveryStatus(logDelivery, "completed");
+      return NextResponse.json({ ok: true, repo: matched.id, pr: pr.number, hosted: true, prId: result.prId });
+    }
+
     const prIds: string[] = [];
     if (matched.localPath) {
       gitFetch(matched.localPath);
@@ -78,10 +115,22 @@ export async function POST(request: Request) {
       }
     }
     triggerAfkScans(prIds);
+    if (logDelivery) await updateDeliveryStatus(logDelivery, "completed");
     return NextResponse.json({ ok: true, repo: matched.id, pr: payload.pull_request?.number, afkScans: prIds.length });
   }
 
   if (event === "push") {
+    if (matched.hostedMode) {
+      const prIds = await getOpenPrIds(matched.id);
+      for (const prId of prIds) {
+        runPrScan(prId).catch((err) =>
+          console.error(`[webhook] hosted push scan failed for ${prId}:`, err),
+        );
+      }
+      if (logDelivery) await updateDeliveryStatus(logDelivery, prIds.length > 0 ? "completed" : "ignored");
+      return NextResponse.json({ ok: true, repo: matched.id, hosted: true, afkScans: prIds.length });
+    }
+
     const prIds: string[] = [];
     if (matched.localPath) {
       gitFetch(matched.localPath);
@@ -99,8 +148,10 @@ export async function POST(request: Request) {
       }
     }
     triggerAfkScans(prIds);
+    if (logDelivery) await updateDeliveryStatus(logDelivery, "completed");
     return NextResponse.json({ ok: true, repo: matched.id, afkScans: prIds.length });
   }
 
+  if (logDelivery) await updateDeliveryStatus(logDelivery, "ignored");
   return NextResponse.json({ ok: true, ignored: true, event });
 }

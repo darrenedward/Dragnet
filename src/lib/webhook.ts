@@ -23,7 +23,7 @@ export function verifyGitlabToken(token: string, secret: string): boolean {
   }
 }
 
-export async function findRepoByCloneUrl(cloneUrl: string): Promise<{ id: string; localPath: string | null; webhookSecret: string | null } | null> {
+export async function findRepoByCloneUrl(cloneUrl: string): Promise<{ id: string; localPath: string | null; webhookSecret: string | null; hostedMode: boolean } | null> {
   // DB-side match. Two prior DoS amplification bugs lived here:
   //   1. (removed) git subprocess per repo without a stored cloneUrl, paid
   //      BEFORE the signature check.
@@ -36,14 +36,14 @@ export async function findRepoByCloneUrl(cloneUrl: string): Promise<{ id: string
   // .git-stripped form (some send git@...:foo/bar.git, others git@...:foo/bar).
   const normalizedClone = cloneUrl.replace(/\.git$/, "");
 
-  const select = { id: true, path: true, localPath: true, cloneUrl: true, webhookSecret: true } as const;
+  const select = { id: true, path: true, localPath: true, cloneUrl: true, webhookSecret: true, hostedMode: true } as const;
 
   const exact = await prisma.repository.findFirst({
     select,
     where: { cloneUrl },
   });
   if (exact) {
-    return { id: exact.id, localPath: exact.localPath || exact.path, webhookSecret: exact.webhookSecret };
+    return { id: exact.id, localPath: exact.localPath || exact.path, webhookSecret: exact.webhookSecret, hostedMode: exact.hostedMode };
   }
 
   if (normalizedClone !== cloneUrl) {
@@ -52,11 +52,19 @@ export async function findRepoByCloneUrl(cloneUrl: string): Promise<{ id: string
       where: { cloneUrl: normalizedClone },
     });
     if (stripped) {
-      return { id: stripped.id, localPath: stripped.localPath || stripped.path, webhookSecret: stripped.webhookSecret };
+      return { id: stripped.id, localPath: stripped.localPath || stripped.path, webhookSecret: stripped.webhookSecret, hostedMode: stripped.hostedMode };
     }
   }
 
   return null;
+}
+
+export async function getOpenPrIds(repoId: string): Promise<string[]> {
+  const prs = await prisma.pullRequest.findMany({
+    where: { repoId, status: "Open" },
+    select: { id: true },
+  });
+  return prs.map((p) => p.id);
 }
 
 export function gitFetch(repoPath: string): boolean {

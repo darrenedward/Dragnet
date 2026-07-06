@@ -1,8 +1,11 @@
 import { NextResponse } from "next/server";
-import { verifyGitlabToken, findRepoByCloneUrl, gitFetch, scanRepoPrs } from "../../../../lib/webhook";
+import { verifyGitlabToken, findRepoByCloneUrl, gitFetch, scanRepoPrs, getOpenPrIds } from "../../../../lib/webhook";
 import { enqueue } from "@/src/services/remoteFetchWorker";
 import { checkDelivery } from "../../../../lib/webhookReplay";
 import { runPrScan } from "../../../../../reviewService";
+import { triggerHostedScan } from "@/src/services/hostedScan/orchestrator";
+import { createDeliveryLog, updateDeliveryStatus } from "../../../../lib/webhookDelivery";
+import type { HostedPrData } from "@/src/services/hostedScan/orchestrator";
 
 export async function POST(request: Request) {
   const event = request.headers.get("x-gitlab-event");
@@ -55,11 +58,46 @@ export async function POST(request: Request) {
     }
   };
 
+  const logDelivery = deliveryGuid
+    ? await createDeliveryLog({
+        repoId: matched.id,
+        provider: "gitlab",
+        eventType: event,
+        deliveryGuid,
+        hostedMode: matched.hostedMode,
+      })
+    : null;
+
   if (event === "Merge Request Hook") {
     const mr = payload.object_attributes;
     if (!mr) {
+      if (logDelivery) await updateDeliveryStatus(logDelivery, "failed", "Missing merge request");
       return NextResponse.json({ error: "Missing merge request" }, { status: 400 });
     }
+
+    if (matched.hostedMode) {
+      if (!mr.source_branch || !mr.target_branch || !mr.last_commit?.id) {
+        if (logDelivery) await updateDeliveryStatus(logDelivery, "failed", "Missing merge request data");
+        return NextResponse.json({ error: "Missing merge request data (source_branch, target_branch, last_commit.id)" }, { status: 400 });
+      }
+      const prData: HostedPrData = {
+        prNumber: mr.iid,
+        title: mr.title || "Untitled",
+        headBranch: mr.source_branch,
+        baseBranch: mr.target_branch,
+        commitHash: mr.last_commit.id,
+        author: payload.user?.name || "webhook",
+        description: mr.description || undefined,
+      };
+      const result = await triggerHostedScan(matched.id, prData);
+      if (!result.ok) {
+        if (logDelivery) await updateDeliveryStatus(logDelivery, "failed", (result as { error: string }).error);
+        return NextResponse.json({ error: (result as { error: string }).error }, { status: 400 });
+      }
+      if (logDelivery) await updateDeliveryStatus(logDelivery, "completed");
+      return NextResponse.json({ ok: true, repo: matched.id, mr: mr.iid, hosted: true, prId: result.prId });
+    }
+
     const prIds: string[] = [];
     if (matched.localPath) {
       gitFetch(matched.localPath);
@@ -77,10 +115,22 @@ export async function POST(request: Request) {
       }
     }
     triggerAfkScans(prIds);
+    if (logDelivery) await updateDeliveryStatus(logDelivery, "completed");
     return NextResponse.json({ ok: true, repo: matched.id, mr: mr.iid, afkScans: prIds.length });
   }
 
   if (event === "Push Hook") {
+    if (matched.hostedMode) {
+      const prIds = await getOpenPrIds(matched.id);
+      for (const prId of prIds) {
+        runPrScan(prId).catch((err) =>
+          console.error(`[webhook] hosted push scan failed for ${prId}:`, err),
+        );
+      }
+      if (logDelivery) await updateDeliveryStatus(logDelivery, prIds.length > 0 ? "completed" : "ignored");
+      return NextResponse.json({ ok: true, repo: matched.id, hosted: true, afkScans: prIds.length });
+    }
+
     const prIds: string[] = [];
     if (matched.localPath) {
       gitFetch(matched.localPath);
@@ -98,8 +148,10 @@ export async function POST(request: Request) {
       }
     }
     triggerAfkScans(prIds);
+    if (logDelivery) await updateDeliveryStatus(logDelivery, "completed");
     return NextResponse.json({ ok: true, repo: matched.id, afkScans: prIds.length });
   }
 
+  if (logDelivery) await updateDeliveryStatus(logDelivery, "ignored");
   return NextResponse.json({ ok: true, ignored: true, event });
 }
