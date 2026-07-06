@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { fetchRemoteModels, getPreset } from "@/src/lib/llmPresets";
+import { fetchRemoteModels, getPreset, getPresetByEndpoint } from "@/src/lib/llmPresets";
 import { authenticateSessionOrKey } from "@/src/lib/apiAuth";
 
 export async function POST(req: Request) {
@@ -15,13 +15,10 @@ export async function POST(req: Request) {
     if (!effectiveKey && presetId) {
       const preset = await getPreset(presetId);
       if (preset) effectiveKey = preset.apiKey;
-    } else if (!effectiveKey && endpoint) {
-      // fallback: try loading preset by id from the body if one was sent
-      const pid = body.presetId || "";
-      if (pid) {
-        const preset = await getPreset(pid);
-        if (preset) effectiveKey = preset.apiKey;
-      }
+    }
+    if (!effectiveKey && endpoint) {
+      const preset = await getPresetByEndpoint(endpoint);
+      if (preset) effectiveKey = preset.apiKey;
     }
 
     const result = await fetchRemoteModels(endpoint, effectiveKey);

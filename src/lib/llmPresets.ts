@@ -20,6 +20,7 @@ export {
   savePresets,
   validatePresetsInput,
   getPreset,
+  getPresetByEndpoint,
   createPreset,
   updatePreset,
   deletePreset,

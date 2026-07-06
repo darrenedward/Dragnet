@@ -145,7 +145,9 @@ async function ensureCacheLoaded(): Promise<void> {
 
 function getCached(): PresetCache {
   const c = g.__presetCache;
-  if (!c) {
+  if (!c || needsRefresh(c)) {
+    void ensureCacheLoaded();
+    if (c) return c;
     return {
       version: getCacheVersion(),
       presets: [],
@@ -382,6 +384,12 @@ export async function savePresets(state: PresetsFile): Promise<void> {
 
 export async function getPreset(id: string): Promise<Preset | null> {
   const row = await prisma.lLMPreset.findUnique({ where: { id } });
+  if (!row) return null;
+  return rowToPreset(row);
+}
+
+export async function getPresetByEndpoint(endpoint: string): Promise<Preset | null> {
+  const row = await prisma.lLMPreset.findFirst({ where: { endpoint } });
   if (!row) return null;
   return rowToPreset(row);
 }
