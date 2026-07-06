@@ -1,19 +1,8 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import crypto from "node:crypto";
-
-const SCAN_TOKEN_PREFIX = "hs_";
-
-function generateScanTokenRaw(): { raw: string; prefix: string; hash: string } {
-  const raw = SCAN_TOKEN_PREFIX + crypto.randomBytes(32).toString("hex");
-  const prefix = raw.slice(0, 8) + "...";
-  const hash = crypto.createHash("sha256").update(raw).digest("hex");
-  return { raw, prefix, hash };
-}
-
-function hashToken(raw: string): string | null {
-  if (!raw.startsWith(SCAN_TOKEN_PREFIX)) return null;
-  return crypto.createHash("sha256").update(raw).digest("hex");
-}
+import { describe, it, expect } from "vitest";
+import {
+  generateScanTokenRaw,
+  hashScanToken,
+} from "../../src/services/hostedScan/scanToken";
 
 describe("ScanToken generation", () => {
   it("produces a token with the hs_ prefix", () => {
@@ -25,15 +14,15 @@ describe("ScanToken generation", () => {
 
   it("produces a deterministic hash for the same raw token", () => {
     const raw = "hs_" + "a".repeat(64);
-    const hash1 = hashToken(raw);
-    const hash2 = hashToken(raw);
+    const hash1 = hashScanToken(raw);
+    const hash2 = hashScanToken(raw);
     expect(hash1).toBe(hash2);
   });
 
   it("returns null for tokens without the hs_ prefix", () => {
-    expect(hashToken("dr_abc123")).toBeNull();
-    expect(hashToken("")).toBeNull();
-    expect(hashToken("hs")).toBeNull();
+    expect(hashScanToken("dr_abc123")).toBeNull();
+    expect(hashScanToken("")).toBeNull();
+    expect(hashScanToken("hs")).toBeNull();
   });
 
   it("generates unique raw tokens on successive calls", () => {
@@ -47,19 +36,19 @@ describe("ScanToken generation", () => {
 describe("ScanToken validation", () => {
   it("validates a token against its stored hash", () => {
     const token = generateScanTokenRaw();
-    const computed = hashToken(token.raw);
+    const computed = hashScanToken(token.raw);
     expect(computed).toBe(token.hash);
   });
 
   it("rejects a tampered token", () => {
     const token = generateScanTokenRaw();
     const tampered = token.raw.slice(0, -1) + "0";
-    const computed = hashToken(tampered);
+    const computed = hashScanToken(tampered);
     expect(computed).not.toBe(token.hash);
   });
 
   it("rejects wrong-prefix tokens", () => {
-    expect(hashToken("dr_abc123")).toBeNull();
-    expect(hashToken("invalid")).toBeNull();
+    expect(hashScanToken("dr_abc123")).toBeNull();
+    expect(hashScanToken("invalid")).toBeNull();
   });
 });

@@ -12,14 +12,13 @@ export interface HostedPrData {
   description?: string;
 }
 
-export interface HostedScanResult {
-  ok: boolean;
-  error?: string;
-  prId?: string;
-  runId?: string;
-}
+export type HostedScanResult =
+  | { ok: true; prId: string; runId?: string }
+  | { ok: false; error: string };
 
-export async function validateHostedMode(repoId: string): Promise<{ ok: boolean; error?: string }> {
+type ValidateResult = { ok: true } | { ok: false; error: string };
+
+export async function validateHostedMode(repoId: string): Promise<ValidateResult> {
   const repo = await prisma.repository.findUnique({
     where: { id: repoId },
     select: { id: true, hostedMode: true },
@@ -34,7 +33,7 @@ export async function triggerHostedScan(
   data: HostedPrData,
 ): Promise<HostedScanResult> {
   const mode = await validateHostedMode(repoId);
-  if (!mode.ok) return mode;
+  if (!mode.ok) return { ok: false, error: (mode as { error: string }).error };
 
   const existingPr = await prisma.pullRequest.findFirst({
     where: { repoId, sourceBranch: data.headBranch, targetBranch: data.baseBranch },
@@ -66,11 +65,11 @@ export async function triggerHostedScan(
         },
       });
 
-  const scanResult = await runPrScan(pr.id);
+  const scanResult = (await runPrScan(pr.id)) as unknown as Record<string, unknown>;
 
   return {
     ok: true,
     prId: pr.id,
-    runId: "runId" in scanResult ? (scanResult as any).runId : undefined,
-  };
+    runId: typeof scanResult?.runId === "string" ? scanResult.runId : undefined,
+  } as HostedScanResult;
 }

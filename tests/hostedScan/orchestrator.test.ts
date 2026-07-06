@@ -1,62 +1,56 @@
 import { describe, it, expect } from "vitest";
+import type { HostedPrData, HostedScanResult } from "../../src/services/hostedScan/orchestrator";
 
 describe("HostedScan orchestrator", () => {
-  describe("validateRepoMode", () => {
-    it("allows hosted mode repos to accept external scan requests", () => {
-      const repo = { id: "r1", hostedMode: true };
-      expect(repo.hostedMode).toBe(true);
-    });
-
-    it("blocks external scan requests for local mode repos", () => {
-      const repo = { id: "r1", hostedMode: false };
-      expect(repo.hostedMode).toBe(false);
-    });
-  });
-
-  describe("buildPrFromHostedData", () => {
-    it("builds a PullRequest-compatible object from external PR data", () => {
-      const data = {
-        number: 42,
+  describe("HostedPrData type", () => {
+    it("accepts valid PR data with all fields", () => {
+      const data: HostedPrData = {
+        prNumber: 42,
         title: "Fix the thing",
-        sourceBranch: "fix/thing",
-        targetBranch: "main",
-        author: "octocat",
+        headBranch: "fix/thing",
+        baseBranch: "main",
         commitHash: "abc123",
+        author: "octocat",
         description: "Fixes the thing",
       };
-
-      expect(data.number).toBe(42);
-      expect(data.title).toContain("Fix");
-      expect(data.sourceBranch).toBe("fix/thing");
-      expect(data.targetBranch).toBe("main");
+      expect(data.prNumber).toBe(42);
+      expect(data.headBranch).toBe("fix/thing");
     });
 
-    it("handles missing optional fields gracefully", () => {
-      const data: Record<string, unknown> = {
-        number: 1,
+    it("handles missing optional fields", () => {
+      const data: HostedPrData = {
+        prNumber: 1,
         title: "Untitled",
-        sourceBranch: "patch-1",
-        targetBranch: "main",
-        author: "unknown",
+        headBranch: "patch-1",
+        baseBranch: "main",
         commitHash: "deadbeef",
       };
-
-      expect(data.title).toBe("Untitled");
       expect(data.description).toBeUndefined();
+      expect(data.author).toBeUndefined();
     });
   });
 
-  describe("triggerHostedScan", () => {
-    it("returns an error when repo is not in hosted mode", async () => {
-      const result = { ok: false, error: "Repository is not in hosted mode" };
-      expect(result.ok).toBe(false);
-      expect(result.error).toMatch(/not in hosted mode/);
+  describe("HostedScanResult discriminated union", () => {
+    it("discriminates error state", () => {
+      const err: HostedScanResult = { ok: false, error: "Repository not found" };
+      if (!err.ok) {
+        expect(err.error).toMatch(/not found/);
+      }
     });
 
-    it("returns success when scan is triggered", async () => {
-      const result = { ok: true, prId: "pr_abc123" };
-      expect(result.ok).toBe(true);
-      expect(result.prId).toBeTruthy();
+    it("discriminates success state", () => {
+      const ok: HostedScanResult = { ok: true, prId: "pr_abc123", runId: "run_xyz" };
+      if (ok.ok) {
+        expect(ok.prId).toBeTruthy();
+        expect(ok.runId).toBeTruthy();
+      }
+    });
+
+    it("runId is optional on success", () => {
+      const ok: HostedScanResult = { ok: true, prId: "pr_xyz" };
+      if (ok.ok) {
+        expect(ok.runId).toBeUndefined();
+      }
     });
   });
 });

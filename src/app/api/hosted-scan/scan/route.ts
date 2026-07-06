@@ -40,7 +40,7 @@ export async function POST(request: Request) {
 
   const result = await triggerHostedScan(tokenAuth.repoId, prData);
   if (!result.ok) {
-    return NextResponse.json({ error: result.error }, { status: 400 });
+    return NextResponse.json({ error: (result as { error: string }).error }, { status: 400 });
   }
 
   return NextResponse.json({ ok: true, prId: result.prId, runId: result.runId });
