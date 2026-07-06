@@ -6,7 +6,7 @@ import { Check, Copy, Eye, EyeOff, Key, RefreshCw, X } from "lucide-react";
 type Mode = "reveal" | "manage";
 
 interface Props {
-  repoId: string;
+  repoId: string | null;
   mode: Mode;
   initialApiKey?: string;
   initialPrefix?: string | null;
@@ -55,20 +55,22 @@ export default function ApiKeyManager({
       const existingRes = await fetch("/api/keys");
       if (existingRes.ok) {
         const existingKeys: { id: string; repoId: string | null }[] = await existingRes.json();
-        // Filter and revoke keys for this repo
-        const repoKeys = existingKeys.filter((k) => k.repoId === repoId);
+        // Filter and revoke keys: global when repoId is null, otherwise repo-scoped
+        const keysToRevoke = repoId === null
+          ? existingKeys.filter((k) => !k.repoId)
+          : existingKeys.filter((k) => k.repoId === repoId);
         await Promise.all(
-          repoKeys.map((k) => fetch(`/api/keys/${k.id}`, { method: "DELETE" })),
+          keysToRevoke.map((k) => fetch(`/api/keys/${k.id}`, { method: "DELETE" })),
         );
       }
-      // Create new key
+      // Create new key: global when repoId is null (no repoId field in body), otherwise repo-scoped
+      const body = repoId === null
+        ? { name: "Global" }
+        : { name: repoName ? `project:${repoName}` : "Project", repoId };
       const res = await fetch("/api/keys", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: repoName ? `project:${repoName}` : "Project",
-          repoId,
-        }),
+        body: JSON.stringify(body),
       });
       const data = await res.json();
       if (res.ok) {
