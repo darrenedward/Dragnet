@@ -1283,7 +1283,10 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
       } catch (err: any) {
         console.warn(`[scan] runPrScan: Tier 1 deterministic checks crashed:`, err);
         void logReview(prId, `Tier 1 deterministic checks crashed: ${err.message}`, "warn", reviewRunId, reviewChunkId);
-        return { ok: false, error: new StepError(err?.message ?? String(err), true) };
+        // A deterministic-check crash (binary missing, permission denied) is a
+        // code/env issue, not infrastructure. Marking it non-infrastructure
+        // means no retry and the pipeline continues to Tier 2 + LLM.
+        return { ok: false, error: new StepError(err?.message ?? String(err), false) };
       }
     },
   });
