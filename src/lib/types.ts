@@ -159,7 +159,7 @@ export interface LlmPresetsState {
   fallbackEmbeddingPresetId: string;
 }
 
-export type ActiveTab = "prs" | "watcher" | "roadmap" | "db_config" | "llm_config" | "codebase";
+export type ActiveTab = "prs" | "watcher" | "roadmap" | "db_config" | "llm_config" | "codebase" | "team";
 
 export const getStatusBadgeStyle = (status: string): string => {
   switch (status) {
