@@ -1,4 +1,5 @@
 import { execFile as cpExecFile, spawn, execSync } from "node:child_process";
+import { mkdirSync } from "node:fs";
 import { type RunOptions, type RunResult } from "./containerOrchestratorTypes";
 
 function asyncExecFile(file: string, args: string[], options: { encoding: string; signal: AbortSignal }): Promise<{ stdout: string; stderr: string }> {
@@ -203,5 +204,37 @@ export class ContainerOrchestrator {
       stderr,
       timedOut,
     };
+  }
+
+  /**
+   * Copies the contents of a Docker volume to a host directory using a
+   * temporary container. Creates hostDir if it doesn't exist.
+   *
+   * Uses `alpine/git` (already pulled for git operations) by default.
+   */
+  public async copyVolumeToHost(
+    volumeName: string,
+    hostDir: string,
+    image: string = "alpine/git",
+  ): Promise<void> {
+    const engine = detectContainerEngine();
+    mkdirSync(hostDir, { recursive: true });
+
+    try {
+      await asyncExecFile(engine, [
+        "run", "--rm",
+        "-v", `${volumeName}:/src:ro`,
+        "-v", `${hostDir}:/dst`,
+        image,
+        "cp", "-a", "/src/.", "/dst/",
+      ], {
+        encoding: "utf8",
+        signal: AbortSignal.timeout(300_000),
+      });
+    } catch (err: any) {
+      throw new Error(
+        `Failed to copy volume ${volumeName} to ${hostDir} via ${engine}: ${err.message}`,
+      );
+    }
   }
 }

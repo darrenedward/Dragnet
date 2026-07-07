@@ -1,4 +1,7 @@
 import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import path from "node:path";
+import os from "node:os";
 import { prisma } from "../lib/prisma";
 import { decryptSecret, hasMasterKey } from "../lib/crypto";
 import { ContainerOrchestrator } from "../lib/containerOrchestrator";
@@ -120,17 +123,20 @@ export async function enqueue(repoId: string): Promise<string | null> {
 
       localPath = "/workspace";
 
-      // indexFolder is skipped for containerized repos because the volume
-      // (dragnet-repo-<id>) is only mountable from inside Docker, not from the
-      // host filesystem. The code-graph indexer will need a future
-      // containerization pass to read /workspace directly.
-      console.log(`[remoteFetchWorker] indexFolder deferred for containerized repo ${repoId}`);
-
       if (!repo.localPath) {
         await prisma.repository.update({
           where: { id: repoId },
           data: { localPath },
         });
+      }
+
+      // Copy volume to a host temp dir so the code-graph indexer can walk it
+      const tmpDir = mkdtempSync(path.join(os.tmpdir(), `dragnet-idx-${repoId}-`));
+      try {
+        await orchestrator.copyVolumeToHost(volName, tmpDir, GIT_IMAGE);
+        await IndexingService.indexFolder(repoId, tmpDir);
+      } finally {
+        rmSync(tmpDir, { recursive: true, force: true });
       }
     } else {
       // Legacy host-path mode — inline git fetch (no gitRemote dependency)

@@ -6,6 +6,7 @@ const mockFindUnique = vi.fn();
 const mockUpdate = vi.fn();
 const mockCreateVolume = vi.fn();
 const mockRunRunner = vi.fn();
+const mockCopyVolumeToHost = vi.fn();
 const mockIndexFolder = vi.fn();
 const mockGetInstallationToken = vi.fn();
 
@@ -31,6 +32,7 @@ vi.mock("../src/lib/containerOrchestrator", () => ({
     getInstance: () => ({
       createVolume: (...args: unknown[]) => mockCreateVolume(...args),
       runRunner: (...args: unknown[]) => mockRunRunner(...args),
+      copyVolumeToHost: (...args: unknown[]) => mockCopyVolumeToHost(...args),
     }),
     setInstance: vi.fn(),
   },
@@ -72,6 +74,7 @@ beforeEach(() => {
     process.env.DRAGNET_MASTER_KEY = "QQe7IAjrJKIUR/yBCcjdW91OJXQt2zVQsm9NvZqXjzc=";
   }
   mockRunRunner.mockResolvedValue({ exitCode: 0, stdout: "", stderr: "", timedOut: false });
+  mockCopyVolumeToHost.mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -145,16 +148,25 @@ describe("enqueue", () => {
           data: expect.objectContaining({ localPath: "/workspace" }),
         }),
       );
-      expect(mockIndexFolder).not.toHaveBeenCalled();
+      expect(mockCopyVolumeToHost).toHaveBeenCalledWith(
+        "dragnet-repo-test-repo-1",
+        expect.stringContaining("dragnet-idx-test-repo-1-"),
+        "alpine/git",
+      );
+      expect(mockIndexFolder).toHaveBeenCalledWith(
+        "test-repo-1",
+        expect.stringContaining("dragnet-idx-test-repo-1-"),
+      );
     });
 
-    it("skips indexFolder for container mode", async () => {
+    it("indexes via copy from volume", async () => {
       const { enqueue } = await import("../src/services/remoteFetchWorker");
       mockFindUnique.mockResolvedValue(makeRepo());
 
       await enqueue("test-repo-1");
 
-      expect(mockIndexFolder).not.toHaveBeenCalled();
+      expect(mockCopyVolumeToHost).toHaveBeenCalledTimes(1);
+      expect(mockIndexFolder).toHaveBeenCalledTimes(1);
     });
 
     it("uses PAT for HTTPS auth when provided", async () => {
@@ -209,7 +221,8 @@ describe("enqueue", () => {
           data: expect.objectContaining({ localPath: expect.anything() }),
         }),
       );
-      expect(mockIndexFolder).not.toHaveBeenCalled();
+      expect(mockCopyVolumeToHost).toHaveBeenCalledTimes(1);
+      expect(mockIndexFolder).toHaveBeenCalledTimes(1);
     });
   });
 
