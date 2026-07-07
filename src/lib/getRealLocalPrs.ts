@@ -270,31 +270,66 @@ async function listBranches(repo: RepoLike): Promise<BranchInfo[]> {
   });
 }
 
+// In-memory guard: prevents concurrent refreshPrFiles for the same prId.
+// Without this, multiple scan requests that arrive before the review lock
+// is acquired ALL call collectBranchFiles simultaneously, spawning
+// N × (numFiles × 3) Docker containers and overwhelming the host.
+const activeFileRefreshes = new Set<string>();
+
 export async function refreshPrFiles(repo: RepoLike, branchName: string, prId: string) {
-  const repoRow = await prisma.repository.findUnique({
-    where: { id: repo.id },
-    select: { baseBranch: true },
-  });
-  const baseBranch = repoRow?.baseBranch || "main";
-  const files = await collectBranchFiles(repo, baseBranch, branchName);
-  await prisma.prFile.deleteMany({ where: { prId } });
-  if (files.length > 0) {
-    await prisma.prFile.createMany({
-      skipDuplicates: true,
-      data: files.map((f) => ({
-        id: randomUUID(),
-        prId,
-        filename: f.filename,
-        status: f.status,
-        additions: f.additions,
-        deletions: f.deletions,
-        originalContent: sanitizeForPg(f.originalContent),
-        modifiedContent: sanitizeForPg(f.modifiedContent),
-        diff: sanitizeForPg(f.diff),
-      })),
+  if (activeFileRefreshes.has(prId)) {
+    console.log(`[refreshPrFiles] already in progress for ${prId} — returning existing files`);
+    const existing = await prisma.prFile.findMany({
+      where: { prId },
+      select: {
+        filename: true,
+        status: true,
+        additions: true,
+        deletions: true,
+        originalContent: true,
+        modifiedContent: true,
+        diff: true,
+      },
     });
+    return existing.map((f) => ({
+      filename: f.filename,
+      status: f.status,
+      additions: f.additions,
+      deletions: f.deletions,
+      originalContent: f.originalContent ?? "",
+      modifiedContent: f.modifiedContent ?? "",
+      diff: f.diff ?? "",
+    }));
   }
-  return files;
+  activeFileRefreshes.add(prId);
+  try {
+    const repoRow = await prisma.repository.findUnique({
+      where: { id: repo.id },
+      select: { baseBranch: true },
+    });
+    const baseBranch = repoRow?.baseBranch || "main";
+    const files = await collectBranchFiles(repo, baseBranch, branchName);
+    await prisma.prFile.deleteMany({ where: { prId } });
+    if (files.length > 0) {
+      await prisma.prFile.createMany({
+        skipDuplicates: true,
+        data: files.map((f) => ({
+          id: randomUUID(),
+          prId,
+          filename: f.filename,
+          status: f.status,
+          additions: f.additions,
+          deletions: f.deletions,
+          originalContent: sanitizeForPg(f.originalContent),
+          modifiedContent: sanitizeForPg(f.modifiedContent),
+          diff: sanitizeForPg(f.diff),
+        })),
+      });
+    }
+    return files;
+  } finally {
+    activeFileRefreshes.delete(prId);
+  }
 }
 
 async function collectBranchFiles(
