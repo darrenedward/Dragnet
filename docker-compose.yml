@@ -18,7 +18,6 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=3300
-      - REPOS_DIR=/app/repos
 
     volumes:
       # Runtime config: llm-presets.json
@@ -26,15 +25,11 @@ services:
       # Centralised scan state — checkpoints, reports, provider health,
       # review exports. Slice 2: replaces per-repo .dragnet/ artifacts.
       - dragnet-scan-state:/var/lib/dragnet/scans
-      # Cloned repos — persists across restarts so re-scans are fast.
-      - ./repos:/app/repos
-      # Read-only bind-mount of the host repo directory so the container
-      # can run `git diff` against repos registered with absolute host
-      # paths in the database. The container-side mount point is
-      # `/host-repos`; DB `path` values should be rewritten to use this
-      # prefix (e.g. `/host-repos/CredManagerPro` instead of
-      # `/home/curryman/Websites/CredManagerPro`).
-      - /home/curryman/Websites:/host-repos:ro
+      # Per-repo named volumes (dragnet-repo-<id>) are created on demand
+      # by ContainerOrchestrator when GitService.syncToCommit runs. Each
+      # repo gets its own alpine/git clone of the remote, then the runner
+      # container (node:20-alpine by default) mounts the same volume to
+      # run install / test / lint / build. No host directory needed.
 
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:3300/"]
