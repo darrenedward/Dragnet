@@ -47,6 +47,7 @@ export default function RepoSettingsModal({ repo, onClose, onResetIndex, onRefre
   const [statsError, setStatsError] = useState<string | null>(null);
   const [showConfirm, setShowConfirm] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
+  const [resetDone, setResetDone] = useState(false);
   const [deletingWebhook, setDeletingWebhook] = useState(false);
   const [deletedWebhook, setDeletedWebhook] = useState(false);
   const [settingUpWebhook, setSettingUpWebhook] = useState(false);
@@ -124,9 +125,14 @@ export default function RepoSettingsModal({ repo, onClose, onResetIndex, onRefre
     try {
       await onResetIndex(repo.id);
       setShowConfirm(false);
-      onRefresh();
+      setResetDone(true);
+      setTimeout(() => {
+        setResetDone(false);
+        onRefresh();
+      }, 3000);
     } catch {
       // error handled upstream
+      setIsResetting(false);
     } finally {
       setIsResetting(false);
     }
@@ -358,7 +364,18 @@ export default function RepoSettingsModal({ repo, onClose, onResetIndex, onRefre
           )}
 
           <div className="border-t border-white/10 pt-4 mt-2">
-            {!showConfirm ? (
+            {resetDone ? (
+              <div className="p-3 bg-emerald-950/30 border border-emerald-500/30 text-emerald-300 rounded-lg text-xs leading-snug space-y-2">
+                <div className="flex items-center gap-2">
+                  <Check size={16} className="shrink-0" />
+                  <strong className="uppercase tracking-wider text-[10px]">Index cleared</strong>
+                </div>
+                <p className="text-emerald-400/80">
+                  All indexed symbols, edges, and embeddings have been deleted.
+                  Click <strong>&quot;Index Now&quot;</strong> on the PR view to rebuild the index before running a review.
+                </p>
+              </div>
+            ) : !showConfirm ? (
               <button
                 onClick={() => setShowConfirm(true)}
                 className="w-full px-3 py-2.5 bg-rose-600/20 border border-rose-500/30 text-rose-300 hover:bg-rose-600/30 hover:text-rose-200 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-2 cursor-pointer"
@@ -372,7 +389,7 @@ export default function RepoSettingsModal({ repo, onClose, onResetIndex, onRefre
                   <strong className="uppercase tracking-wider text-[10px]">Destructive action</strong>
                   <p className="mt-1 text-rose-400/80">
                     This will delete all indexed symbols, edges, and embeddings for this repo.
-                    A full re-index will be triggered. Ensure <code className="bg-rose-950/60 px-1 rounded">.env</code>
+                    You will need to click <strong>&quot;Index Now&quot;</strong> on the PR view to rebuild. Ensure <code className="bg-rose-950/60 px-1 rounded">.env</code>
                     {" "}files are in <code className="bg-rose-950/60 px-1 rounded">.gitignore</code> before proceeding.
                   </p>
                 </div>

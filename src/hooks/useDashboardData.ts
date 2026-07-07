@@ -642,13 +642,20 @@ export function useDashboardData() {
         await fetchRepos();
         await fetchLogs();
         console.log(`[scan] handleTriggerPrScan: refetch complete`);
+      } else if (res.status === 409 && result.error === "INDEXING_IN_PROGRESS") {
+        setPrs((prev) =>
+          prev.map((p) => (p.id === targetPrId ? { ...p, status: "Pending" } : p)),
+        );
+        toast.warn(
+          result.message || "Indexing is currently running. Please wait for it to complete before reviewing.",
+        );
       } else if (res.status === 409 && result.error === "INDEX_REQUIRED") {
         setPrs((prev) =>
           prev.map((p) => (p.id === targetPrId ? { ...p, status: "Pending" } : p)),
         );
         toast.warn(
           result.message ||
-            "Codebase not indexed. Open the Codebase AST graph tab and run the indexer before reviewing.",
+            "Codebase not indexed. Click \"Index Now\" above to build the codebase index, then retry the review.",
         );
       } else if (res.status === 409 && result.error === "SCAN_IN_PROGRESS") {
         // Active or stale-but-not-yet-reaped scan is holding the lock.

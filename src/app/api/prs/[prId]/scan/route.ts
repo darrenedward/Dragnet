@@ -104,6 +104,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
     if (freshness.ok === false) {
       console.log(`[scan] route: freshness not ok kind=${freshness.kind} message=${freshness.message}`);
       if (freshness.kind === "INDEX_REQUIRED") {
+        const indexingInProgress = IndexingService.isIndexing(pr.repoId);
+        if (indexingInProgress) {
+          console.log(`[scan] route: INDEX_REQUIRED but indexing is in progress — returning 409`);
+          return NextResponse.json(
+            { error: "INDEXING_IN_PROGRESS", message: "Indexing is currently running for this repo. Please wait for it to complete before running a PR review.", repoId: pr.repoId },
+            { status: 409 },
+          );
+        }
         console.log(`[scan] route: INDEX_REQUIRED - returning 409`);
         return NextResponse.json(
           { error: freshness.kind, message: freshness.message, repoId: pr.repoId },

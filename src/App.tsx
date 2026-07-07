@@ -384,18 +384,6 @@ export default function App() {
                 const data = await res.json().catch(() => ({}));
                 throw new Error(data?.message || `Reset failed (${res.status})`);
               }
-              // Poll for completion
-              const deadline = Date.now() + 15 * 60 * 1000;
-              while (Date.now() < deadline) {
-                await new Promise((r) => setTimeout(r, 5000));
-                const poll = await fetch(`/api/repos/${repoId}`);
-                if (poll.ok) {
-                  const repo = await poll.json();
-                  if (repo?.indexedAt) {
-                    return;
-                  }
-                }
-              }
             }}
             onRefresh={async () => {
               d.handleTriggerReviewPass();
