@@ -86,9 +86,12 @@ export async function enqueue(repoId: string): Promise<string | null> {
 
       const escapedUrl = shellEscape(interpolatePat(repo.cloneUrl, effectivePat));
 
+      // Always update the remote URL on every fetch so credential changes
+      // (PAT rotation, deploy key replacement) take effect even when the
+      // volume's .git/config still has the old URL.
       const syncScript = [
         "set -e",
-        `[ -d /workspace/.git ] || (git init /workspace && cd /workspace && git remote add origin '${escapedUrl}')`,
+        `cd /workspace && (git init 2>/dev/null; git remote add origin '${escapedUrl}' 2>/dev/null || git remote set-url origin '${escapedUrl}')`,
         "cd /workspace && git fetch origin --prune",
       ].join(" && ");
 
