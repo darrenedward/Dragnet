@@ -178,8 +178,71 @@ describe("getRealLocalPrs — remote-volume mode (uses runGitInRepo)", () => {
       ["rev-parse", "--is-inside-work-tree"],
       expect.any(Object),
     );
-    // Empty diff → no PRs upserted
-    expect(result).toEqual([]);
+    // Empty diff → PR record IS created (0-diff branches no longer skipped)
+    expect(result).not.toBeNull();
+    expect(result!.length).toBe(1);
+    expect(result![0].sourceBranch).toBe("feat/y");
+    expect(mocks.mockPrUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "real-pr-remote-r1-feat-y" },
+        create: expect.objectContaining({ sourceBranch: "feat/y", status: "Pending" }),
+      }),
+    );
+  });
+
+  it("creates PR record for 0-diff unmerged branch (not merged, but no file changes)", async () => {
+    const repo = { id: "remote-r3", cloneUrl: "git@github.com:o/r.git" };
+    mocks.mockRepoFindUnique.mockResolvedValue({
+      id: "remote-r3",
+      baseBranch: "main",
+      branchPattern: "*",
+    });
+    mocks.mockPrFindMany.mockResolvedValue([]);
+    mocks.mockPrFileCreateMany.mockResolvedValue({ count: 0 });
+    mocks.mockPrFindUnique.mockResolvedValue(null);
+
+    mocks.mockRunGitInRepo.mockImplementation(async (r, args) => {
+      if (args[0] === "rev-parse" && args[1] === "--is-inside-work-tree") {
+        return { stdout: "", stderr: "", exitCode: 0 };
+      }
+      if (args[0] === "show-ref" && args[2] === "refs/heads/main") {
+        return { stdout: "", stderr: "", exitCode: 0 };
+      }
+      if (args[0] === "for-each-ref") {
+        return {
+          stdout: "zero-diff-branch|abc789|2026-06-01T00:00:00+00:00|Dev|empty change\n",
+          stderr: "",
+          exitCode: 0,
+        };
+      }
+      if (args[0] === "merge-base") {
+        return { stdout: "", stderr: "not merged", exitCode: 1 }; // not merged
+      }
+      if (args[0] === "diff" && args[1] === "--name-status") {
+        return { stdout: "", stderr: "", exitCode: 0 }; // 0 files changed
+      }
+      return { stdout: "", stderr: "", exitCode: 0 };
+    });
+
+    const { getRealLocalPrs } = await getMod();
+    const result = await getRealLocalPrs(repo);
+
+    // PR record MUST be created even with 0 diffs
+    expect(result).not.toBeNull();
+    expect(result!.length).toBe(1);
+    expect(result![0].sourceBranch).toBe("zero-diff-branch");
+    expect(mocks.mockPrUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "real-pr-remote-r3-zero-diff-branch" },
+        create: expect.objectContaining({
+          sourceBranch: "zero-diff-branch",
+          status: "Pending",
+          description: "empty change",
+        }),
+      }),
+    );
+    // prFile createMany should still be called (with empty data)
+    expect(mocks.mockPrFileCreateMany).toHaveBeenCalled();
   });
 
   it("marks merged branches as Merged when found via for-each-ref", async () => {

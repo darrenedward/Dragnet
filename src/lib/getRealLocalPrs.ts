@@ -97,7 +97,8 @@ function localPathExists(repo: RepoLike): boolean {
  *    matches the current diff.
  *
  * Branches that produce zero file changes against base (already merged
- * or rebased) are skipped — they aren't real pending PRs.
+ * or rebased) still get a PR record so the user can see them and
+ * reviews can return cached or metadata-based ratings.
  *
  * Supports both legacy (local-path) and remote-volume repos via
  * `runGitInRepo`. For remote-volume, the repo is assumed to already be
@@ -165,7 +166,6 @@ export async function getRealLocalPrs(repo: RepoLike) {
         }
 
         const filesList = await collectBranchFiles(repo, baseBranch, branch.name);
-        if (filesList.length === 0) continue;
 
         const existing = await prisma.pullRequest.findUnique({
           where: { id: prId },
