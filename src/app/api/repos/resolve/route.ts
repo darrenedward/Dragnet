@@ -14,7 +14,11 @@ export async function GET(req: NextRequest) {
 
   if (dir) {
     const lowerDir = dir.toLowerCase();
-    const pathMatch = repos.find((r) => dir.startsWith(r.path) || lowerDir.startsWith(r.path.toLowerCase()));
+    // Skip repos with no local path (remote-clone repos have path=null) — the
+    // name-match fallback below still finds them.
+    const pathMatch = repos.find(
+      (r) => r.path && (dir.startsWith(r.path) || lowerDir.startsWith(r.path.toLowerCase())),
+    );
     if (pathMatch) return NextResponse.json({ repo: { id: pathMatch.id, name: pathMatch.name } });
 
     const basename = dir.split("/").filter(Boolean).pop() || "";

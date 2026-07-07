@@ -30,6 +30,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       );
     }
 
+    // Standalone indexing is local-path-only — remote-volume repos get
+    // indexed automatically as part of every scan via the container runner.
+    if (!repo.path) {
+      return NextResponse.json(
+        { error: "LOCAL_PATH_REQUIRED", message: "This endpoint indexes from a local filesystem path. Remote-clone repos are indexed automatically on every scan." },
+        { status: 409 },
+      );
+    }
+
     await prisma.repository.updateMany({ where: { id }, data: { status: 'stabilizing' } });
 
     // Detach the work — indexing 500+ files against Supabase pooler takes 10+
