@@ -1353,13 +1353,14 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
   const pipelineResult = await pipeline.run();
   deterministicFindings = pipelineResult.findings;
 
-  if (pipelineResult.aborted && pipelineResult.infrastructureFailure) {
+  if (pipelineResult.aborted) {
+    const isInfra = pipelineResult.infrastructureFailure;
+    const stepName = pipelineResult.lastStepName ?? "unknown";
     void logReview(
-      prId,
-      `Infrastructure failure in step "${pipelineResult.lastStepName}" — aborting scan`,
+      prId, `Pipeline aborted at step "${stepName}"${isInfra ? " (infrastructure failure)" : ""} — aborting scan`,
       "error", reviewRunId, reviewChunkId,
     );
-    console.log(`[scan] runPrScan: infrastructure failure in step "${pipelineResult.lastStepName}"`);
+    console.log(`[scan] runPrScan: pipeline aborted at step "${stepName}" (infrastructure=${isInfra})`);
     if (reviewRunId && !reviewChunkId) {
       await completeReviewRun(reviewRunId, { status: "failed" });
     }
@@ -1368,8 +1369,10 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
       rating: null,
       findings: deterministicFindings,
       usedModel: "none",
-      systemWarn: `Infrastructure failure in step "${pipelineResult.lastStepName}". Check server logs and try again.`,
-      infrastructureFailure: true,
+      systemWarn: isInfra
+        ? `Infrastructure failure in step "${stepName}". Check server logs and try again.`
+        : `Scan aborted at step "${stepName}".`,
+      infrastructureFailure: isInfra,
     };
   }
 
