@@ -98,7 +98,7 @@ export async function POST(req: Request) {
     const baseBranch = pr.targetBranch || repo.baseBranch || "main";
     const sizeProfile = computePrSizeProfile(
       files,
-      readPrCommitCount(repo.path, baseBranch, pr.sourceBranch),
+      await readPrCommitCount(repo, baseBranch, pr.sourceBranch),
     );
     const limits = readLimits();
     const manifest = buildDiffManifest(files, sizeProfile.commitCount, {

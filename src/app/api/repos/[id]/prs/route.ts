@@ -14,7 +14,7 @@ import { readPrCommitCount } from "@/src/lib/prSizeProfile.server";
  */
 const refreshPromises = new Map<string, Promise<any>>();
 
-async function attachSizeProfiles(prs: any[], repo: { path: string | null; baseBranch: string | null }) {
+async function attachSizeProfiles(prs: any[], repo: import("@/src/lib/repoAccess").RepoLike & { baseBranch: string }) {
   if (prs.length === 0) return prs;
   const prIds = prs.map((p) => p.id);
   const files = await prisma.prFile.findMany({
@@ -28,14 +28,14 @@ async function attachSizeProfiles(prs: any[], repo: { path: string | null; baseB
     filesByPr.set(file.prId, current);
   }
 
-  return prs.map((pr) => {
+  return await Promise.all(prs.map(async (pr) => {
     const baseBranch = pr.targetBranch || repo.baseBranch || "main";
-    const commitCount = readPrCommitCount(repo.path, baseBranch, pr.sourceBranch);
+    const commitCount = await readPrCommitCount(repo, baseBranch, pr.sourceBranch);
     return {
       ...pr,
       sizeProfile: computePrSizeProfile(filesByPr.get(pr.id) || [], commitCount),
     };
-  });
+  }));
 }
 
 /**

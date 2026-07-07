@@ -128,14 +128,25 @@ async function startTrackedReview(pr: any, repo: any, userId: string | null): Pr
 async function loadPrSizeProfile(pr: any, repo?: any, refreshedFiles?: any[]): Promise<PrSizeProfile> {
   const profileRepo = repo ?? await prisma.repository.findUnique({
     where: { id: pr.repoId },
-    select: { path: true, baseBranch: true },
+    select: {
+      path: true,
+      baseBranch: true,
+      cloneUrl: true,
+      cloneUrlHttps: true,
+      deployKeyCipher: true,
+      deployKeyIv: true,
+      deployKeyTag: true,
+      patCipher: true,
+      patIv: true,
+      patTag: true,
+    },
   });
   const files = refreshedFiles ?? await prisma.prFile.findMany({
     where: { prId: pr.id },
     select: { filename: true, additions: true, deletions: true },
   });
-  const commitCount = readPrCommitCount(
-    profileRepo?.path,
+  const commitCount = await readPrCommitCount(
+    profileRepo,
     pr.targetBranch || profileRepo?.baseBranch || "main",
     pr.sourceBranch,
   );

@@ -32,12 +32,24 @@ export async function GET(req: Request, { params }: { params: Promise<{ prIdOrNu
       }),
       prisma.repository.findUnique({
         where: { id: pr.repoId },
-        select: { path: true, baseBranch: true },
+        select: {
+          id: true,
+          path: true,
+          baseBranch: true,
+          cloneUrl: true,
+          cloneUrlHttps: true,
+          deployKeyCipher: true,
+          deployKeyIv: true,
+          deployKeyTag: true,
+          patCipher: true,
+          patIv: true,
+          patTag: true,
+        },
       }),
     ]);
     const sizeProfile = computePrSizeProfile(
       files,
-      readPrCommitCount(repo?.path, pr.targetBranch || repo?.baseBranch || "main", pr.sourceBranch),
+      await readPrCommitCount(repo, pr.targetBranch || repo?.baseBranch || "main", pr.sourceBranch),
     );
     const rating = latest.reviewRun?.rating ?? pr.rating;
     const ratingInfo = rating != null ? `${rating}/10` : "Unrated";
