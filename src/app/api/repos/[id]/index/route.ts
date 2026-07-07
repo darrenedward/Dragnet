@@ -42,7 +42,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       );
     }
 
-    await prisma.repository.updateMany({ where: { id }, data: { status: "stabilizing" } });
+    await prisma.repository.updateMany({ where: { id }, data: { status: "stabilizing", indexedAt: null } });
 
     const runIndex = async () => {
       if (repo.path) {
