@@ -27,19 +27,14 @@ export async function withRetry<T>(
 
       return result;
     } catch (err: any) {
+      const stepError = err instanceof StepError
+        ? err
+        : new StepError(err?.message ?? String(err), true);
       if (attempt < maxRetries) {
-        const stepError = err instanceof StepError
-          ? err
-          : new StepError(err?.message ?? String(err), true);
         onRetry?.(attempt + 1, stepError);
         continue;
       }
-      return {
-        ok: false,
-        error: err instanceof StepError
-          ? err
-          : new StepError(err?.message ?? String(err), true),
-      };
+      return { ok: false, error: stepError };
     }
   }
 

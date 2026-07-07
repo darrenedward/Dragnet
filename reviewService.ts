@@ -8,7 +8,7 @@ import { verifyFindings, isDocumentationFile, type CandidateFinding } from "./sr
 import { completeReviewRun, setReviewRunTokens, setReviewRunLastCheckpointAt, setReviewChunkLastCheckpointAt } from "./src/lib/reviewFreshness";
 import { safeReadFileSync, resolveSafePath } from "./src/lib/pathSafety";
 import { runDeterministicChecks, runContainerizedChecks, logReview, type DeterministicFinding } from "./src/services/deterministicChecks";
-import { StepPipeline, StepError } from "./src/services/stepPipeline";
+import { StepPipeline, StepError, type StepResult } from "./src/services/stepPipeline";
 import { detectBuildSystem } from "./src/lib/buildsystemDetect";
 import { classifyDiff } from "./src/lib/diffClassifier";
 import { buildFindingFingerprint, resolveSymbolsBatch } from "./src/services/largePrReview/fingerprint";
@@ -1376,83 +1376,96 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
     };
   }
 
-  // 5d. Tier 3 gate: skip LLM review when Tier 1+2 findings are empty AND
-  //     the diff only touches trivial files (config, docs, generated).
-  const findingsEmpty = deterministicFindings.length === 0;
-  const diffClass = classifyDiff(files);
-  const skipTier3 = findingsEmpty && diffClass.isTrivial;
-  if (skipTier3) {
-    void logReview(
-      prId,
-      `Tier 3 (LLM review) skipped: Tier 1+2 clean and diff is trivial (${diffClass.trivialFiles}/${diffClass.totalFiles} files are config/docs/generated)`,
-      "info", reviewRunId, reviewChunkId,
-    );
-    console.log(`[scan] runPrScan: Tier 3 skipped — clean + trivial diff (${diffClass.trivialFiles}/${diffClass.totalFiles})`);
-    // Return early: no findings, no rating, but add a note explaining why.
-    const logSummary = buildSystemWarn
-      ? `${buildSystemWarn} No code changes detected — Tier 3 LLM review skipped.`
-      : "PR contains only config, documentation, or generated file changes — Tier 3 LLM review skipped.";
-    return {
-      success: true,
-      rating: null,
-      findings: [],
-      usedModel: "none (skipped)",
-      systemWarn: logSummary,
-    };
+  // 5d-6. LLM review as StepPipeline step (critical, no retries).
+  //        Encapsulates Tier 3 gate, provider chain, and refusal check.
+  interface LlmStepData {
+    skipped?: boolean;
+    systemWarn?: string | null;
+    rating: number | null;
+    findings: any[];
+    usedModel: string;
+    providerAttempts: ProviderAttempt[];
+    refused: boolean;
+    refusalNote: string | null;
   }
+  const llmPipeline = new StepPipeline();
+  llmPipeline.addStep({
+    name: "LLM review",
+    critical: true,
+    maxRetries: 0,
+    fn: async (): Promise<StepResult<LlmStepData>> => {
+      // Tier 3 gate: skip LLM review when Tier 1+2 clean and diff trivial
+      const findingsEmpty = deterministicFindings.length === 0;
+      const diffClass = classifyDiff(files);
+      const skipTier3 = findingsEmpty && diffClass.isTrivial;
+      if (skipTier3) {
+        void logReview(
+          prId,
+          `Tier 3 (LLM review) skipped: Tier 1+2 clean and diff is trivial (${diffClass.trivialFiles}/${diffClass.totalFiles} files are config/docs/generated)`,
+          "info", reviewRunId, reviewChunkId,
+        );
+        console.log(`[scan] runPrScan: Tier 3 skipped — clean + trivial diff (${diffClass.trivialFiles}/${diffClass.totalFiles})`);
+        const logSummary = buildSystemWarn
+          ? `${buildSystemWarn} No code changes detected — Tier 3 LLM review skipped.`
+          : "PR contains only config, documentation, or generated file changes — Tier 3 LLM review skipped.";
+        return { ok: true, data: { skipped: true, rating: null, findings: [], usedModel: "none (skipped)", providerAttempts: [], refused: false, refusalNote: null, systemWarn: logSummary } };
+      }
 
-  const deterministicPayload = deterministicFindings.length > 0
-    ? `\n\n=== DETERMINISTIC CHECK RESULTS (already known — do NOT re-report these) ===\n` +
-      deterministicFindings.map(f =>
-        `- ${f.source}: ${f.filename}${f.line ? `:${f.line}` : ""} [${f.severity}] ${f.explanation}`
-      ).join("\n")
-    : "";
+      const deterministicPayload = deterministicFindings.length > 0
+        ? `\n\n=== DETERMINISTIC CHECK RESULTS (already known — do NOT re-report these) ===\n` +
+          deterministicFindings.map(f =>
+            `- ${f.source}: ${f.filename}${f.line ? `:${f.line}` : ""} [${f.severity}] ${f.explanation}`
+          ).join("\n")
+        : "";
 
-  // 6. Run agentic review loop, trying fallback providers only when the
-  //    active provider fails at the API/transport layer. If the primary
-  //    model uses its full iteration budget without submitReview, that is
-  //    a model-behavior result, not a provider outage; do not spend a second
-  //    provider's budget as a continuation reviewer. Never fabricate
-  //    templated findings — three months of solarplanner "reviews" were
-  //    that template silently masking LLM failures.
-  // Phase 3 circuit breaker — health state lives under the scanned
-  // repo's `.dragnet/` dir, never the server's cwd. `localPath` is the
-  // server-managed clone; `path` is the user-configured repo root.
-  const breakerRepoPath = repo.localPath || repo.path || null;
-  const chain = getChatChain({ repoPath: breakerRepoPath });
-  let agenticError: string | null = null;
-  let finalReview: any = null;
-  let finalReviewClient: any = null;
-  let finalReviewEndpoint: string | null = null;
+      // 6. Run agentic review loop, trying fallback providers only when the
+      //    active provider fails at the API/transport layer. If the primary
+      //    model uses its full iteration budget without submitReview, that is
+      //    a model-behavior result, not a provider outage; do not spend a second
+      //    provider's budget as a continuation reviewer. Never fabricate
+      //    templated findings — three months of solarplanner "reviews" were
+      //    that template silently masking LLM failures.
+      // Phase 3 circuit breaker — health state lives under the scanned
+      // repo's `.dragnet/` dir, never the server's cwd. `localPath` is the
+      // server-managed clone; `path` is the user-configured repo root.
+      const breakerRepoPath = repo.localPath || repo.path || null;
+      const chain = getChatChain({ repoPath: breakerRepoPath });
+      let agenticError: string | null = null;
+      let finalReview: any = null;
+      let finalReviewClient: any = null;
+      let finalReviewEndpoint: string | null = null;
 
-  if (chain.length === 0) {
-    // Distinguish "no chat provider configured" from "all configured
-    // providers paused by circuit breaker." Different operator action.
-    const primary = getPrimaryChatPreset();
-    if (primary?.chatModel && breakerRepoPath) {
-      systemWarn = `All configured chat providers are currently paused by the circuit breaker after repeated quality failures. They will be retried automatically once their cooldown ends. Open LLM Settings → Provider Health to reset manually.`;
-    } else {
-      systemWarn = "No LLM endpoint or chat model configured. Open the LLM Settings tab and configure at least one provider.";
-    }
-    void logReview(prId, `LLM review unavailable — ${systemWarn}`, "warn", reviewRunId, reviewChunkId);
-  } else {
-    void logReview(prId, "Starting LLM agentic review...", "info", reviewRunId, reviewChunkId);
-    providerLoop: for (const { client, model, name, endpoint, maxIterations } of chain) {
-      void logReview(prId, `Checking provider: ${name} (${model})`, "info", reviewRunId, reviewChunkId);
-      usedModel = model;
-      // Per-attempt state — visible to catch/finally for classification.
-      // Reset at the top of each provider iteration.
-      let attemptIterations = 0;
-      let attemptMalformedStreak = 0;
-      let attemptError: unknown = null;
-      // Token accumulators — summed across every chat.completions.create
-      // call this attempt makes (main loop + JSON finalizer + fallback
-      // finalizer). `response.usage` is null on some OpenAI-compatible
-      // endpoints; those calls contribute 0 honestly rather than guessing.
-      let attemptPromptTokens = 0;
-      let attemptCompletionTokens = 0;
-      try {
-        const initialPrompt = `Your mission: audit this PR with maximum prejudice. Assume the author is hiding something. Trace every changed function across the codebase — check its callers, its callees, its error handling, its edge cases. Use \`searchCodebase\`, \`getCallers\`, and \`findSimilar\` to validate that nothing is overlooked.
+      if (chain.length === 0) {
+        // Distinguish "no chat provider configured" from "all configured
+        // providers paused by circuit breaker." Different operator action.
+        const primary = getPrimaryChatPreset();
+        let warn: string;
+        if (primary?.chatModel && breakerRepoPath) {
+          warn = `All configured chat providers are currently paused by the circuit breaker after repeated quality failures. They will be retried automatically once their cooldown ends. Open LLM Settings → Provider Health to reset manually.`;
+        } else {
+          warn = "No LLM endpoint or chat model configured. Open the LLM Settings tab and configure at least one provider.";
+        }
+        void logReview(prId, `LLM review unavailable — ${warn}`, "warn", reviewRunId, reviewChunkId);
+        return { ok: false, error: new StepError(warn, false) };
+      }
+
+      void logReview(prId, "Starting LLM agentic review...", "info", reviewRunId, reviewChunkId);
+      for (const { client, model, name, endpoint, maxIterations } of chain) {
+        void logReview(prId, `Checking provider: ${name} (${model})`, "info", reviewRunId, reviewChunkId);
+        usedModel = model;
+        // Per-attempt state — visible to catch/finally for classification.
+        // Reset at the top of each provider iteration.
+        let attemptIterations = 0;
+        let attemptMalformedStreak = 0;
+        let attemptError: unknown = null;
+        // Token accumulators — summed across every chat.completions.create
+        // call this attempt makes (main loop + JSON finalizer + fallback
+        // finalizer). `response.usage` is null on some OpenAI-compatible
+        // endpoints; those calls contribute 0 honestly rather than guessing.
+        let attemptPromptTokens = 0;
+        let attemptCompletionTokens = 0;
+        try {
+          const initialPrompt = `Your mission: audit this PR with maximum prejudice. Assume the author is hiding something. Trace every changed function across the codebase — check its callers, its callees, its error handling, its edge cases. Use \`searchCodebase\`, \`getCallers\`, and \`findSimilar\` to validate that nothing is overlooked.
 When you are satisfied (or outraged), call \`submitReview\` exactly once.
 ${prManifest && prManifest.length > 0 ? buildManifestPreamble(prManifest, files) : ""}
 === CANDIDATE PR INFORMATION ===
@@ -1465,270 +1478,315 @@ ${codebaseContext ? `=== PRE-FETCHED AST SYMBOLS & CALL-GRAPH LINKAGES ===\n${co
 === CHANGED FILES & CONTEXT ===
 ${diffPayload}${deterministicPayload}`;
 
-        const messages: any[] = options?.initialMessages && options.initialMessages.length > 0
-          ? [...options.initialMessages]
-          : [
-              { role: "system", content: SYSTEM_INSTRUCTION },
-              { role: "user", content: initialPrompt },
-            ];
+          const messages: any[] = options?.initialMessages && options.initialMessages.length > 0
+            ? [...options.initialMessages]
+            : [
+                { role: "system", content: SYSTEM_INSTRUCTION },
+                { role: "user", content: initialPrompt },
+              ];
 
-        let loopCount = options?.startLoopCount ?? 0;
-        let lastHadToolCalls = false;
-        let consecutiveEmptyResponses = 0;
-        // Iteration budget comes from the active chat preset (per-preset
-        // maxIterations field, default 16). Strong models can be capped at
-        // 8 to save tokens; weaker models keep the full 16.
-        const ITERATION_BUDGET = maxIterations;
+          let loopCount = options?.startLoopCount ?? 0;
+          let lastHadToolCalls = false;
+          let consecutiveEmptyResponses = 0;
+          // Iteration budget comes from the active chat preset (per-preset
+          // maxIterations field, default 16). Strong models can be capped at
+          // 8 to save tokens; weaker models keep the full 16.
+          const ITERATION_BUDGET = maxIterations;
 
-        while (loopCount < ITERATION_BUDGET && !finalReview) {
-          loopCount++;
-          attemptIterations = loopCount;
-          console.log(`[review] iteration ${loopCount}/${ITERATION_BUDGET} provider=${name}`);
-          void logReview(prId, `Iteration ${loopCount}/${ITERATION_BUDGET} — ${name}`, "info", reviewRunId, reviewChunkId);
-          const response = await withTimeout(
-            client.chat.completions.create({
-              model,
-              messages,
-              tools,
-              tool_choice: "auto",
-              // temperature: 0 — same diff must produce same findings or the
-              // reviewer is non-deterministic noise. Greptile's stability
-              // comes from this. Non-zero temperature was the root cause of
-              // 8/10 then 9/10 then 8/10 oscillation on the same PR. Even
-              // at temp 0 LLMs aren't perfectly deterministic (GPU batching
-              // introduces ~5% drift) but this is the difference between
-              // "occasionally differs" and "always differs."
-              temperature: 0,
-              ...reasoningOptions(model, 16_384),
-            } as any, { signal: options?.signal }),
-            `${name} chat completion`,
-          );
-          await assertReviewRunStillActive(reviewRunId);
-          // Phase 2 cost telemetry — accumulate token usage. Some
-          // OpenAI-compatible endpoints (notably older vLLM builds and
-          // certain Ollama proxies) return no `usage` block at all; those
-          // calls contribute 0 rather than NaN.
-          if (response.usage) {
-            attemptPromptTokens += response.usage.prompt_tokens ?? 0;
-            attemptCompletionTokens += response.usage.completion_tokens ?? 0;
-          }
-
-          const msg = response.choices?.[0]?.message;
-          if (!msg) {
-            // Provider returned a response with no message — transient
-            // failure on some OpenAI-compatible endpoints. Nudge the model
-            // with a "please continue" message and retry without burning
-            // the iteration budget. After EMPTY_RESPONSE_RETRIES consecutive
-            // empties, give up (likely the model can't follow the agentic
-            // loop at all — see systemWarn below).
-            consecutiveEmptyResponses++;
-            if (consecutiveEmptyResponses > EMPTY_RESPONSE_RETRIES) {
-              console.warn(`[review] ${EMPTY_RESPONSE_RETRIES + 1} consecutive empty responses from ${name} — giving up`);
-              void logReview(prId, `Aborted: ${EMPTY_RESPONSE_RETRIES + 1} empty responses in a row from ${name}`, "warn", reviewRunId, reviewChunkId);
-              break;
+          while (loopCount < ITERATION_BUDGET && !finalReview) {
+            loopCount++;
+            attemptIterations = loopCount;
+            console.log(`[review] iteration ${loopCount}/${ITERATION_BUDGET} provider=${name}`);
+            void logReview(prId, `Iteration ${loopCount}/${ITERATION_BUDGET} — ${name}`, "info", reviewRunId, reviewChunkId);
+            const response = await withTimeout(
+              client.chat.completions.create({
+                model,
+                messages,
+                tools,
+                tool_choice: "auto",
+                temperature: 0,
+                ...reasoningOptions(model, 16_384),
+              } as any, { signal: options?.signal }),
+              `${name} chat completion`,
+            );
+            await assertReviewRunStillActive(reviewRunId);
+            if (response.usage) {
+              attemptPromptTokens += response.usage.prompt_tokens ?? 0;
+              attemptCompletionTokens += response.usage.completion_tokens ?? 0;
             }
-            console.warn(`[review] empty response from ${name} on iteration ${loopCount} (attempt ${consecutiveEmptyResponses}/${EMPTY_RESPONSE_RETRIES + 1}) — nudging and retrying`);
-            void logReview(prId, `Empty response from ${name}, retrying (${consecutiveEmptyResponses}/${EMPTY_RESPONSE_RETRIES + 1})`, "warn", reviewRunId, reviewChunkId);
-            messages.push({
-              role: "user",
-              content: "Your previous response contained no message body. Continue the review: call a tool (readFile, searchCodebase, getCallers, findSimilar) to investigate the diff, then end with submitReview.",
-            });
-            loopCount--;  // Don't burn iteration budget on a transient empty.
-            continue;
-          }
-          consecutiveEmptyResponses = 0;  // Reset on any successful response.
-          messages.push(msg);
-          lastHadToolCalls = Boolean(msg.tool_calls && msg.tool_calls.length > 0);
 
-          if (msg.tool_calls && msg.tool_calls.length > 0) {
-            for (const call of msg.tool_calls) {
-              // OpenAI SDK v6 unions function-tool calls with custom-tool calls;
-              // only the former has .function. Skip anything else.
-              if (!("function" in call)) continue;
-              const fnName = call.function?.name;
-              let fnArgs: any = {};
-              try {
-                fnArgs = call.function?.arguments ? JSON.parse(stripThinkBlocks(call.function.arguments)) : {};
-              } catch (e) {
-                console.warn(`[review] Invalid JSON in tool call arguments for ${fnName}`);
-                attemptMalformedStreak++;
-                messages.push({
-                  role: "tool",
-                  tool_call_id: call.id,
-                  content: `Error: Invalid JSON arguments provided to tool '${fnName}'. Please fix your JSON formatting and try again.`,
-                });
-                continue;
+            const msg = response.choices?.[0]?.message;
+            if (!msg) {
+              consecutiveEmptyResponses++;
+              if (consecutiveEmptyResponses > EMPTY_RESPONSE_RETRIES) {
+                console.warn(`[review] ${EMPTY_RESPONSE_RETRIES + 1} consecutive empty responses from ${name} — giving up`);
+                void logReview(prId, `Aborted: ${EMPTY_RESPONSE_RETRIES + 1} empty responses in a row from ${name}`, "warn", reviewRunId, reviewChunkId);
+                break;
               }
+              console.warn(`[review] empty response from ${name} on iteration ${loopCount} (attempt ${consecutiveEmptyResponses}/${EMPTY_RESPONSE_RETRIES + 1}) — nudging and retrying`);
+              void logReview(prId, `Empty response from ${name}, retrying (${consecutiveEmptyResponses}/${EMPTY_RESPONSE_RETRIES + 1})`, "warn", reviewRunId, reviewChunkId);
+              messages.push({
+                role: "user",
+                content: "Your previous response contained no message body. Continue the review: call a tool (readFile, searchCodebase, getCallers, findSimilar) to investigate the diff, then end with submitReview.",
+              });
+              loopCount--;
+              continue;
+            }
+            consecutiveEmptyResponses = 0;
+            messages.push(msg);
+            lastHadToolCalls = Boolean(msg.tool_calls && msg.tool_calls.length > 0);
 
-              if (fnName === "submitReview") {
-                const normalized = normalizeFinalReview(fnArgs);
-                if (!normalized) {
-                  const shape = describeFinalReviewShape(fnArgs);
-                  console.warn(`[review] submitReview had invalid shape provider=${name} shape=${shape}`);
+            if (msg.tool_calls && msg.tool_calls.length > 0) {
+              for (const call of msg.tool_calls) {
+                if (!("function" in call)) continue;
+                const fnName = call.function?.name;
+                let fnArgs: any = {};
+                try {
+                  fnArgs = call.function?.arguments ? JSON.parse(stripThinkBlocks(call.function.arguments)) : {};
+                } catch (e) {
+                  console.warn(`[review] Invalid JSON in tool call arguments for ${fnName}`);
                   attemptMalformedStreak++;
                   messages.push({
                     role: "tool",
                     tool_call_id: call.id,
-                    content:
-                      "Error: submitReview arguments must include top-level numeric rating and findings array. " +
-                      `Received shape: ${shape}. Call submitReview again with exactly {"rating":8,"summary":"...","findings":[...]}.`,
+                    content: `Error: Invalid JSON arguments provided to tool '${fnName}'. Please fix your JSON formatting and try again.`,
                   });
                   continue;
                 }
-                console.log(
-                  `[review] submitReview received: rating=${normalized.rating} findings=${normalized.findings?.length ?? 0} provider=${name}`,
-                );
-                void logReview(prId, `submitReview: rating=${normalized.rating}, ${normalized.findings?.length ?? 0} findings`, "info", reviewRunId, reviewChunkId);
-                if (normalized.droppedFilenamelessCount > 0) {
-                  console.log(`[review] dropped ${normalized.droppedFilenamelessCount} filename-less findings pre-verifier provider=${name}`);
-                  void logReview(prId, `Pre-verifier filter: dropped ${normalized.droppedFilenamelessCount} findings with no filename`, "warn", reviewRunId, reviewChunkId);
+
+                if (fnName === "submitReview") {
+                  const normalized = normalizeFinalReview(fnArgs);
+                  if (!normalized) {
+                    const shape = describeFinalReviewShape(fnArgs);
+                    console.warn(`[review] submitReview had invalid shape provider=${name} shape=${shape}`);
+                    attemptMalformedStreak++;
+                    messages.push({
+                      role: "tool",
+                      tool_call_id: call.id,
+                      content:
+                        "Error: submitReview arguments must include top-level numeric rating and findings array. " +
+                        `Received shape: ${shape}. Call submitReview again with exactly {"rating":8,"summary":"...","findings":[...]}.`,
+                    });
+                    continue;
+                  }
+                  console.log(
+                    `[review] submitReview received: rating=${normalized.rating} findings=${normalized.findings?.length ?? 0} provider=${name}`,
+                  );
+                  void logReview(prId, `submitReview: rating=${normalized.rating}, ${normalized.findings?.length ?? 0} findings`, "info", reviewRunId, reviewChunkId);
+                  if (normalized.droppedFilenamelessCount > 0) {
+                    console.log(`[review] dropped ${normalized.droppedFilenamelessCount} filename-less findings pre-verifier provider=${name}`);
+                    void logReview(prId, `Pre-verifier filter: dropped ${normalized.droppedFilenamelessCount} findings with no filename`, "warn", reviewRunId, reviewChunkId);
+                  }
+                  finalReview = normalized;
+                  finalReviewClient = client;
+                  finalReviewEndpoint = endpoint;
+                  break;
                 }
-                finalReview = normalized;
+
+                attemptMalformedStreak = 0;
+
+                let toolResult = "No results.";
+                let resultSummary = "no results";
+                try {
+                  if (fnName === "searchCodebase") {
+                    const items = await prisma.symbol.findMany({
+                      where: { repoId: pr.repoId, name: { contains: fnArgs.query } },
+                      take: 10,
+                      select: { id: true, name: true, kind: true, filePath: true, lineStart: true, lineEnd: true, summary: true },
+                    });
+                    if (items && items.length > 0) {
+                      toolResult = JSON.stringify(items);
+                      resultSummary = `${items.length} results`;
+                    }
+                  } else if (fnName === "getCallers") {
+                    const edges = await prisma.edge.findMany({ where: { repoId: pr.repoId, toId: fnArgs.symbolId, kind: "CALLS" } });
+                    if (edges && edges.length > 0) {
+                      const callers = await Promise.all(edges.map(async (e) => {
+                        const sym = await prisma.symbol.findUnique({ where: { id: e.fromId }, select: { name: true } });
+                        return {
+                          callerName: sym ? sym.name : e.fromId,
+                          filePath: e.filePath,
+                          line: e.line
+                        };
+                      }));
+                      toolResult = JSON.stringify(callers);
+                      resultSummary = `${edges.length} results`;
+                    }
+                  } else if (fnName === "findSimilar") {
+                    const { IndexingService: idxSvc } = await import("./src/services/indexingService");
+                    const scored = await idxSvc.semanticSearch(pr.repoId, fnArgs.query, 5);
+                    if (scored && scored.length > 0) {
+                      toolResult = JSON.stringify(scored);
+                      resultSummary = `${scored.length} results`;
+                    }
+                  } else if (fnName === "readFile") {
+                    if (repo) {
+                      const repoPath = repo.localPath || repo.path;
+                      if (repoPath) {
+                        if (typeof fnArgs.filePath !== "string" || fnArgs.filePath.trim() === "") {
+                          toolResult = "Error: readFile requires a non-empty 'filePath' string argument (repo-relative). Call readFile again with {\"filePath\": \"src/path/to/file.ts\"}.";
+                          resultSummary = "blocked: missing filePath";
+                        } else {
+                          const content = safeReadFileSync(repoPath, fnArgs.filePath);
+                          if (content === null) {
+                            const escaped = resolveSafePath(repoPath, fnArgs.filePath) === null;
+                            toolResult = escaped
+                              ? "Error: Path traversal detected. Access to paths outside the repository is strictly forbidden."
+                              : "Error: File not found.";
+                          } else {
+                            readfileCharsThisScan += content.length;
+                            if (readfileCharsThisScan > READFILE_BUDGET_CHARS) {
+                              toolResult = `Error: Cumulative readFile budget (${READFILE_BUDGET_CHARS} chars) exceeded for this review. Use searchCodebase or grep for further exploration.`;
+                              resultSummary = `blocked: budget exceeded`;
+                            } else {
+                              const addLineNumbers = (text: string) => text.split("\n").map((line, i) => `${i + 1}: ${line}`).join("\n");
+                              const lines = content.split("\n");
+                              const truncLines = lines.slice(0, 1000);
+                              toolResult = addLineNumbers(truncLines.join("\n")) + (lines.length > 1000 ? "\n...[TRUNCATED]" : "");
+                              resultSummary = `Read ${truncLines.length} lines from ${fnArgs.filePath}`;
+                            }
+                          }
+                        }
+                      } else {
+                        toolResult = "Error: Repository path not configured.";
+                      }
+                    }
+                  } else {
+                    toolResult = `Error: Tool '${fnName}' does not exist. Please use only the provided tools.`;
+                    resultSummary = `error: unknown tool`;
+                  }
+                } catch (e) {
+                  console.error(`Tool ${fnName} failed:`, e);
+                  resultSummary = `error: ${(e as any)?.message || String(e)}`;
+                  toolResult = `Tool error: ${(e as any)?.message || String(e)}`;
+                  void logReview(prId, `Tool ${fnName} failed: ${(e as any)?.message || String(e)}`, "error", reviewRunId, reviewChunkId);
+                }
+                console.log(`[review] tool ${fnName} → ${resultSummary}`);
+                void logReview(prId, `Tool: ${fnName} → ${resultSummary}`, "tool_call", reviewRunId, reviewChunkId);
+
+                messages.push({
+                  role: "tool",
+                  tool_call_id: call.id,
+                  content: toolResult,
+                });
+              }
+              // Phase 5 — persist iteration checkpoint before the
+              // finalReview break so an abort on the NEXT iteration's
+              // LLM call can resume from this exact message state.
+              await persistCheckpoint(
+                breakerRepoPath,
+                reviewRunId,
+                reviewChunkId,
+                options?.checkpointMetadata,
+                messages,
+                loopCount,
+                ITERATION_BUDGET,
+                endpoint,
+                model,
+                pr.repoId,
+              );
+              if (finalReview) break;
+            } else {
+              const rawText = msg.content?.trim() || "{}";
+              const parsed = parseFinalReviewJson(rawText);
+              if (parsed) {
+                console.log(
+                  `[review] parsed JSON finalReview without submitReview: rating=${parsed.rating} findings=${parsed.findings.length} provider=${name}`,
+                );
+                if (parsed.droppedFilenamelessCount > 0) {
+                  console.log(`[review] dropped ${parsed.droppedFilenamelessCount} filename-less findings pre-verifier provider=${name}`);
+                  void logReview(prId, `Pre-verifier filter: dropped ${parsed.droppedFilenamelessCount} findings with no filename`, "warn", reviewRunId, reviewChunkId);
+                }
+                finalReview = parsed;
                 finalReviewClient = client;
                 finalReviewEndpoint = endpoint;
-                break;
               }
-
-              // Valid call shape (passed JSON parse, not malformed submitReview)
-              // resets the consecutive-malformed streak.
-              attemptMalformedStreak = 0;
-
-              let toolResult = "No results.";
-              let resultSummary = "no results";
-              try {
-                if (fnName === "searchCodebase") {
-                  const items = await prisma.symbol.findMany({
-                    where: { repoId: pr.repoId, name: { contains: fnArgs.query } },
-                    take: 10,
-                    select: { id: true, name: true, kind: true, filePath: true, lineStart: true, lineEnd: true, summary: true },
-                  });
-                  if (items && items.length > 0) {
-                    toolResult = JSON.stringify(items);
-                    resultSummary = `${items.length} results`;
-                  }
-                } else if (fnName === "getCallers") {
-                  const edges = await prisma.edge.findMany({ where: { repoId: pr.repoId, toId: fnArgs.symbolId, kind: "CALLS" } });
-                  if (edges && edges.length > 0) {
-                    const callers = await Promise.all(edges.map(async (e) => {
-                      const sym = await prisma.symbol.findUnique({ where: { id: e.fromId }, select: { name: true } });
-                      return {
-                        callerName: sym ? sym.name : e.fromId,
-                        filePath: e.filePath,
-                        line: e.line
-                      };
-                    }));
-                    toolResult = JSON.stringify(callers);
-                    resultSummary = `${edges.length} results`;
-                  }
-                } else if (fnName === "findSimilar") {
-                  const { IndexingService: idxSvc } = await import("./src/services/indexingService");
-                  const scored = await idxSvc.semanticSearch(pr.repoId, fnArgs.query, 5);
-                  if (scored && scored.length > 0) {
-                    toolResult = JSON.stringify(scored);
-                    resultSummary = `${scored.length} results`;
-                  }
-                } else if (fnName === "readFile") {
-                  if (repo) {
-                    const repoPath = repo.localPath || repo.path;
-                    if (repoPath) {
-                      // Some providers (NVIDIA Nemotron, OpenRouter pass-through)
-                      // occasionally omit filePath or send it as null. Without
-                      // this guard, safeReadFileSync → resolveSafePath calls
-                      // path.resolve(base, undefined) which throws
-                      // ERR_INVALID_ARG_TYPE. The outer try/catch swallows it,
-                      // but the resulting "paths[1] argument" message is
-                      // gibberish to the model — it can't tell that the fix is
-                      // "send filePath". Validate explicitly and nudge.
-                      if (typeof fnArgs.filePath !== "string" || fnArgs.filePath.trim() === "") {
-                        toolResult = "Error: readFile requires a non-empty 'filePath' string argument (repo-relative). Call readFile again with {\"filePath\": \"src/path/to/file.ts\"}.";
-                        resultSummary = "blocked: missing filePath";
-                      } else {
-                      // Path-traversal + symlink-escape + TOCTOU defense.
-                      // safeReadFileSync resolves + opens with O_NOFOLLOW +
-                      // reads in one atomic step, closing the window between
-                      // resolveSafePath returning and the caller calling
-                      // readFileSync that an attacker with write access
-                      // inside the repo could exploit.
-                      const content = safeReadFileSync(repoPath, fnArgs.filePath);
-                      if (content === null) {
-                        // Distinguish "path escaped" vs "file missing" via
-                        // a second resolveSafePath call (cheap; doesn't open).
-                        const escaped = resolveSafePath(repoPath, fnArgs.filePath) === null;
-                        toolResult = escaped
-                          ? "Error: Path traversal detected. Access to paths outside the repository is strictly forbidden."
-                          : "Error: File not found.";
-                      } else {
-                        // Cumulative-context budget: refuse reads once the
-                        // session has already pushed READFILE_BUDGET_CHARS
-                        // into messages. Without this cap, an agentic loop
-                        // (or prompt-injected attacker) can repeatedly call
-                        // readFile to balloon the context — every subsequent
-                        // LLM call re-sends the accumulated bytes, blowing
-                        // cost and the context window.
-                        readfileCharsThisScan += content.length;
-                        if (readfileCharsThisScan > READFILE_BUDGET_CHARS) {
-                          toolResult = `Error: Cumulative readFile budget (${READFILE_BUDGET_CHARS} chars) exceeded for this review. Use searchCodebase or grep for further exploration.`;
-                          resultSummary = `blocked: budget exceeded`;
-                        } else {
-                          const addLineNumbers = (text: string) => text.split("\n").map((line, i) => `${i + 1}: ${line}`).join("\n");
-                          // Truncate to 1000 lines max for safety
-                          const lines = content.split("\n");
-                          const truncLines = lines.slice(0, 1000);
-                          toolResult = addLineNumbers(truncLines.join("\n")) + (lines.length > 1000 ? "\n...[TRUNCATED]" : "");
-                          resultSummary = `Read ${truncLines.length} lines from ${fnArgs.filePath}`;
-                        }
-                      }
-                      } // close filePath-valid else
-                    } else {
-                      toolResult = "Error: Repository path not configured.";
-                    }
-                  }
-                } else {
-                  toolResult = `Error: Tool '${fnName}' does not exist. Please use only the provided tools.`;
-                  resultSummary = `error: unknown tool`;
-                }
-              } catch (e) {
-                console.error(`Tool ${fnName} failed:`, e);
-                resultSummary = `error: ${(e as any)?.message || String(e)}`;
-                toolResult = `Tool error: ${(e as any)?.message || String(e)}`;
-                void logReview(prId, `Tool ${fnName} failed: ${(e as any)?.message || String(e)}`, "error", reviewRunId, reviewChunkId);
-              }
-              console.log(`[review] tool ${fnName} → ${resultSummary}`);
-              void logReview(prId, `Tool: ${fnName} → ${resultSummary}`, "tool_call", reviewRunId, reviewChunkId);
-
-              messages.push({
-                role: "tool",
-                tool_call_id: call.id,
-                content: toolResult,
-              });
+              await persistCheckpoint(
+                breakerRepoPath,
+                reviewRunId,
+                reviewChunkId,
+                options?.checkpointMetadata,
+                messages,
+                loopCount,
+                ITERATION_BUDGET,
+                endpoint,
+                model,
+                pr.repoId,
+              );
+              break;
             }
-            // Phase 5 — persist iteration checkpoint before the
-            // finalReview break so an abort on the NEXT iteration's
-            // LLM call can resume from this exact message state.
-            // deleteCheckpoint on success handles cleanup.
-            await persistCheckpoint(
-              breakerRepoPath,
-              reviewRunId,
-              reviewChunkId,
-              options?.checkpointMetadata,
-              messages,
-              loopCount,
-              ITERATION_BUDGET,
-              endpoint,
-              model,
-              pr.repoId,
-            );
-            if (finalReview) break;
-            // Continue loop with the tool results now appended.
-          } else {
-            // No tool call — model returned text (some endpoints/models don't
-            // support function calling). Try to parse the body as JSON.
-            const rawText = msg.content?.trim() || "{}";
-            const parsed = parseFinalReviewJson(rawText);
+          }
+
+          if (!finalReview) {
+            await assertReviewRunStillActive(reviewRunId);
+            console.log(`[review] attempting JSON-only finalization provider=${name}`);
+            void logReview(prId, `Attempting JSON-only finalization — ${name}`, "info", reviewRunId, reviewChunkId);
+            const finalizerMessages = [
+              ...compactMessagesForFinalizer(messages),
+              {
+                role: "user",
+                content:
+                  "You did not submit the review. Return ONLY a valid JSON object now with this exact shape: " +
+                  "{\"rating\": number from 1 to 10, \"summary\": string, \"findings\": array}. " +
+                  "Each finding MUST include: filename (a source code file path from the diff's `--- FILE: <path> ---` sections — NEVER a .md, README, CHANGELOG, docs/, or .agent-os/ file), line (number), severity, category, explanation, diffSuggestion, confidence (0-1). " +
+                  "If you cannot cite a specific source code file for a finding, omit that finding. " +
+                  "If there are no issues, use findings: [] and a production-ready rating.",
+              },
+            ];
+            let finalizerResponse;
+            try {
+              if (supportsJsonResponseFormat(endpoint)) {
+                finalizerResponse = await withTimeout(
+                  client.chat.completions.create({
+                    model,
+                    messages: finalizerMessages,
+                    temperature: 0.1,
+                    response_format: { type: "json_object" },
+                    ...reasoningOptions(model, 4_096),
+                  } as any, { signal: options?.signal }),
+                  `${name} JSON finalizer`,
+                  LLM_FINALIZER_TIMEOUT_MS,
+                );
+              } else {
+                console.log(`[review] skipping response_format JSON finalizer provider=${name} endpoint=${endpoint}`);
+                void logReview(prId, `JSON response_format finalizer skipped for provider endpoint`, "info", reviewRunId, reviewChunkId);
+                finalizerResponse = await withTimeout(
+                  client.chat.completions.create({
+                    model,
+                    messages: finalizerMessages,
+                    temperature: 0.1,
+                    ...reasoningOptions(model, 4_096),
+                  } as any, { signal: options?.signal }),
+                  `${name} plain JSON finalizer`,
+                  LLM_FINALIZER_TIMEOUT_MS,
+                );
+              }
+            } catch (err: any) {
+              console.warn(`[review] JSON response_format finalizer failed provider=${name}: ${err.message}`);
+              void logReview(prId, `JSON response_format finalizer failed: ${err.message}`, "warn", reviewRunId, reviewChunkId);
+              finalizerResponse = await withTimeout(
+                client.chat.completions.create({
+                  model,
+                  messages: finalizerMessages,
+                  temperature: 0.1,
+                  ...reasoningOptions(model, 4_096),
+                } as any, { signal: options?.signal }),
+                `${name} fallback finalizer`,
+                LLM_FINALIZER_TIMEOUT_MS,
+              );
+            }
+            await assertReviewRunStillActive(reviewRunId);
+            if (finalizerResponse?.usage) {
+              attemptPromptTokens += finalizerResponse.usage.prompt_tokens ?? 0;
+              attemptCompletionTokens += finalizerResponse.usage.completion_tokens ?? 0;
+            }
+            const rawFinalizerText = finalizerResponse.choices?.[0]?.message?.content || "";
+            const parsed = parseFinalReviewJson(rawFinalizerText);
             if (parsed) {
               console.log(
-                `[review] parsed JSON finalReview without submitReview: rating=${parsed.rating} findings=${parsed.findings.length} provider=${name}`,
+                `[review] JSON-only finalReview received: rating=${parsed.rating} findings=${parsed.findings.length} provider=${name}`,
               );
+              void logReview(prId, `JSON finalReview: rating=${parsed.rating}, ${parsed.findings.length} findings`, "info", reviewRunId, reviewChunkId);
               if (parsed.droppedFilenamelessCount > 0) {
                 console.log(`[review] dropped ${parsed.droppedFilenamelessCount} filename-less findings pre-verifier provider=${name}`);
                 void logReview(prId, `Pre-verifier filter: dropped ${parsed.droppedFilenamelessCount} findings with no filename`, "warn", reviewRunId, reviewChunkId);
@@ -1737,293 +1795,230 @@ ${diffPayload}${deterministicPayload}`;
               finalReviewClient = client;
               finalReviewEndpoint = endpoint;
             }
-            // Phase 5 — checkpoint the final assistant turn so an
-            // interrupted run can resume from this state.
-            await persistCheckpoint(
-              breakerRepoPath,
-              reviewRunId,
-              reviewChunkId,
-              options?.checkpointMetadata,
-              messages,
-              loopCount,
-              ITERATION_BUDGET,
-              endpoint,
-              model,
-              pr.repoId,
+          }
+
+          if (!finalReview) {
+            console.log(
+              `[review] loop exited without submitReview (iterations used: ${loopCount}, last message had tool_calls: ${lastHadToolCalls}) provider=${name}`,
             );
+            void logReview(prId, `Loop exhausted — no submitReview after ${loopCount} iterations (last had tool_calls: ${lastHadToolCalls})`, "warn", reviewRunId, reviewChunkId);
+          }
+
+          if (finalReview) {
             break;
           }
+          break;
+        } catch (err: any) {
+          attemptError = err;
+          console.warn(`[review] chat provider ${name} failed: ${err.message}`);
+          void logReview(prId, `Provider ${name} failed: ${err.message}`, "error", reviewRunId, reviewChunkId);
+          agenticError = `${name}: ${err.message}`;
+          if (isAbortError(err)) {
+            throw err;
+          }
+          if (!isRetryableProviderFailure(err)) {
+            console.warn(`[review] not trying fallback after non-retryable provider failure provider=${name}`);
+            void logReview(prId, `Fallback skipped after non-retryable ${name} failure`, "warn", reviewRunId, reviewChunkId);
+            break;
+          }
+        } finally {
+          const successThisAttempt = finalReview !== null;
+          const ratingThisAttempt: number | null = successThisAttempt
+            ? (finalReview as any)?.rating ?? null
+            : null;
+          const outcome = classifyProviderOutcome({
+            error: attemptError,
+            submitReviewCalled: successThisAttempt,
+            rating: ratingThisAttempt,
+            iterationsUsed: attemptIterations,
+            maxIterations,
+            malformedStreak: attemptMalformedStreak,
+            interrupted: false,
+            refusalDetected: false,
+            emptyFindings: false,
+          });
+          const { costUsd } = computeCost(model, attemptPromptTokens, attemptCompletionTokens);
+          providerAttempts.push({
+            provider: name,
+            model,
+            iterationsUsed: attemptIterations,
+            maxIterations,
+            submitReviewCalled: successThisAttempt,
+            rating: ratingThisAttempt,
+            error: attemptError,
+            outcome,
+            promptTokens: attemptPromptTokens,
+            completionTokens: attemptCompletionTokens,
+            costUsd,
+          });
+          console.log(
+            `[review] provider ${name} outcome=${outcome} iterations=${attemptIterations}/${maxIterations} submitReview=${successThisAttempt} malformed=${attemptMalformedStreak}` +
+              ` tokens=${attemptPromptTokens}+${attemptCompletionTokens} cost=$${costUsd.toFixed(6)}` +
+              (attemptError ? ` error=${(attemptError as any)?.message ?? String(attemptError)}` : ""),
+          );
+          if (outcome === "quality_failure") {
+            recordProviderQualityFailure(breakerRepoPath, endpoint, model, name, pr.repoId);
+          } else if (outcome === "success" && ratingThisAttempt !== null && ratingThisAttempt >= 5) {
+            recordProviderSuccess(breakerRepoPath, endpoint, model, name, pr.repoId);
+          }
         }
+      }
 
-        if (!finalReview) {
-          await assertReviewRunStillActive(reviewRunId);
-          console.log(`[review] attempting JSON-only finalization provider=${name}`);
-          void logReview(prId, `Attempting JSON-only finalization — ${name}`, "info", reviewRunId, reviewChunkId);
-          const finalizerMessages = [
-            ...compactMessagesForFinalizer(messages),
-            {
-              role: "user",
-              content:
-                "You did not submit the review. Return ONLY a valid JSON object now with this exact shape: " +
-                "{\"rating\": number from 1 to 10, \"summary\": string, \"findings\": array}. " +
-                "Each finding MUST include: filename (a source code file path from the diff's `--- FILE: <path> ---` sections — NEVER a .md, README, CHANGELOG, docs/, or .agent-os/ file), line (number), severity, category, explanation, diffSuggestion, confidence (0-1). " +
-                "If you cannot cite a specific source code file for a finding, omit that finding. " +
-                "If there are no issues, use findings: [] and a production-ready rating.",
-            },
-          ];
-          let finalizerResponse;
+      // Terminal outcome (success or quality-failure). Clear checkpoint.
+      clearCheckpoint(breakerRepoPath, reviewRunId, reviewChunkId, pr.repoId);
+
+      // Phase 2 cost telemetry
+      if (reviewRunId && !reviewChunkId) {
+        await setReviewRunTokens(reviewRunId, buildTokensUsed(providerAttempts));
+      }
+
+      if (finalReview) {
+        const clampedFindings = (finalReview.findings || []).map((f: any) => ({
+          ...f,
+          category: VALID_CATEGORIES.includes(f?.category) ? f.category : "Style",
+          severity: VALID_SEVERITIES.includes(f?.severity) ? f.severity : "suggestion",
+          exploitability: VALID_EXPLOITABILITY.includes(f?.exploitability) ? f.exploitability : "moderate",
+          impact: VALID_IMPACT.includes(f?.impact) ? f.impact : "medium",
+          source: "llm",
+        }));
+        const clampedRating = Math.max(1, Math.min(10, finalReview.rating ?? 5));
+
+        // Refusal-detection follow-up turn (per-run, not per-chunk).
+        let refused = false;
+        let refusalNote: string | null = null;
+        if (!reviewChunkId) {
           try {
-            if (supportsJsonResponseFormat(endpoint)) {
-              finalizerResponse = await withTimeout(
-                client.chat.completions.create({
-                  model,
-                  messages: finalizerMessages,
-                  temperature: 0.1,
-                  response_format: { type: "json_object" },
-                  ...reasoningOptions(model, 4_096),
-                } as any, { signal: options?.signal }),
-                `${name} JSON finalizer`,
-                LLM_FINALIZER_TIMEOUT_MS,
-              );
-            } else {
-              console.log(`[review] skipping response_format JSON finalizer provider=${name} endpoint=${endpoint}`);
-              void logReview(prId, `JSON response_format finalizer skipped for provider endpoint`, "info", reviewRunId, reviewChunkId);
-              finalizerResponse = await withTimeout(
-                client.chat.completions.create({
-                  model,
-                  messages: finalizerMessages,
-                  temperature: 0.1,
-                  ...reasoningOptions(model, 4_096),
-                } as any, { signal: options?.signal }),
-                `${name} plain JSON finalizer`,
-                LLM_FINALIZER_TIMEOUT_MS,
-              );
+            const refusalClient = finalReviewClient;
+            if (refusalClient) {
+              const refusalBody: any = {
+                model: usedModel,
+                messages: [
+                  {
+                    role: "user",
+                    content:
+                      `You just finished reviewing PR "${pr.title}" on branch ${pr.sourceBranch} ` +
+                      `(${files.length} files reviewed). Did you decline to fully analyze, refuse to look at, ` +
+                      `or skip any part of this PR because the content or task felt uncomfortable, out of scope, ` +
+                      `or tripped a content filter? Respond ONLY with JSON matching this shape: ` +
+                      `{"refused": true|false, "topics": ["brief reason 1", ...]}. ` +
+                      `If you reviewed everything fully, return {"refused": false, "topics": []}.`,
+                  },
+                ],
+                temperature: 0,
+                ...reasoningOptions(usedModel, 500),
+              };
+              if (supportsJsonResponseFormat(finalReviewEndpoint)) {
+                refusalBody.response_format = { type: "json_object" };
+              }
+              const refusalRes = await refusalClient.chat.completions.create(refusalBody, { signal: options?.signal });
+              const raw = refusalRes.choices?.[0]?.message?.content ?? "";
+              const stripped = stripThinkBlocks(raw);
+              const jsonMatch = stripped.match(/\{[\s\S]*\}/);
+              const parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
+              if (parsed?.refused === true) {
+                refused = true;
+                const topics = Array.isArray(parsed.topics) ? parsed.topics.filter(Boolean) : [];
+                refusalNote = topics.length > 0 ? topics.join("; ") : "Reviewer flagged incomplete coverage.";
+                void logReview(prId, `Refusal detected: ${refusalNote}`, "warn", reviewRunId);
+              } else {
+                void logReview(prId, `Refusal check: clean (model reviewed everything)`, "info", reviewRunId);
+              }
             }
           } catch (err: any) {
-            console.warn(`[review] JSON response_format finalizer failed provider=${name}: ${err.message}`);
-            void logReview(prId, `JSON response_format finalizer failed: ${err.message}`, "warn", reviewRunId, reviewChunkId);
-            finalizerResponse = await withTimeout(
-              client.chat.completions.create({
-                model,
-                messages: finalizerMessages,
-                temperature: 0.1,
-                ...reasoningOptions(model, 4_096),
-              } as any, { signal: options?.signal }),
-              `${name} fallback finalizer`,
-              LLM_FINALIZER_TIMEOUT_MS,
-            );
-          }
-          await assertReviewRunStillActive(reviewRunId);
-          if (finalizerResponse?.usage) {
-            attemptPromptTokens += finalizerResponse.usage.prompt_tokens ?? 0;
-            attemptCompletionTokens += finalizerResponse.usage.completion_tokens ?? 0;
-          }
-          const rawFinalizerText = finalizerResponse.choices?.[0]?.message?.content || "";
-          const parsed = parseFinalReviewJson(rawFinalizerText);
-          if (parsed) {
-            console.log(
-              `[review] JSON-only finalReview received: rating=${parsed.rating} findings=${parsed.findings.length} provider=${name}`,
-            );
-            void logReview(prId, `JSON finalReview: rating=${parsed.rating}, ${parsed.findings.length} findings`, "info", reviewRunId, reviewChunkId);
-            if (parsed.droppedFilenamelessCount > 0) {
-              console.log(`[review] dropped ${parsed.droppedFilenamelessCount} filename-less findings pre-verifier provider=${name}`);
-              void logReview(prId, `Pre-verifier filter: dropped ${parsed.droppedFilenamelessCount} findings with no filename`, "warn", reviewRunId, reviewChunkId);
-            }
-            finalReview = parsed;
-            finalReviewClient = client;
-            finalReviewEndpoint = endpoint;
+            console.warn(`[scan] refusal-detection turn failed: ${err?.message ?? String(err)}`);
+            void logReview(prId, `Refusal check failed (fail-open): ${err?.message ?? String(err)}`, "warn", reviewRunId);
           }
         }
 
-        if (!finalReview) {
-          console.log(
-            `[review] loop exited without submitReview (iterations used: ${loopCount}, last message had tool_calls: ${lastHadToolCalls}) provider=${name}`,
-          );
-          void logReview(prId, `Loop exhausted — no submitReview after ${loopCount} iterations (last had tool_calls: ${lastHadToolCalls})`, "warn", reviewRunId, reviewChunkId);
-        }
-
-        if (finalReview) {
-          // Success — exit the chain loop early.
-          break providerLoop;
-        }
-        // Else: provider ran without exception but produced no submitReview.
-        // Do not fall through to fallback here; fallback is reserved for
-        // provider/API failures such as 429s, timeouts, and connection errors.
-        break providerLoop;
-      } catch (err: any) {
-        attemptError = err;
-        console.warn(`[review] chat provider ${name} failed: ${err.message}`);
-        void logReview(prId, `Provider ${name} failed: ${err.message}`, "error", reviewRunId, reviewChunkId);
-        agenticError = `${name}: ${err.message}`;
-        // Phase 4: AbortError must propagate to the outer catch so the
-        // scan returns the typed interrupted result. The inner catch
-        // would otherwise treat it as a non-retryable quality failure
-        // and continue into the "ended the agentic loop" throw path —
-        // wrong classification for an interruption.
-        if (isAbortError(err)) {
-          throw err;
-        }
-        if (!isRetryableProviderFailure(err)) {
-          console.warn(`[review] not trying fallback after non-retryable provider failure provider=${name}`);
-          void logReview(prId, `Fallback skipped after non-retryable ${name} failure`, "warn", reviewRunId, reviewChunkId);
-          break providerLoop;
-        }
-        // Retryable provider/API failure: try next provider if configured.
-      } finally {
-        // Always record this provider's outcome. Covers success break,
-        // quality-failure break (no submitReview), thrown errors, and
-        // retryable-transport-failure fall-through to next provider.
-        // Phase 1 classified the outcome; Phase 2 attaches token/cost
-        // telemetry so the UI can render "this scan cost $0.04 on NVIDIA"
-        // and the operator can spot runaway spend per provider.
-        const successThisAttempt = finalReview !== null;
-        const ratingThisAttempt: number | null = successThisAttempt
-          ? (finalReview as any)?.rating ?? null
-          : null;
-        const outcome = classifyProviderOutcome({
-          error: attemptError,
-          submitReviewCalled: successThisAttempt,
-          rating: ratingThisAttempt,
-          iterationsUsed: attemptIterations,
-          maxIterations,
-          malformedStreak: attemptMalformedStreak,
-          interrupted: false,
-          refusalDetected: false,
-          emptyFindings: false,
-        });
-        const { costUsd } = computeCost(model, attemptPromptTokens, attemptCompletionTokens);
-        providerAttempts.push({
-          provider: name,
-          model,
-          iterationsUsed: attemptIterations,
-          maxIterations,
-          submitReviewCalled: successThisAttempt,
-          rating: ratingThisAttempt,
-          error: attemptError,
-          outcome,
-          promptTokens: attemptPromptTokens,
-          completionTokens: attemptCompletionTokens,
-          costUsd,
-        });
-        console.log(
-          `[review] provider ${name} outcome=${outcome} iterations=${attemptIterations}/${maxIterations} submitReview=${successThisAttempt} malformed=${attemptMalformedStreak}` +
-            ` tokens=${attemptPromptTokens}+${attemptCompletionTokens} cost=$${costUsd.toFixed(6)}` +
-            (attemptError ? ` error=${(attemptError as any)?.message ?? String(attemptError)}` : ""),
-        );
-        // Phase 3 circuit breaker — record outcome so future scans can
-        // skip a chronically-broken provider. Only quality_failure and
-        // success (rating >= 5) move the breaker; transport/interrupted/
-        // unknown outcomes do not. A model that returns a valid 3/10
-        // review doesn't count as success — that may itself be a signal
-        // of model trouble — but it isn't a clear quality_failure
-        // either, so we leave the breaker alone in that band.
-        if (outcome === "quality_failure") {
-          recordProviderQualityFailure(breakerRepoPath, endpoint, model, name, pr.repoId);
-        } else if (outcome === "success" && ratingThisAttempt !== null && ratingThisAttempt >= 5) {
-          recordProviderSuccess(breakerRepoPath, endpoint, model, name, pr.repoId);
-        }
+        return {
+          ok: true,
+          data: {
+            skipped: false,
+            rating: clampedRating,
+            findings: clampedFindings,
+            usedModel,
+            providerAttempts: providerAttempts as ProviderAttempt[],
+            refused,
+            refusalNote,
+            systemWarn: null,
+          },
+        };
       }
-    }
 
-    console.log(
-      `[review] providerAttempts summary: ${providerAttempts.map((a) => `${a.provider}=${a.outcome}`).join(", ") || "(no attempts)"}`,
-    );
-
-    // Phase 5 — terminal outcome (success or quality-failure). Clear the
-    // checkpoint so it doesn't linger as a false resume target. The abort
-    // path in the outer catch keeps the checkpoint and writes a final
-    // iteration entry before returning the interrupted result.
-    clearCheckpoint(breakerRepoPath, reviewRunId, reviewChunkId, pr.repoId);
-
-    // Phase 2 cost telemetry — persist tokens/cost breakdown to ReviewRun.
-    // Best-effort: setReviewRunTokens swallows errors. Only written for
-    // non-chunked runs (chunked scans aggregate per-chunk telemetry in
-    // the large-PR orchestrator — see runLargePrReview).
-    if (reviewRunId && !reviewChunkId) {
-      await setReviewRunTokens(reviewRunId, buildTokensUsed(providerAttempts));
-    }
-
-    if (finalReview) {
-      // Clamp severity/category to the known enums so both the returned and
-      // persisted findings render (and their counts match the UI header).
-      // LLM findings get source: "llm" (default); deterministic findings
-      // are merged in below with their own source already set.
-      findings = (finalReview.findings || []).map((f: any) => ({
-        ...f,
-        category: VALID_CATEGORIES.includes(f?.category) ? f.category : "Style",
-        severity: VALID_SEVERITIES.includes(f?.severity) ? f.severity : "suggestion",
-        exploitability: VALID_EXPLOITABILITY.includes(f?.exploitability) ? f.exploitability : "moderate",
-        impact: VALID_IMPACT.includes(f?.impact) ? f.impact : "medium",
-        source: "llm",
-      }));
-      // `?? 5` (not `|| 5`) so a genuine returned 0 is preserved and clamped
-      // to 1 below, rather than being masked into a middling 5.
-      rating = Math.max(1, Math.min(10, finalReview.rating ?? 5));
-
-      // Refusal-detection follow-up turn (per-run, not per-chunk). Asks the
-      // model whether it declined/skipped part of the PR — surfaces security-
-      // filter trips, scope skips, or "didn't get to that file" cases that
-      // would otherwise be silent. One extra LLM call per scan; falls through
-      // harmlessly to refused=false on any error.
-      if (!reviewChunkId) {
-        try {
-          const refusalClient = finalReviewClient;
-          if (refusalClient) {
-            const refusalBody: any = {
-              model: usedModel,
-              messages: [
-                {
-                  role: "user",
-                  content:
-                    `You just finished reviewing PR "${pr.title}" on branch ${pr.sourceBranch} ` +
-                    `(${files.length} files reviewed). Did you decline to fully analyze, refuse to look at, ` +
-                    `or skip any part of this PR because the content or task felt uncomfortable, out of scope, ` +
-                    `or tripped a content filter? Respond ONLY with JSON matching this shape: ` +
-                    `{"refused": true|false, "topics": ["brief reason 1", ...]}. ` +
-                    `If you reviewed everything fully, return {"refused": false, "topics": []}.`,
-                },
-              ],
-              temperature: 0,
-              ...reasoningOptions(usedModel, 500),
-            };
-            if (supportsJsonResponseFormat(finalReviewEndpoint)) {
-              refusalBody.response_format = { type: "json_object" };
-            }
-            const refusalRes = await refusalClient.chat.completions.create(refusalBody, { signal: options?.signal });
-            const raw = refusalRes.choices?.[0]?.message?.content ?? "";
-            // Some models wrap JSON in markdown fences (```json...```) or
-            // <think>...</think> reasoning despite response_format=json_object.
-            // Extract the {...} substring rather than parsing raw.
-            const stripped = stripThinkBlocks(raw);
-            const jsonMatch = stripped.match(/\{[\s\S]*\}/);
-            const parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
-            if (parsed?.refused === true) {
-              refused = true;
-              const topics = Array.isArray(parsed.topics) ? parsed.topics.filter(Boolean) : [];
-              refusalNote = topics.length > 0 ? topics.join("; ") : "Reviewer flagged incomplete coverage.";
-              void logReview(prId, `Refusal detected: ${refusalNote}`, "warn", reviewRunId);
-            } else {
-              void logReview(prId, `Refusal check: clean (model reviewed everything)`, "info", reviewRunId);
-            }
-          }
-        } catch (err: any) {
-          // Fail-open: log + fall through with refused=false. The main review
-          // is already complete and persisted below; a refusal-check failure
-          // must NOT abort the persistence path.
-          console.warn(`[scan] refusal-detection turn failed: ${err?.message ?? String(err)}`);
-          void logReview(prId, `Refusal check failed (fail-open): ${err?.message ?? String(err)}`, "warn", reviewRunId);
-        }
+      if (agenticError) {
+        const msg = `All chat providers failed (last error: ${agenticError}). Check your internet connection and LLM Settings.`;
+        return { ok: false, error: new StepError(msg, false) };
       }
-    } else if (agenticError) {
-      systemWarn = `All chat providers failed (last error: ${agenticError}). Check your internet connection and LLM Settings.`;
-    } else {
-      systemWarn = `Model ${usedModel} ended the agentic loop without calling submitReview. The model MUST support tool/function calling — verify this in the provider's docs, or pick a different model in LLM Settings. Models known to work: GPT-4, Claude, Qwen-Plus, DeepSeek-V3 via OpenRouter.`;
+
+      return {
+        ok: false,
+        error: new StepError(
+          `Model ${usedModel} ended the agentic loop without calling submitReview. The model MUST support tool/function calling — verify this in the provider's docs, or pick a different model in LLM Settings. Models known to work: GPT-4, Claude, Qwen-Plus, DeepSeek-V3 via OpenRouter.`,
+          false,
+        ),
+      };
+    },
+  });
+
+  const llmResult = await llmPipeline.run();
+
+  // Handle abort: infrastructure error or code error (no review produced).
+  if (llmResult.aborted) {
+    const sr = llmResult.stepResults[0]?.result;
+    if (sr && !sr.ok) {
+      const infra = sr.error?.isInfrastructure;
+      const msg = sr.error?.message || systemWarn || "LLM review failed.";
+      return {
+        success: false,
+        rating: null,
+        findings: deterministicFindings,
+        usedModel: usedModel || "none",
+        systemWarn: msg,
+        infrastructureFailure: !!infra,
+      };
     }
+    return {
+      success: false,
+      rating: null,
+      findings: deterministicFindings,
+      usedModel: "none",
+      systemWarn: "LLM review aborted.",
+    };
   }
 
-  if (!finalReview) {
-    throw new Error(systemWarn || "The review model did not return a structured rating/findings result.");
+  const llmData = llmResult.stepResults[0]?.result?.data as LlmStepData | undefined;
+  if (!llmData) {
+    return {
+      success: false,
+      rating: null,
+      findings: deterministicFindings,
+      usedModel: "none",
+      systemWarn: "LLM step returned no data.",
+    };
   }
+
+  if (llmData.skipped) {
+    return {
+      success: true,
+      rating: null,
+      findings: [],
+      usedModel: "none (skipped)",
+      systemWarn: llmData.systemWarn,
+    };
+  }
+
+  // Extract LLM output for post-processing
+  rating = llmData.rating;
+  findings = llmData.findings;
+  usedModel = llmData.usedModel;
+  systemWarn = llmData.systemWarn;
+  // Merge provider attempts from step data (step fn mutates the outer
+  // providerAttempts array via closure — `as any[]` avoids const-reassign)
+  (providerAttempts as any[]).length = 0;
+  providerAttempts.push(...llmData.providerAttempts);
+  refused = llmData.refused;
+  refusalNote = llmData.refusalNote;
+
   await assertReviewRunStillActive(reviewRunId);
 
   // Merge deterministic findings (tsc/eslint) with the LLM findings so
