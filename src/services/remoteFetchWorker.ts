@@ -120,6 +120,12 @@ export async function enqueue(repoId: string): Promise<string | null> {
 
       localPath = "/workspace";
 
+      // indexFolder is skipped for containerized repos because the volume
+      // (dragnet-repo-<id>) is only mountable from inside Docker, not from the
+      // host filesystem. The code-graph indexer will need a future
+      // containerization pass to read /workspace directly.
+      console.log(`[remoteFetchWorker] indexFolder deferred for containerized repo ${repoId}`);
+
       if (!repo.localPath) {
         await prisma.repository.update({
           where: { id: repoId },
@@ -131,7 +137,7 @@ export async function enqueue(repoId: string): Promise<string | null> {
       const url = interpolatePat(repo.cloneUrl, effectivePat);
       using ssh = deployKey
         ? buildSshEnv(deployKey, `fetch-${repoId}`)
-        : { env: undefined as Record<string, string> | undefined, [Symbol.dispose]() {} };
+        : { env: {} as Record<string, string>, [Symbol.dispose]() {} };
 
       execFileSync("git", ["-C", repo.localPath!, "fetch", "origin", "--prune"], {
         env: { ...process.env, ...ssh.env },
