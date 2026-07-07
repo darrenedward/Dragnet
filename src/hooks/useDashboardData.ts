@@ -749,6 +749,39 @@ export function useDashboardData() {
     }
   };
 
+  const handleStopScan = async () => {
+    if (!selectedPrId) return;
+    const targetPrId = selectedPrId;
+    console.log(`[scan] handleStopScan: stopping scan for prId=${targetPrId}`);
+    try {
+      const res = await fetchJson(`/api/prs/${targetPrId}/scan/stop`, {
+        method: "POST",
+      });
+      const result = await res.json();
+      if (res.ok) {
+        setIsScanning(false);
+        setActiveScan(null);
+        setActiveScanChunks([]);
+        setActiveFindings([]);
+        setActiveIterations({});
+        setPrs((prev) =>
+          prev.map((p) => (p.id === targetPrId ? { ...p, status: "Pending" } : p)),
+        );
+        toast.info(result.message || "Scan stopped.");
+        await fetchPrDetails(targetPrId, false);
+        if (selectedRepoId) await fetchPrsForSelectedRepo(selectedRepoId, true);
+      } else {
+        toast.error("Failed to stop scan: " + (result.error || "unknown error"));
+      }
+    } catch (e: any) {
+      if (e instanceof NetworkError) {
+        toast.networkError();
+      } else {
+        toast.error("Failed to stop scan: " + (e?.message ?? "unknown error"));
+      }
+    }
+  };
+
   // Phase 7 — Discard the interrupted checkpoint and start a brand-new
   // scan. Backend deletes every checkpoint file for the run and marks
   // the old ReviewRun as failed before createReviewRun flips a new row
@@ -1010,6 +1043,7 @@ export function useDashboardData() {
     scanResult,
     setScanResult,
     handleTriggerPrScan,
+    handleStopScan,
     handleRetryFailedChunks,
     handleExportMarkdown,
     exportStatus,

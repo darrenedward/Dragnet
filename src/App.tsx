@@ -241,6 +241,7 @@ export default function App() {
                   activePR={activeAPR}
                   isScanning={d.isScanning}
                   onTriggerScan={d.handleTriggerPrScan}
+                  onStopScan={d.handleStopScan}
                   onExportMarkdown={d.handleExportMarkdown}
                   exportStatus={d.exportStatus}
                   scanResult={d.scanResult}

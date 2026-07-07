@@ -22,6 +22,7 @@ REGISTRY="ghcr.io/darrenedward"
 PROJECT_NAME="dragnet"
 IMAGE_NAME="app"
 IMAGE_TAG="${REGISTRY}/${PROJECT_NAME}/${IMAGE_NAME}:latest"
+LOCAL_TAG="${PROJECT_NAME}:latest"
 
 GITHUB_USERNAME="darrenedward"
 
@@ -74,6 +75,7 @@ echo "Image built: $IMAGE_TAG"
 if [ "$COMMAND" = "local" ]; then
     echo ""
     echo "Starting container locally..."
+    docker tag "$IMAGE_TAG" "$LOCAL_TAG"
     docker compose up -d
     echo ""
     echo "Local deployment complete!"

@@ -42,6 +42,7 @@ interface Props {
   activePR: PullRequest | undefined;
   isScanning: boolean;
   onTriggerScan: (opts?: { force?: boolean }) => void;
+  onStopScan?: () => void;
   onExportMarkdown: (format: "file" | "download") => void;
   exportStatus: { kind: "file" | "download"; success: boolean; message: string } | null;
   scanResult: ScanResult | null;
@@ -125,6 +126,7 @@ export default function PrsView({
   activePR,
   isScanning,
   onTriggerScan,
+  onStopScan,
   onExportMarkdown,
   exportStatus,
   scanResult,
@@ -171,6 +173,7 @@ export default function PrsView({
           activePR={activePR}
           isScanning={isScanning}
           onTriggerScan={onTriggerScan}
+          onStopScan={onStopScan}
           onExportMarkdown={onExportMarkdown}
           exportStatus={exportStatus}
           hasFindings={findings.length > 0}
@@ -237,6 +240,7 @@ function PrHeader({
   activePR,
   isScanning,
   onTriggerScan,
+  onStopScan,
   onExportMarkdown,
   exportStatus,
   hasFindings,
@@ -253,6 +257,7 @@ function PrHeader({
   activePR: PullRequest | undefined;
   isScanning: boolean;
   onTriggerScan: (opts?: { force?: boolean }) => void;
+  onStopScan?: () => void;
   onExportMarkdown: (format: "file" | "download") => void;
   exportStatus: { kind: "file" | "download"; success: boolean; message: string } | null;
   hasFindings: boolean;
@@ -336,14 +341,24 @@ function PrHeader({
             <span>{scanning ? "Review Running..." : !repoIndexedAt ? "Index Required" : "Run PR Review"}</span>
           </button>
           {scanning && (
-            <button
-              onClick={() => onTriggerScan({ force: true })}
-              title="Reap the current run (orphaned or stuck) and start a fresh scan. Use when a scan appears hung after a dev-server restart."
-              className="min-h-11 px-3 py-2 bg-rose-500/15 border border-rose-500/30 text-rose-300 hover:bg-rose-500/25 text-xs font-mono font-bold rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer"
-            >
-              <AlertTriangle size={13} />
-              <span>Force Restart</span>
-            </button>
+            <>
+              <button
+                onClick={() => onStopScan?.()}
+                title="Stop the currently running scan without starting a replacement."
+                className="min-h-11 px-3 py-2 bg-amber-500/15 border border-amber-500/30 text-amber-300 hover:bg-amber-500/25 text-xs font-mono font-bold rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer"
+              >
+                <X size={13} />
+                <span>Stop</span>
+              </button>
+              <button
+                onClick={() => onTriggerScan({ force: true })}
+                title="Reap the current run (orphaned or stuck) and start a fresh scan. Use when a scan appears hung after a dev-server restart."
+                className="min-h-11 px-3 py-2 bg-rose-500/15 border border-rose-500/30 text-rose-300 hover:bg-rose-500/25 text-xs font-mono font-bold rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer"
+              >
+                <AlertTriangle size={13} />
+                <span>Force Restart</span>
+              </button>
+            </>
           )}
           {hasFindings && (
             <>

@@ -93,6 +93,33 @@ export function getActiveReviewSignal(prId: string): AbortSignal | undefined {
 }
 
 /**
+ * Abort an in-flight scan WITHOUT starting a replacement. Calls
+ * controller.abort() on the active entry, then evicts it from the
+ * map. Returns true if a scan was actually running and aborted,
+ * false if nothing was in progress.
+ *
+ * This is the "Stop Scan" counterpart to acquireReviewLock(force=true)
+ * which aborts AND creates a new lock (force-restart). Use this when
+ * the user explicitly wants to halt — never starts a replacement scan.
+ */
+export function abortScan(prId: string): boolean {
+  const entry = activeReviews.get(prId);
+  if (!entry) return false;
+  if (Date.now() - entry.startedAt > REVIEW_TTL_MS) {
+    activeReviews.delete(prId);
+    return false;
+  }
+  console.log(`[review] abortScan — aborting in-flight scan for ${prId}`);
+  try {
+    entry.controller.abort();
+  } catch (err: any) {
+    console.warn(`[review] abortScan — abort() threw for ${prId}: ${err?.message ?? err}`);
+  }
+  activeReviews.delete(prId);
+  return true;
+}
+
+/**
  * Atomic-feel acquisition of the review lock: in-memory check + DB-backed
  * active-scan check + beginReview, all from one call. All four scan entry
  * points (scan/route.ts, prcheck/route.ts, prepush/route.ts, command/route.ts)
