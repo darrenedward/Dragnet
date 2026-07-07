@@ -5,7 +5,7 @@ import { refreshPrFiles, isBranchMerged } from "@/src/lib/getRealLocalPrs";
 import { assertIndexFresh } from "@/src/lib/indexFreshness";
 import { IndexingService } from "@/src/services/indexingService";
 import { getChatChain, getEmbeddingChain } from "@/src/lib/llmClient";
-import { acquireReviewLock, endReview } from "@/src/lib/reviewLocks";
+import { acquireReviewLock, endReview, checkPendingAbort } from "@/src/lib/reviewLocks";
 import { computePrSizeProfile } from "@/src/lib/prSizeProfile";
 import { readPrCommitCount } from "@/src/lib/prSizeProfile.server";
 import { assertTier, buildDiffManifest, runLargePrReview } from "@/src/services/largePrReview";
@@ -136,6 +136,22 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
       console.log(`[scan] route: refreshing PR files from git`);
       files = await refreshPrFiles(repo, pr.sourceBranch, prId);
       console.log(`[scan] route: got ${files.length} files`);
+
+      // Check if Stop was clicked during the (potentially slow) file
+      // collection phase. When no review lock exists yet, abortScan
+      // stores the prId in pendingAborts — check it here and bail.
+      if (checkPendingAbort(prId)) {
+        console.log(`[scan] route: abort requested during file collection — returning interrupted`);
+        return NextResponse.json({
+          success: false,
+          interrupted: true,
+          rating: null,
+          findings: [],
+          usedModel: null,
+          systemWarn: null,
+          message: "Scan cancelled during file collection.",
+        });
+      }
     } else {
       console.log(`[scan] route: no repoPath or sourceBranch - skipping file refresh`);
     }

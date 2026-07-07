@@ -93,30 +93,69 @@ export function getActiveReviewSignal(prId: string): AbortSignal | undefined {
 }
 
 /**
+ * Module-level set of PRs for which the user requested an abort before
+ * the review lock was acquired. The scan route checks this after
+ * slow operations (file collection) that run before the lock exists.
+ *
+ * Without this, clicking Stop during file collection is a no-op:
+ * there's no controller to abort, the scan continues, acquires the
+ * lock afterward, and creates a run — the user sees "Scan in progress"
+ * even though they just clicked Stop.
+ */
+const pendingAborts = new Set<string>();
+
+/**
  * Abort an in-flight scan WITHOUT starting a replacement. Calls
  * controller.abort() on the active entry, then evicts it from the
- * map. Returns true if a scan was actually running and aborted,
- * false if nothing was in progress.
+ * map. When no controller exists yet (scan is still in the pre-lock
+ * file collection phase), stores the prId so the scan route can
+ * check after file collection and bail out.
+ *
+ * Returns true if a scan was actually running and aborted,
+ * false if nothing was in progress (deferred cancellation).
  *
  * This is the "Stop Scan" counterpart to acquireReviewLock(force=true)
  * which aborts AND creates a new lock (force-restart). Use this when
  * the user explicitly wants to halt — never starts a replacement scan.
  */
 export function abortScan(prId: string): boolean {
+  // If a controller exists (post-lock), abort it and evict.
   const entry = activeReviews.get(prId);
-  if (!entry) return false;
-  if (Date.now() - entry.startedAt > REVIEW_TTL_MS) {
+  if (entry) {
+    if (Date.now() - entry.startedAt <= REVIEW_TTL_MS) {
+      console.log(`[review] abortScan — aborting in-flight scan for ${prId}`);
+      try {
+        entry.controller.abort();
+      } catch (err: any) {
+        console.warn(`[review] abortScan — abort() threw for ${prId}: ${err?.message ?? err}`);
+      }
+    }
     activeReviews.delete(prId);
-    return false;
+    pendingAborts.delete(prId);
+    return true;
   }
-  console.log(`[review] abortScan — aborting in-flight scan for ${prId}`);
-  try {
-    entry.controller.abort();
-  } catch (err: any) {
-    console.warn(`[review] abortScan — abort() threw for ${prId}: ${err?.message ?? err}`);
+
+  // No controller yet — the scan is in its pre-lock phase (file
+  // collection). Defer the cancellation so the scan route checks
+  // after that phase and bails out before acquiring the lock.
+  pendingAborts.add(prId);
+  console.log(`[review] abortScan — no controller yet, pending abort for ${prId}`);
+  return false;
+}
+
+/**
+ * Check if an abort was requested for this PR during the pre-lock
+ * phase. Returns true and clears the flag so the scan route can
+ * stop early. Call this once after any slow pre-lock work (file
+ * collection) and before acquireReviewLock.
+ */
+export function checkPendingAbort(prId: string): boolean {
+  if (pendingAborts.has(prId)) {
+    pendingAborts.delete(prId);
+    console.log(`[review] checkPendingAbort — pending abort found for ${prId}, cancelling scan`);
+    return true;
   }
-  activeReviews.delete(prId);
-  return true;
+  return false;
 }
 
 /**
