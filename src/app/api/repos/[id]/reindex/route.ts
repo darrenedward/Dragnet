@@ -2,6 +2,10 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/src/lib/prisma";
 import { authenticateSessionOrKey, enforceRepoScope } from "@/src/lib/apiAuth";
 import { IndexingService } from "@/src/services/indexingService";
+import { ContainerOrchestrator } from "@/src/lib/containerOrchestrator";
+import { mkdtempSync, rmSync } from "node:fs";
+import path from "node:path";
+import os from "node:os";
 
 export const runtime = "nodejs";
 
@@ -24,17 +28,33 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       );
     }
 
-    if (!repo.path) {
+    if (!repo.path && !repo.localPath) {
       return NextResponse.json(
-        { error: "LOCAL_PATH_REQUIRED", message: "This endpoint indexes from a local filesystem path. Remote-clone repos are indexed automatically on every scan." },
+        { error: "NO_PATH_FOUND", message: "No local path or volume configured for this repo." },
         { status: 409 },
       );
     }
 
     await prisma.repository.updateMany({ where: { id }, data: { status: "stabilizing" } });
 
-    IndexingService.clearIndex(id)
-      .then(() => IndexingService.indexFolder(id, repo.path))
+    const indexFromPath = async () => {
+      const srcPath = repo.path || `/mnt/${repo.localPath?.replace("dragnet-repo-", "") || id}`;
+      if (repo.path) {
+        return IndexingService.clearIndex(id).then(() => IndexingService.indexFolder(id, srcPath));
+      }
+      const orchestrator = ContainerOrchestrator.getInstance();
+      const volName = repo.localPath!;
+      const tmpDir = mkdtempSync(path.join(os.tmpdir(), `dragnet-idx-${id}-`));
+      try {
+        await orchestrator.copyVolumeToHost(volName, tmpDir, "alpine/git".replace("alpine/git", "node:20-alpine"));
+        await IndexingService.clearIndex(id);
+        return await IndexingService.indexFolder(id, tmpDir);
+      } finally {
+        rmSync(tmpDir, { recursive: true, force: true });
+      }
+    };
+
+    indexFromPath()
       .then(async (stats) => {
         console.log(`[reindex] completed for ${id}:`, stats);
       })

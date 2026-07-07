@@ -165,12 +165,11 @@ export async function getRealLocalPrs(repo: RepoLike) {
           continue;
         }
 
-        const filesList = await collectBranchFiles(repo, baseBranch, branch.name);
-
         const existing = await prisma.pullRequest.findUnique({
           where: { id: prId },
           select: { status: true },
         });
+
         const status = existing?.status === "In Progress" || existing?.status === "Completed"
           ? existing.status
           : "Pending";
@@ -193,21 +192,25 @@ export async function getRealLocalPrs(repo: RepoLike) {
           update: prData,
         });
 
+        const filesList = await collectBranchFiles(repo, baseBranch, branch.name);
+
         await prisma.prFile.deleteMany({ where: { prId } });
-        await prisma.prFile.createMany({
-          skipDuplicates: true,
-          data: filesList.map((file, i) => ({
-            id: `file-${prId}-${i}`,
-            prId,
-            filename: file.filename,
-            status: file.status,
-            additions: file.additions,
-            deletions: file.deletions,
-            originalContent: sanitizeForPg(file.originalContent),
-            modifiedContent: sanitizeForPg(file.modifiedContent),
-            diff: sanitizeForPg(file.diff),
-          })),
-        });
+        if (filesList.length > 0) {
+          await prisma.prFile.createMany({
+            skipDuplicates: true,
+            data: filesList.map((file, i) => ({
+              id: `file-${prId}-${i}`,
+              prId,
+              filename: file.filename,
+              status: file.status,
+              additions: file.additions,
+              deletions: file.deletions,
+              originalContent: sanitizeForPg(file.originalContent),
+              modifiedContent: sanitizeForPg(file.modifiedContent),
+              diff: sanitizeForPg(file.diff),
+            })),
+          });
+        }
 
         prs.push({ id: prId, ...prData });
       } catch (branchErr) {

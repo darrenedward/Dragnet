@@ -170,12 +170,16 @@ export class ContainerOrchestrator {
       }
     }
 
+    // Override entrypoint to sh — images like alpine/git have git as
+    // their ENTRYPOINT, which would turn `sh -c "..."` into
+    // `git sh -c "..."` and fail. The shell script handles everything.
+    args.push("--entrypoint", "sh");
     args.push(options.image);
 
     // Combine commands into a single shell execution
     // e.g. sh -c "npm install && npm test"
     const shellScript = options.commands.join(" && ");
-    args.push("sh", "-c", shellScript);
+    args.push("-c", shellScript);
 
     let stdout = "";
     let stderr = "";

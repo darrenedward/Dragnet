@@ -92,7 +92,7 @@ export async function enqueue(repoId: string): Promise<string | null> {
       const syncScript = [
         "set -e",
         `cd /workspace && (git init 2>/dev/null; git remote add origin '${escapedUrl}' 2>/dev/null || git remote set-url origin '${escapedUrl}')`,
-        "cd /workspace && git fetch origin --prune",
+        "cd /workspace && git fetch origin --prune '+refs/heads/*:refs/heads/*'",
       ].join(" && ");
 
       const extraEnv: Record<string, string> = {};
@@ -148,7 +148,7 @@ export async function enqueue(repoId: string): Promise<string | null> {
         ? buildSshEnv(deployKey, `fetch-${repoId}`)
         : { env: {} as Record<string, string>, [Symbol.dispose]() {} };
 
-      execFileSync("git", ["-C", repo.localPath!, "fetch", "origin", "--prune"], {
+      execFileSync("git", ["-C", repo.localPath!, "fetch", "origin", "--prune", "+refs/heads/*:refs/heads/*"], {
         env: { ...process.env, ...ssh.env },
         stdio: "pipe",
         timeout: 120_000,
