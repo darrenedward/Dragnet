@@ -1023,53 +1023,61 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
       orderBy: { completedAt: "desc" },
       select: { rating: true },
     });
+    if (prevRun?.rating !== null && prevRun?.rating !== undefined) {
+      // Cache hit — return previous rating, no LLM call, no audit trail
+      console.log(`[scan] runPrScan: 0 files, cache HIT — rating=${prevRun.rating}`);
+      return {
+        success: true,
+        rating: prevRun.rating,
+        findings: [],
+        usedModel: "cached (no code changes)",
+        systemWarn: `No code changes detected. Using cached rating (${prevRun.rating}/10) from previous scan.`,
+      };
+    }
+    // No prior rating — attempt a single LLM call with PR metadata
     let rating: number | null = null;
     let usedModel = "unconfigured";
     let systemWarn: string | null = null;
-    if (prevRun?.rating !== null && prevRun?.rating !== undefined) {
-      rating = prevRun.rating!;
-      usedModel = "cached (no code changes)";
-      systemWarn = `No code changes detected. Using cached rating (${rating}/10) from previous scan.`;
-      console.log(`[scan] runPrScan: 0 files, cache HIT — rating=${rating}`);
-    } else {
-      // No prior rating — attempt a single LLM call with PR metadata
-      const chain = getChatChain();
-      if (chain.length > 0) {
-        const { client, model, name } = chain[0];
-        usedModel = model;
-        try {
-          const emptyDiffPrompt =
-            `You are reviewing a Pull Request with ZERO code changes — no files were modified.\n\n` +
-            `Based solely on the PR metadata below, rate this PR's quality on a scale of 1–10:\n` +
-            `- 10 = excellent description, clear purpose, well-named branch, ready for merge\n` +
-            `- 1  = poor or missing metadata, unclear purpose\n\n` +
-            `PR Title: ${pr.title}\n` +
-            `PR Description: ${pr.description || "(none)"}\n` +
-            `Branch Name: ${pr.sourceBranch}\n\n` +
-            `Respond with JSON: {"rating": <1–10>, "summary": "<brief rationale>"}`;
-          const response = await client.chat.completions.create({
-            model,
-            messages: [
-              { role: "system", content: SYSTEM_INSTRUCTION },
-              { role: "user", content: emptyDiffPrompt },
-            ],
-            temperature: 0,
-            response_format: { type: "json_object" },
-          } as any);
-          const raw = response.choices?.[0]?.message?.content || "{}";
-          const parsed = JSON.parse(raw);
-          rating = Math.max(1, Math.min(10, parsed.rating ?? 5));
-          systemWarn = `No code changes to review. Rating (${rating}/10) based on PR metadata only.`;
-          console.log(`[scan] runPrScan: empty-diff LLM call — rating=${rating} model=${model}`);
-        } catch (err: any) {
-          console.warn(`[scan] runPrScan: empty-diff LLM call failed: ${err?.message || String(err)}`);
-          systemWarn = "No code changes to review and LLM rating unavailable.";
+    const chain = getChatChain();
+    if (chain.length > 0) {
+      const { client, model } = chain[0];
+      usedModel = model;
+      try {
+        const emptyDiffPrompt =
+          `You are reviewing a Pull Request with ZERO code changes — no files were modified.\n\n` +
+          `Based solely on the PR metadata below, rate this PR's quality on a scale of 1–10:\n` +
+          `- 10 = excellent description, clear purpose, well-named branch, ready for merge\n` +
+          `- 1  = poor or missing metadata, unclear purpose\n\n` +
+          `PR Title: ${pr.title}\n` +
+          `PR Description: ${pr.description || "(none)"}\n` +
+          `Branch Name: ${pr.sourceBranch}\n\n` +
+          `Respond with JSON: {"rating": <1–10>, "summary": "<brief rationale>"}`;
+        const response = await client.chat.completions.create({
+          model,
+          messages: [
+            { role: "system", content: SYSTEM_INSTRUCTION },
+            { role: "user", content: emptyDiffPrompt },
+          ],
+          temperature: 0,
+          response_format: { type: "json_object" },
+        } as any);
+        const raw = response.choices?.[0]?.message?.content || "{}";
+        const parsed = JSON.parse(raw);
+        if (typeof parsed.rating === "number" && Number.isFinite(parsed.rating)) {
+          rating = Math.max(1, Math.min(10, Math.round(parsed.rating)));
         }
-      } else {
-        systemWarn = "No LLM endpoint configured and no code changes to review.";
+        systemWarn = rating !== null
+          ? `No code changes to review. Rating (${rating}/10) based on PR metadata only.`
+          : "No code changes to review and LLM did not return a valid rating.";
+        console.log(`[scan] runPrScan: empty-diff LLM call — rating=${rating} model=${model}`);
+      } catch (err: any) {
+        console.warn(`[scan] runPrScan: empty-diff LLM call failed: ${err?.message || String(err)}`);
+        systemWarn = "No code changes to review and LLM rating unavailable.";
       }
+    } else {
+      systemWarn = "No LLM endpoint configured and no code changes to review.";
     }
-    // Persist the result
+    // Persist the result for this new scan
     await prisma.pullRequest.updateMany({ where: { id: prId }, data: { status: "Completed", rating } });
     if (reviewRunId && !reviewChunkId) {
       await completeReviewRun(reviewRunId, { status: "completed", rating, refused: false });
