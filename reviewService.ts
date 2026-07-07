@@ -8,6 +8,7 @@ import { verifyFindings, isDocumentationFile, type CandidateFinding } from "./sr
 import { completeReviewRun, setReviewRunTokens, setReviewRunLastCheckpointAt, setReviewChunkLastCheckpointAt } from "./src/lib/reviewFreshness";
 import { safeReadFileSync, resolveSafePath } from "./src/lib/pathSafety";
 import { runDeterministicChecks, runContainerizedChecks, logReview, type DeterministicFinding } from "./src/services/deterministicChecks";
+import { StepPipeline, StepError } from "./src/services/stepPipeline";
 import { detectBuildSystem } from "./src/lib/buildsystemDetect";
 import { classifyDiff } from "./src/lib/diffClassifier";
 import { buildFindingFingerprint, resolveSymbolsBatch } from "./src/services/largePrReview/fingerprint";
@@ -25,6 +26,14 @@ import {
 
 export interface ScanResult {
   success: boolean;
+  /**
+   * Phase 5 flag: true when the scan was aborted due to an unrecoverable
+   * infrastructure error (container runtime, disk, network) after exhausting
+   * configured retries. The PR is marked "Failed" and the LLM is never
+   * called. Callers should render an actionable banner rather than a
+   * generic failure message.
+   */
+  infrastructureFailure?: boolean;
   /**
    * Phase 4 typed interruption variant. When true, the scan was aborted
    * (force-restart, abort signal, or AbortError from the SDK) and the
@@ -1110,6 +1119,7 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
 
   // 3. Mark PR status as 'In Progress' for real-time visual progress
   await prisma.pullRequest.updateMany({ where: { id: prId }, data: { status: "In Progress" } });
+  void logReview(prId, `Scan started — ${files.length} file(s) to review`, "info", reviewRunId, reviewChunkId);
   console.log(`[scan] runPrScan: status set to In Progress`);
 
   // Hoisted out of the try block so the outer catch can still persist
@@ -1127,6 +1137,7 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
   let systemWarn: string | null = null;
 
   // 4. Retrieve codebase-wide multi-hop context from indexed AST tables
+  void logReview(prId, "Building codebase context (AST symbols + call graph)...", "info", reviewRunId, reviewChunkId);
   let codebaseContext = "";
   try {
     const symbolList = await prisma.symbol.findMany({
@@ -1242,83 +1253,124 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
     }
   }
 
-  // 5b. Tier 1: Run deterministic checks (tsc/eslint) BEFORE the LLM loop.
-  //     Findings persist with source="tsc"/"eslint" so the UI distinguishes
-  //     them from LLM findings, AND feed the LLM context so it doesn't
-  //     waste iterations re-reporting type errors it can see are already
-  //     flagged. Never throws — failures become severity:info findings.
-  //     Only runs when the repo has a local path (remote repos go straight to Tier 2).
+  // 5b-c. Tier 1 + Tier 2 via StepPipeline with retry-on-infrastructure-error.
+  //        Critical: false means code errors collect as findings and continue.
+  //        Infrastructure errors that exhaust retries cause a hard abort before
+  //        the LLM is ever called, matching the "no rating written" invariant.
+  const pipeline = new StepPipeline();
   let deterministicFindings: DeterministicFinding[] = [];
   let tier1HadErrors = false;
-  if (repo?.path) {
-    try {
-      deterministicFindings = await runDeterministicChecks(repo.path);
-      tier1HadErrors = deterministicFindings.some((f) => f.severity === "error");
-      const counts = deterministicFindings.reduce((acc, f) => {
-        acc[f.source] = (acc[f.source] ?? 0) + 1; return acc;
-      }, {} as Record<string, number>);
-      const summary = Object.keys(counts).length === 0
-        ? "clean (no tsc/eslint findings)"
-        : Object.entries(counts).map(([k, v]) => `${v} ${k}`).join(", ");
-      void logReview(prId, `Tier 1 deterministic checks: ${summary}`, "info", reviewRunId, reviewChunkId);
-      console.log(`[scan] runPrScan: Tier 1 deterministic checks → ${deterministicFindings.length} finding(s)`);
-    } catch (err: any) {
-      console.warn(`[scan] runPrScan: Tier 1 deterministic checks crashed:`, err);
-      void logReview(prId, `Tier 1 deterministic checks crashed: ${err.message}`, "warn", reviewRunId, reviewChunkId);
-    }
-  }
 
-  // 5c. Tier 2: Containerized checks (install + test/lint in ephemeral container).
-  //     Gated: skipped when Tier 1 found errors (uncompilable code), when the
-  //     per-repo "Skip Tier 2" toggle is enabled, or when the build system is
-  //     not Node.js (only node images ship with working install/test commands).
-  const skipTier2 = repo?.skipTier2 ?? false;
-  const tier2ShouldRun =
-    (Boolean(repo?.path) || Boolean(repo?.cloneUrl)) &&
-    !skipTier2 && !tier1HadErrors && tier2Supported;
-
-  if (tier2ShouldRun) {
-    try {
-      const { decryptSecret, hasMasterKey } = await import("./src/lib/crypto");
-      let deployKey: string | undefined;
-      let pat: string | undefined;
-      if (repo?.deployKeyCipher && repo?.deployKeyIv && repo?.deployKeyTag && hasMasterKey()) {
-        deployKey = decryptSecret(repo.deployKeyCipher, repo.deployKeyIv, repo.deployKeyTag);
+  // Tier 1: deterministic checks (tsc/eslint). Only runs for local repos.
+  pipeline.addStep({
+    name: "Tier1: tsc/eslint",
+    critical: false,
+    maxRetries: 2,
+    fn: async () => {
+      if (!repo?.path) return { ok: true, data: [] as DeterministicFinding[] };
+      try {
+        const findings = await runDeterministicChecks(repo.path);
+        tier1HadErrors = findings.some((f) => f.severity === "error");
+        const counts = findings.reduce((acc, f) => {
+          acc[f.source] = (acc[f.source] ?? 0) + 1; return acc;
+        }, {} as Record<string, number>);
+        const summary = Object.keys(counts).length === 0
+          ? "clean (no tsc/eslint findings)"
+          : Object.entries(counts).map(([k, v]) => `${v} ${k}`).join(", ");
+        void logReview(prId, `Tier 1 deterministic checks: ${summary}`, "info", reviewRunId, reviewChunkId);
+        console.log(`[scan] runPrScan: Tier 1 deterministic checks → ${findings.length} finding(s)`);
+        return { ok: true, data: findings };
+      } catch (err: any) {
+        console.warn(`[scan] runPrScan: Tier 1 deterministic checks crashed:`, err);
+        void logReview(prId, `Tier 1 deterministic checks crashed: ${err.message}`, "warn", reviewRunId, reviewChunkId);
+        return { ok: false, error: new StepError(err?.message ?? String(err), true) };
       }
-      if (repo?.patCipher && repo?.patIv && repo?.patTag && hasMasterKey()) {
-        pat = decryptSecret(repo.patCipher, repo.patIv, repo.patTag);
-      }
+    },
+  });
 
-      const tier2Image = repo.path ? runnerImage : (repo.runnerImage ?? "node:20-alpine");
-      const tier2Findings = await runContainerizedChecks({
-        repoId: repo.id,
-        cloneUrl: repo.cloneUrl ?? "",
-        commitHash: pr.commitHash,
-        deployKey,
-        pat,
-        runnerImage: tier2Image,
-        installCommand: repo.installCommand ?? "npm install",
-        testCommand: repo.testCommand ?? "npm test && npm run lint",
-        prId,
-        reviewRunId,
-        reviewChunkId,
-      });
-      deterministicFindings = [...deterministicFindings, ...tier2Findings];
-      console.log(`[scan] runPrScan: Tier 2 containerized checks → ${tier2Findings.length} finding(s)`);
-    } catch (err: any) {
-      console.warn(`[scan] runPrScan: Tier 2 containerized checks crashed:`, err);
-      void logReview(prId, `Tier 2 containerized checks crashed: ${err.message}`, "warn", reviewRunId, reviewChunkId);
+  // Tier 2: containerized checks (install + test/lint in ephemeral container).
+  //         Gated: skipped when Tier 1 found errors (uncompilable code), when
+  //         the per-repo "Skip Tier 2" toggle is enabled, or when the build
+  //         system is not Node.js (only node images ship with working commands).
+  pipeline.addStep({
+    name: "Tier2: container checks",
+    critical: false,
+    maxRetries: 2,
+    fn: async () => {
+      const skipTier2 = repo?.skipTier2 ?? false;
+      const tier2ShouldRun =
+        (Boolean(repo?.path) || Boolean(repo?.cloneUrl)) &&
+        !skipTier2 && !tier1HadErrors && tier2Supported;
+      if (!tier2ShouldRun) {
+        const reason = skipTier2
+          ? "per-repo toggle"
+          : tier1HadErrors
+            ? "Tier 1 found errors"
+            : !tier2Supported
+              ? "unsupported build system (non-Node.js)"
+              : "no repo path or clone URL";
+        void logReview(prId, `Tier 2 skipped: ${reason}`, "info", reviewRunId, reviewChunkId);
+        console.log(`[scan] runPrScan: Tier 2 skipped — ${reason}`);
+        return { ok: true, data: [] as DeterministicFinding[] };
+      }
+      try {
+        const { decryptSecret, hasMasterKey } = await import("./src/lib/crypto");
+        let deployKey: string | undefined;
+        let pat: string | undefined;
+        if (repo?.deployKeyCipher && repo?.deployKeyIv && repo?.deployKeyTag && hasMasterKey()) {
+          deployKey = decryptSecret(repo.deployKeyCipher, repo.deployKeyIv, repo.deployKeyTag);
+        }
+        if (repo?.patCipher && repo?.patIv && repo?.patTag && hasMasterKey()) {
+          pat = decryptSecret(repo.patCipher, repo.patIv, repo.patTag);
+        }
+        const tier2Image = repo.path ? runnerImage : (repo.runnerImage ?? "node:20-alpine");
+        const tier2Findings = await runContainerizedChecks({
+          repoId: repo.id,
+          cloneUrl: repo.cloneUrl ?? "",
+          commitHash: pr.commitHash,
+          deployKey,
+          pat,
+          runnerImage: tier2Image,
+          installCommand: repo.installCommand ?? "npm install",
+          testCommand: repo.testCommand ?? "npm test && npm run lint",
+          prId,
+          reviewRunId,
+          reviewChunkId,
+        });
+        console.log(`[scan] runPrScan: Tier 2 containerized checks → ${tier2Findings.length} finding(s)`);
+        return { ok: true, data: tier2Findings };
+      } catch (err: any) {
+        console.warn(`[scan] runPrScan: Tier 2 containerized checks crashed:`, err);
+        void logReview(prId, `Tier 2 containerized checks crashed: ${err.message}`, "warn", reviewRunId, reviewChunkId);
+        return { ok: false, error: new StepError(err?.message ?? String(err), true) };
+      }
+    },
+  });
+
+  // Run the pipeline — retries on infrastructure errors, aborts if they
+  // persist (infrastructure_failure), collects findings from code errors
+  // and continues for non-critical steps.
+  const pipelineResult = await pipeline.run();
+  deterministicFindings = pipelineResult.findings;
+
+  if (pipelineResult.aborted && pipelineResult.infrastructureFailure) {
+    void logReview(
+      prId,
+      `Infrastructure failure in step "${pipelineResult.lastStepName}" — aborting scan`,
+      "error", reviewRunId, reviewChunkId,
+    );
+    console.log(`[scan] runPrScan: infrastructure failure in step "${pipelineResult.lastStepName}"`);
+    if (reviewRunId && !reviewChunkId) {
+      await completeReviewRun(reviewRunId, { status: "failed" });
     }
-  } else {
-    const reason = skipTier2
-      ? "per-repo toggle"
-      : tier1HadErrors
-        ? "Tier 1 found errors"
-        : !tier2Supported
-          ? "unsupported build system (non-Node.js)"
-          : "no repo path or clone URL";
-    void logReview(prId, `Tier 2 skipped: ${reason}`, "info", reviewRunId, reviewChunkId);
-    console.log(`[scan] runPrScan: Tier 2 skipped — ${reason}`);
+    return {
+      success: false,
+      rating: null,
+      findings: deterministicFindings,
+      usedModel: "none",
+      systemWarn: `Infrastructure failure in step "${pipelineResult.lastStepName}". Check server logs and try again.`,
+      infrastructureFailure: true,
+    };
   }
 
   // 5d. Tier 3 gate: skip LLM review when Tier 1+2 findings are empty AND
@@ -1379,8 +1431,11 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
     } else {
       systemWarn = "No LLM endpoint or chat model configured. Open the LLM Settings tab and configure at least one provider.";
     }
+    void logReview(prId, `LLM review unavailable — ${systemWarn}`, "warn", reviewRunId, reviewChunkId);
   } else {
+    void logReview(prId, "Starting LLM agentic review...", "info", reviewRunId, reviewChunkId);
     providerLoop: for (const { client, model, name, endpoint, maxIterations } of chain) {
+      void logReview(prId, `Checking provider: ${name} (${model})`, "info", reviewRunId, reviewChunkId);
       usedModel = model;
       // Per-attempt state — visible to catch/finally for classification.
       // Reset at the top of each provider iteration.
@@ -1974,6 +2029,7 @@ ${diffPayload}${deterministicPayload}`;
   findings = [...findings, ...deterministicFindings];
 
   // 6. Persist findings
+  void logReview(prId, `Verifying ${findings.length} finding(s)...`, "info", reviewRunId, reviewChunkId);
   console.log(`[scan] runPrScan: persisting ${findings.length} findings`);
   await prisma.reviewFinding.deleteMany({
     where: reviewChunkId
@@ -2139,6 +2195,7 @@ ${diffPayload}${deterministicPayload}`;
     });
   }
 
+  void logReview(prId, `Review complete — ${findings.length} finding(s), rating ${rating}/10`, "info", reviewRunId, reviewChunkId);
   console.log(`[scan] runPrScan: returning success rating=${rating} findings=${findings.length} model=${usedModel}`);
   return {
     success: true,
