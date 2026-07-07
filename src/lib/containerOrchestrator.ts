@@ -229,8 +229,9 @@ export class ContainerOrchestrator {
         "run", "--rm",
         "-v", `${volumeName}:/src:ro`,
         "-v", `${hostDir}:/dst`,
+        "--entrypoint", "sh",
         image,
-        "cp", "-a", "/src/.", "/dst/",
+        "-c", "cp -a /src/. /dst/",
       ], {
         encoding: "utf8",
         signal: AbortSignal.timeout(300_000),

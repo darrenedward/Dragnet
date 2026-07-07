@@ -89,10 +89,12 @@ export async function enqueue(repoId: string): Promise<string | null> {
       // Always update the remote URL on every fetch so credential changes
       // (PAT rotation, deploy key replacement) take effect even when the
       // volume's .git/config still has the old URL.
+      const baseBranch = repo.baseBranch || "main";
       const syncScript = [
         "set -e",
         `cd /workspace && (git init 2>/dev/null; git remote add origin '${escapedUrl}' 2>/dev/null || git remote set-url origin '${escapedUrl}')`,
         "cd /workspace && git fetch origin --prune '+refs/heads/*:refs/heads/*'",
+        `cd /workspace && git checkout --force '${shellEscape(baseBranch)}' 2>/dev/null || git checkout --force master 2>/dev/null || echo "no checkout target — repo may be empty"`,
       ].join(" && ");
 
       const extraEnv: Record<string, string> = {};

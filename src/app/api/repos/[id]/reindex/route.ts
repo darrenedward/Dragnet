@@ -4,6 +4,7 @@ import { authenticateSessionOrKey, enforceRepoScope } from "@/src/lib/apiAuth";
 import { IndexingService } from "@/src/services/indexingService";
 import { ContainerOrchestrator } from "@/src/lib/containerOrchestrator";
 import { mkdtempSync, rmSync } from "node:fs";
+import { shellEscape } from "@/src/lib/shellEscape";
 import path from "node:path";
 import os from "node:os";
 
@@ -49,13 +50,31 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         const result = await IndexingService.indexFolder(id, repo.path);
         await prisma.repository.update({
           where: { id },
-          data: { indexedAt: new Date(), status: "idle" },
+          data: { indexedAt: new Date().toISOString(), status: "idle" },
         });
         return result;
       }
       const orchestrator = ContainerOrchestrator.getInstance();
       const isContainerMode = !repo.localPath || repo.localPath === "/workspace";
       const volName = isContainerMode ? volumeName(id) : repo.localPath!;
+
+      // Ensure the working tree has checked-out files. git fetch creates
+      // branches but does NOT populate the working tree — without this,
+      // copyVolumeToHost copies an empty directory and the indexer finds
+      // nothing. Fall back gracefully if neither baseBranch nor master exist.
+      const baseBranch = repo.baseBranch || "main";
+      await orchestrator.runRunner({
+        volumeName: volName,
+        image: GIT_IMAGE,
+        commands: [
+          `cd /workspace && git checkout --force '${shellEscape(baseBranch)}' 2>/dev/null || git checkout --force master 2>/dev/null || echo "no checkout target — repo may be empty"`,
+        ],
+        networkMode: "none",
+        timeoutMs: 60_000,
+      }).catch((err: Error) => {
+        console.warn(`[reindex] checkout failed for ${id}:`, err.message);
+      });
+
       const tmpDir = mkdtempSync(path.join(os.tmpdir(), `dragnet-idx-${id}-`));
       try {
         await orchestrator.copyVolumeToHost(volName, tmpDir, GIT_IMAGE);
@@ -63,7 +82,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         const result = await IndexingService.indexFolder(id, tmpDir);
         await prisma.repository.update({
           where: { id },
-          data: { indexedAt: new Date(), status: "idle" },
+          data: { indexedAt: new Date().toISOString(), status: "idle" },
         });
         return result;
       } finally {
