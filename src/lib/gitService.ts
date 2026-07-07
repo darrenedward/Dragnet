@@ -14,12 +14,40 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { mkdirSync, existsSync } from "node:fs";
+import { writeFileSync, unlinkSync, mkdirSync, mkdtempSync, rmdirSync, chmodSync, existsSync } from "node:fs";
 import path from "node:path";
-import { buildSshEnv } from "./gitRemote";
+import os from "node:os";
 import type { RunResult } from "./containerOrchestratorTypes";
 import { ContainerOrchestrator } from "./containerOrchestrator";
 import { shellEscape } from "./shellEscape";
+
+export function buildSshEnv(
+  deployKey: string,
+  keyId: string,
+): { env: Record<string, string>; [Symbol.dispose](): void } {
+  const baseTmp = process.env.XDG_RUNTIME_DIR || os.tmpdir();
+  const keyDir = mkdtempSync(path.join(baseTmp, "dragnet-key-"));
+  try {
+    chmodSync(keyDir, 0o700);
+  } catch {
+    /* best-effort — mkdtempSync already creates with restrictive mode */
+  }
+  const keyFile = path.join(keyDir, "id_ed25519");
+  writeFileSync(keyFile, deployKey, { mode: 0o600 });
+  return {
+    env: {
+      GIT_SSH_COMMAND: `ssh -i ${keyFile} -o StrictHostKeyChecking=accept-new -o IdentitiesOnly=yes`,
+    },
+    [Symbol.dispose](): void {
+      try {
+        unlinkSync(keyFile);
+        rmdirSync(keyDir);
+      } catch {
+        /* best-effort */
+      }
+    },
+  };
+}
 
 export interface SyncOptions {
   repoId: string;
