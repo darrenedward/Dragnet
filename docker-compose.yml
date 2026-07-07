@@ -25,17 +25,13 @@ services:
       # Centralised scan state — checkpoints, reports, provider health,
       # review exports. Slice 2: replaces per-repo .dragnet/ artifacts.
       - dragnet-scan-state:/var/lib/dragnet/scans
-      # Centralised clones (legacy — newer per-repo named volumes created
-      # by ContainerOrchestrator are the future). Kept for back-compat
-      # while the remote-clone refactor lands.
-      - ./repos:/app/repos
-      # Read-only bind-mount of the host repo directory so the container
-      # can run `git diff` against repos registered with absolute host
-      # paths in the database. The container-side mount point is
-      # `/host-repos`; DB `path` values should be rewritten to use this
-      # prefix (e.g. `/host-repos/CredManagerPro` instead of
-      # `/home/curryman/Websites/CredManagerPro`).
-      - /home/curryman/Websites:/host-repos:ro
+      # Docker socket so the orchestrator can spawn alpine/git (clone
+      # step) and the runner image (npm install / test / lint / build).
+      # Mounted read-only so the Dragnet app can't reconfigure the host
+      # Docker daemon, just talk to it.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # Per-repo named volumes (dragnet-repo-<id>) are created on demand
+      # by ContainerOrchestrator when GitService.syncToCommit runs.
 
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:3300/"]
