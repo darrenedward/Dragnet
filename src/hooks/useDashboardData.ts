@@ -160,7 +160,6 @@ export function useDashboardData() {
   // ===== Add-repo modal form state =====
   const [showAddRepoModal, setShowAddRepoModal] = useState(false);
   const [newRepoName, setNewRepoName] = useState("");
-  const [newRepoPath, setNewRepoPath] = useState("");
   const [newRepoMode, setNewRepoMode] = useState<"ssh" | "pat">("ssh");
   const [newCloneUrl, setNewCloneUrl] = useState("");
   const [newCloneUrlHttps, setNewCloneUrlHttps] = useState("");
@@ -814,17 +813,15 @@ export function useDashboardData() {
     }
 
     // Determine mode based on which fields are populated
-    let mode: "local" | "ssh" | "pat" | "github";
-    if (newRepoPath.trim()) {
-      mode = "local";
-    } else if (newGithubRepoId) {
+    let mode: "ssh" | "pat" | "github";
+    if (newGithubRepoId) {
       mode = "github";
     } else {
       mode = newRepoMode;
     }
 
-    if (mode !== "local" && mode !== "github" && !newCloneUrl.trim()) {
-      setErrorFeedback("Either Directory Path, Clone URL, or GitHub repository selection is required.");
+    if (mode !== "github" && !newCloneUrl.trim()) {
+      setErrorFeedback("Clone URL is required.");
       return;
     }
 
@@ -835,7 +832,6 @@ export function useDashboardData() {
         body: JSON.stringify({
           mode,
           name: newRepoName.trim(),
-          path: newRepoPath.trim() || undefined,
           cloneUrl: newCloneUrl.trim() || undefined,
           cloneUrlHttps: newCloneUrlHttps.trim() || undefined,
           deployKey: newDeployKey || undefined,
@@ -862,17 +858,14 @@ export function useDashboardData() {
           setShowAddRepoModal(false);
         }
 
-        if (mode !== "local") {
-          setLastRegisteredRepo({ id: data.id, name: newRepoName.trim(), hasPat: !!newPat });
-          setNewRepoMode("ssh");
-          setNewCloneUrl("");
-          setNewCloneUrlHttps("");
-          setNewDeployKey("");
-          setNewPat("");
-          setNewGithubRepoId(null);
-        }
+        setLastRegisteredRepo({ id: data.id, name: newRepoName.trim(), hasPat: !!newPat });
+        setNewRepoMode("ssh");
+        setNewCloneUrl("");
+        setNewCloneUrlHttps("");
+        setNewDeployKey("");
+        setNewPat("");
+        setNewGithubRepoId(null);
         setNewRepoName("");
-        setNewRepoPath("");
       } else {
         setErrorFeedback(data.error || "Failed linking project.");
       }
@@ -1031,8 +1024,6 @@ export function useDashboardData() {
     setShowAddRepoModal,
     newRepoName,
     setNewRepoName,
-    newRepoPath,
-    setNewRepoPath,
     newRepoMode,
     setNewRepoMode,
     newCloneUrl,

@@ -321,8 +321,6 @@ export default function App() {
             createdApiKey={d.createdApiKey}
             newRepoName={d.newRepoName}
             setNewRepoName={d.setNewRepoName}
-            newRepoPath={d.newRepoPath}
-            setNewRepoPath={d.setNewRepoPath}
             newBaseBranch={d.newBaseBranch}
             setNewBaseBranch={d.setNewBaseBranch}
             newBranchPattern={d.newBranchPattern}
@@ -357,8 +355,6 @@ export default function App() {
             errorFeedback={ed.editErrorFeedback}
             newRepoMode={ed.editMode}
             setNewRepoMode={ed.setEditMode}
-            newRepoPath={ed.editPath}
-            setNewRepoPath={ed.setEditPath}
             newCloneUrl={ed.editCloneUrl}
             setNewCloneUrl={ed.setEditCloneUrl}
             newCloneUrlHttps={ed.editCloneUrlHttps}

@@ -145,7 +145,7 @@ function ProjectsPane({
           <button
             onClick={onAddProject}
             className="bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-400 text-xs font-mono px-2 py-1 rounded transition-colors flex items-center gap-1 border border-cyan-500/20"
-            title="Add local git directory"
+            title="Add repository"
           >
             <Plus size={11} />
             <span>Add</span>
