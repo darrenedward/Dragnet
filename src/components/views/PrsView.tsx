@@ -516,7 +516,7 @@ function ScanSettingsStrip({ settings }: { settings: ScanSettingsSummary | null 
       <span className="uppercase tracking-wider text-slate-600">Next scan</span>
       <ScanSettingPill label="Model" value={modelText} />
       <ScanSettingPill label="Iterations" value={String(settings.maxIterations)} />
-      <ScanSettingPill label="Lines/chunk" value={limits.chunkLineCap.toLocaleString()} />
+      <ScanSettingPill label="Lines/chunk" value={`${Math.max(limits.chunkLineCap, limits.normalMaxLines).toLocaleString()} (raw: ${limits.chunkLineCap.toLocaleString()})`} />
       <ScanSettingPill label="Normal" value={`${limits.normalMaxLines.toLocaleString()} lines / ${limits.normalMaxCodeFiles} files`} />
       <ScanSettingPill label="Oversized" value={`${limits.oversizedLines.toLocaleString()} lines / ${limits.oversizedCodeFiles} files`} />
       <ScanSettingPill label="File cap" value={limits.maxFilesPerReview > 0 ? String(limits.maxFilesPerReview) : "off"} />

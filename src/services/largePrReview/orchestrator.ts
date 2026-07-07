@@ -103,6 +103,13 @@ export async function runLargePrReview({
   const repoPath = repo?.path ?? "";
   const installationId = repo?.installationId;
   const limits = readLimits();
+  // Derive the effective chunk cap from the user's limits so a
+  // normal-tier PR (≤ normalMaxLines) fits in a single chunk. The
+  // raw chunkLineCap from the file is a floor — the engine never
+  // splits at a finer granularity than normalMaxLines, preventing
+  // the counter-intuitive outcome where a "normal" PR is already
+  // split across 2+ chunks.
+  const effectiveChunkLineCap = Math.max(limits.chunkLineCap, limits.normalMaxLines);
   let manifest = buildDiffManifest(files, undefined, {
     normalMaxLines: limits.normalMaxLines,
     normalMaxCodeFiles: limits.normalMaxCodeFiles,
@@ -127,7 +134,7 @@ export async function runLargePrReview({
   const plans = chunkDiff(
     manifest,
     repo?.securitySensitivePaths ?? [],
-    { chunkLineCap: limits.chunkLineCap, minUsefulChunkLines: limits.minUsefulChunkLines },
+    { chunkLineCap: effectiveChunkLineCap, minUsefulChunkLines: limits.minUsefulChunkLines },
   );
 
   await logRun(prId, reviewRunId, repoPath, `Large PR Mode activated: ${plans.length} chunk${plans.length === 1 ? "" : "s"} (${manifest.codeLines.toLocaleString()} code lines)`, "info");
