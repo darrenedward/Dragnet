@@ -59,7 +59,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ prIdOrNu
       }, { status: 404 });
     }
 
-    const freshness = assertIndexFresh(repo);
+    const freshness = await assertIndexFresh(repo);
     if (freshness.ok === false) {
       if (freshness.kind === "INDEX_REQUIRED") {
         return NextResponse.json({ status: "Error", message: freshness.message }, { status: 409 });

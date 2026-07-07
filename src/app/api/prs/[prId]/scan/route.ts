@@ -85,7 +85,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
     }
     console.log(`[scan] route: repo=${repo.name}, indexedAt=${repo.indexedAt}, path=${repo.path}`);
 
-    const freshness = assertIndexFresh(repo);
+    const freshness = await assertIndexFresh(repo);
     if (freshness.ok === false) {
       console.log(`[scan] route: freshness not ok kind=${freshness.kind} message=${freshness.message}`);
       if (freshness.kind === "INDEX_REQUIRED") {

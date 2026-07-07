@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { runGitInRepo, type RepoLike } from "./repoAccess";
 
 /**
  * Index freshness gate.
@@ -20,42 +20,43 @@ import { execFileSync } from "node:child_process";
  * Git failures (not a git repo, git binary missing, etc.) are swallowed
  * and treated as "can't verify, trust indexedAt" — never block scans on
  * git errors.
+ *
+ * Repo access: this module supports both legacy (local-path) and
+ * remote-volume modes via `runGitInRepo`. For remote-volume repos, the
+ * HEAD is read from the cloned volume; if the volume isn't yet cloned,
+ * we treat that as "can't verify" (return ok) so the scan can proceed
+ * — the fresh-clone + index on first scan handles staleness anyway.
  */
 
 export type Freshness =
   | { ok: true }
   | { ok: false; kind: "INDEX_REQUIRED" | "STALE_INDEX"; message: string };
 
-export interface RepoForFreshness {
-  id: string;
+export interface RepoForFreshness extends RepoLike {
   name: string;
   indexedAt?: string | null;
   lastCommitHash?: string;
-  path?: string | null;
 }
 
 /**
- * Returns the current HEAD commit hash of the repo at `repoPath`, or
- * null if the path isn't a git repo / git is unavailable.
+ * Returns the current HEAD commit hash of the repo, or null if the
+ * path isn't a git repo / git is unavailable.
  *
- * Uses execFileSync (no shell) so weird paths can't inject — args are
- * passed directly to the git binary.
+ * Uses `runGitInRepo` so it works for both local-path (legacy) and
+ * remote-volume (target) repos. For remote-volume mode, the caller is
+ * responsible for ensuring the volume is cloned — otherwise `runGitInRepo`
+ * returns a non-zero exit which we treat as "can't read, skip".
  */
-export function currentHeadCommit(repoPath: string): string | null {
-  try {
-    const out = execFileSync("git", ["-C", repoPath, "rev-parse", "HEAD"], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-      timeout: 5000,
-    });
-    const hash = out.trim();
-    return /^[0-9a-f]{7,40}$/i.test(hash) ? hash : null;
-  } catch {
-    return null;
-  }
+export async function currentHeadCommit(repo: RepoLike): Promise<string | null> {
+  const { stdout, exitCode } = await runGitInRepo(repo, ["rev-parse", "HEAD"], {
+    timeoutMs: 5000,
+  });
+  if (exitCode !== 0) return null;
+  const hash = stdout.trim();
+  return /^[0-9a-f]{7,40}$/i.test(hash) ? hash : null;
 }
 
-export function assertIndexFresh(repo: RepoForFreshness): Freshness {
+export async function assertIndexFresh(repo: RepoForFreshness): Promise<Freshness> {
   if (!repo.indexedAt) {
     return {
       ok: false as const,
@@ -64,11 +65,14 @@ export function assertIndexFresh(repo: RepoForFreshness): Freshness {
     };
   }
 
-  if (!repo.path || !repo.lastCommitHash) {
+  if (!repo.path && !repo.cloneUrl) {
+    return { ok: true as const };
+  }
+  if (!repo.lastCommitHash) {
     return { ok: true as const };
   }
 
-  const head = currentHeadCommit(repo.path);
+  const head = await currentHeadCommit(repo);
   if (!head) {
     return { ok: true as const };
   }

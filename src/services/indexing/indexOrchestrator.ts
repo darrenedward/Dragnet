@@ -123,7 +123,7 @@ export class IndexingService {
       diff.deletedFilePaths.length === 0 &&
       existingFiles.length > 0
     ) {
-      const headAtShortCircuit = currentHeadCommit(resolvedPath);
+      const headAtShortCircuit = await currentHeadCommit({ id: repoId, path: resolvedPath });
       await prisma.repository.updateMany({
         where: { id: repoId },
         data: {
@@ -231,7 +231,7 @@ export class IndexingService {
       this.startBackgroundEnrichment(repoId, resolvedPath);
     }
 
-    const headAtCompletion = currentHeadCommit(resolvedPath);
+    const headAtCompletion = await currentHeadCommit({ id: repoId, path: resolvedPath });
     await prisma.repository.updateMany({
       where: { id: repoId },
       data: {

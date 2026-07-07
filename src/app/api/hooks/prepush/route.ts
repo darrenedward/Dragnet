@@ -55,7 +55,7 @@ export async function POST(req: Request) {
       );
     }
 
-    const freshness = assertIndexFresh(repo);
+    const freshness = await assertIndexFresh(repo);
     if (freshness.ok === false) {
       if (freshness.kind === "INDEX_REQUIRED") {
         return NextResponse.json(

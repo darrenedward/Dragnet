@@ -173,7 +173,7 @@ vi.mock("../src/lib/apiAuth", () => ({
 }));
 
 vi.mock("../src/lib/indexFreshness", () => ({
-  assertIndexFresh: vi.fn().mockReturnValue({ ok: true }),
+  assertIndexFresh: vi.fn().mockResolvedValue({ ok: true }),
 }));
 
 vi.mock("../src/lib/getRealLocalPrs", () => ({

@@ -285,7 +285,7 @@ async function handlePrCheck(args: any, userId: string | null): Promise<string> 
     return `> ⚠ Repository for PR \`${pr.sourceBranch}\` could not be loaded.`;
   }
 
-  const freshness = assertIndexFresh(repo);
+  const freshness = await assertIndexFresh(repo);
   if (freshness.ok === false) {
     if (freshness.kind === "INDEX_REQUIRED") {
       return `> ⚠ **Index required.** ${freshness.message}`;
@@ -517,7 +517,7 @@ async function handleLegacyCommand(body: any, defRepo: string | null, userId: st
           message: `> Repository for PR \`${pr.sourceBranch}\` could not be loaded.`,
         });
       }
-      const freshness = assertIndexFresh(repo);
+const freshness = await assertIndexFresh(repo);
       if (freshness.ok === false) {
         if (freshness.kind === "INDEX_REQUIRED") {
           return NextResponse.json({
