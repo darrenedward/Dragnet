@@ -9,6 +9,12 @@ import os from "node:os";
 
 export const runtime = "nodejs";
 
+const GIT_IMAGE = process.env.DRAGNET_GIT_IMAGE ?? "alpine/git";
+
+function volumeName(repoId: string): string {
+  return `dragnet-repo-${repoId}`;
+}
+
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const auth = await authenticateSessionOrKey(req);
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: 401 });
@@ -38,17 +44,28 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     await prisma.repository.updateMany({ where: { id }, data: { status: "stabilizing" } });
 
     const indexFromPath = async () => {
-      const srcPath = repo.path || `/mnt/${repo.localPath?.replace("dragnet-repo-", "") || id}`;
       if (repo.path) {
-        return IndexingService.clearIndex(id).then(() => IndexingService.indexFolder(id, srcPath));
+        await IndexingService.clearIndex(id);
+        const result = await IndexingService.indexFolder(id, repo.path);
+        await prisma.repository.update({
+          where: { id },
+          data: { indexedAt: new Date(), status: "idle" },
+        });
+        return result;
       }
       const orchestrator = ContainerOrchestrator.getInstance();
-      const volName = repo.localPath!;
+      const isContainerMode = !repo.localPath || repo.localPath === "/workspace";
+      const volName = isContainerMode ? volumeName(id) : repo.localPath!;
       const tmpDir = mkdtempSync(path.join(os.tmpdir(), `dragnet-idx-${id}-`));
       try {
-        await orchestrator.copyVolumeToHost(volName, tmpDir, "alpine/git".replace("alpine/git", "node:20-alpine"));
+        await orchestrator.copyVolumeToHost(volName, tmpDir, GIT_IMAGE);
         await IndexingService.clearIndex(id);
-        return await IndexingService.indexFolder(id, tmpDir);
+        const result = await IndexingService.indexFolder(id, tmpDir);
+        await prisma.repository.update({
+          where: { id },
+          data: { indexedAt: new Date(), status: "idle" },
+        });
+        return result;
       } finally {
         rmSync(tmpDir, { recursive: true, force: true });
       }
@@ -66,7 +83,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       });
 
     return NextResponse.json(
-      { accepted: true, status: "stabilizing", message: "Reindex dispatched. Poll GET /api/repos/[id]/stats for completion." },
+      { accepted: true, status: "stabilizing", message: "Reindex dispatched. Poll GET /api/repos/[id] for completion." },
       { status: 202 },
     );
   } catch (err: any) {
