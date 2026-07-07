@@ -88,9 +88,9 @@ export async function POST(req: Request) {
     // review (the dev may have fixed the issue locally without re-scanning).
     const chatChain = getChatChain();
     let files: any[] = [];
-    if (repo.path && pr.sourceBranch) {
+    if ((repo.path || repo.cloneUrl) && pr.sourceBranch) {
       try {
-        files = await refreshPrFiles(repo.path, repo.baseBranch || "main", pr.sourceBranch, pr.id);
+        files = await refreshPrFiles(repo, pr.sourceBranch, pr.id);
       } catch (e) {
         console.warn("[prepush] refreshPrFiles failed, using cached PrFiles:", e);
       }
@@ -112,7 +112,7 @@ export async function POST(req: Request) {
     // Merged-branch short-circuit. Pre-push shouldn't fire for a merged
     // branch in normal flow (you don't push to a branch that's already
     // merged), but if it does, exit clean — no point gating an empty diff.
-    if (repo.path && pr.sourceBranch && files.length === 0 && await isBranchMerged(repo.path, baseBranch, pr.sourceBranch)) {
+    if ((repo.path || repo.cloneUrl) && pr.sourceBranch && files.length === 0 && await isBranchMerged(repo, baseBranch, pr.sourceBranch)) {
       return NextResponse.json({
         passed: true,
         merged: true,

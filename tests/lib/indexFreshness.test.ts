@@ -50,8 +50,9 @@ describe("assertIndexFresh", () => {
   it("returns INDEX_REQUIRED when indexedAt is null", async () => {
     const result = await assertIndexFresh({ ...baseRepo, indexedAt: null });
     expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.kind).toBe("INDEX_REQUIRED");
+    if (result.ok === false) {
+      expect(result.kind).toBe("INDEX_REQUIRED");
+    }
   });
 
   it("returns ok when lastCommitHash is empty (legacy row, skipped)", async () => {
@@ -70,11 +71,12 @@ describe("assertIndexFresh", () => {
     mocks.mockRunGitInRepo.mockResolvedValue({ stdout: "deadbeef1234567890ab\n", stderr: "", exitCode: 0 });
     const result = await assertIndexFresh({ ...baseRepo, path: "/x" });
     expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.kind).toBe("STALE_INDEX");
-    expect(result.message).toContain("stale");
-    expect(result.message).toContain("abc1234");
-    expect(result.message).toContain("deadbee");
+    if (result.ok === false) {
+      expect(result.kind).toBe("STALE_INDEX");
+      expect(result.message).toContain("stale");
+      expect(result.message).toContain("abc1234");
+      expect(result.message).toContain("deadbee");
+    }
   });
 
   it("returns ok when current HEAD matches lastCommitHash", async () => {

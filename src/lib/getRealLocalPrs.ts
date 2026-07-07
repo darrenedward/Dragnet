@@ -1,20 +1,8 @@
-import path from "path";
-import fs from "fs";
 import { randomUUID } from "node:crypto";
-import { execFile } from "child_process";
-import { promisify } from "util";
+import fs from "fs";
+import path from "path";
 import { prisma } from "@/src/lib/prisma";
-
-const execFileAsync = promisify(execFile);
-
-async function git(args: string[], cwd: string): Promise<Buffer> {
-  const { stdout } = await execFileAsync("git", args, {
-    cwd,
-    maxBuffer: 50 * 1024 * 1024,
-    windowsHide: true,
-  });
-  return Buffer.from(stdout);
-}
+import { runGitInRepo, type RepoLike } from "./repoAccess";
 
 /**
  * Postgres TEXT columns reject NUL bytes (0x00) — git can produce them
@@ -59,6 +47,39 @@ interface RepoFile {
   diff: string;
 }
 
+const FILE_DIFF_TIMEOUT_MS = 120_000;
+
+/**
+ * Run a read-only git command in either local-path or remote-volume
+ * mode. Throws on non-zero exit; callers that want fail-open semantics
+ * must catch.
+ */
+async function runGitOrThrow(repo: RepoLike, args: string[], timeoutMs?: number): Promise<string> {
+  const { stdout, stderr, exitCode } = await runGitInRepo(repo, args, { timeoutMs });
+  if (exitCode !== 0) {
+    throw new Error(`git ${args.join(" ")} exited ${exitCode}: ${stderr || stdout}`);
+  }
+  return stdout;
+}
+
+/**
+ * For local-path mode, verify the directory actually exists before we
+ * try to run any git commands. Remote-volume mode skips this check
+ * entirely — the clone either succeeded or it didn't, and that's
+ * surfaced by runGitInRepo failing.
+ */
+function localPathExists(repo: RepoLike): boolean {
+  if (!repo.path) return false;
+  const resolved = path.isAbsolute(repo.path)
+    ? repo.path
+    : path.resolve(process.cwd(), repo.path);
+  try {
+    return fs.statSync(resolved).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Deterministic local-branch → PR detection.
  *
@@ -77,36 +98,39 @@ interface RepoFile {
  *
  * Branches that produce zero file changes against base (already merged
  * or rebased) are skipped — they aren't real pending PRs.
+ *
+ * Supports both legacy (local-path) and remote-volume repos via
+ * `runGitInRepo`. For remote-volume, the repo is assumed to already be
+ * cloned — call `gitService.syncToCommit({ commitHash: "HEAD" })`
+ * before this if you need a guaranteed-fresh clone.
  */
-export async function getRealLocalPrs(repoPath: string, repoId: string) {
-  console.log(`[scan] getRealLocalPrs: scanning repoPath=${repoPath} repoId=${repoId}`);
+export async function getRealLocalPrs(repo: RepoLike) {
+  const repoId = repo.id;
+  console.log(`[scan] getRealLocalPrs: repoId=${repoId} mode=${repo.path ? "local-path" : "remote-volume"}`);
   try {
-    const resolvedPath = path.isAbsolute(repoPath) ? repoPath : path.resolve(/* turbopackIgnore: true */ process.cwd(), repoPath);
-    if (!fs.existsSync(resolvedPath) || !fs.statSync(resolvedPath).isDirectory()) {
-      console.log(`[scan] getRealLocalPrs: path not found or not a directory: ${resolvedPath}`);
+    if (repo.path && !localPathExists(repo)) {
+      console.log(`[scan] getRealLocalPrs: local path not found or not a directory: ${repo.path}`);
       return null;
     }
 
     try {
-      await git(["rev-parse", "--is-inside-work-tree"], resolvedPath);
+      await runGitOrThrow(repo, ["rev-parse", "--is-inside-work-tree"]);
     } catch {
       return null;
     }
 
-    const repo = await prisma.repository.findUnique({ where: { id: repoId } });
-    if (!repo) return null;
+    const repoRow = await prisma.repository.findUnique({ where: { id: repoId } });
+    if (!repoRow) return null;
 
-    const baseBranch = await detectBaseBranch(resolvedPath, repo.baseBranch);
-    const allBranches = await listBranches(resolvedPath);
+    const baseBranch = await detectBaseBranch(repo, repoRow.baseBranch);
+    const allBranches = await listBranches(repo);
 
-    // Filter to branches matching the pattern, excluding the base branch.
-    const pattern = repo.branchPattern || "*";
+    const pattern = repoRow.branchPattern || "*";
     const matchingBranches = allBranches.filter(
       (b) => b.name !== baseBranch && branchMatches(pattern, b.name),
     );
     const liveBranchNames = new Set(matchingBranches.map((b) => b.name));
 
-    // Stale cleanup: delete PRs whose sourceBranch is no longer live.
     const existingPrs = await prisma.pullRequest.findMany({
       where: { repoId },
       select: { id: true, sourceBranch: true },
@@ -121,18 +145,10 @@ export async function getRealLocalPrs(repoPath: string, repoId: string) {
     const prs: any[] = [];
 
     for (const branch of matchingBranches) {
-      // Wrap per-branch work in try/catch so a single failure (binary
-      // file, race with repo delete, transient pool timeout) doesn't
-      // abort the entire scan — other branches still get processed.
       try {
         const prId = `real-pr-${repoId}-${branch.name.replace(/\//g, "-")}`;
 
-        // Detect fully-merged branches before counting files. A merged
-        // branch produces zero diff against base — but the PR row may
-        // already exist from when the branch had pending changes. Mark
-        // it "Merged" so the list view can show it greyed-out instead
-        // of letting a later scan fail with "No modified files".
-        const merged = await isBranchMerged(resolvedPath, baseBranch, branch.name);
+        const merged = await isBranchMerged(repo, baseBranch, branch.name);
         if (merged) {
           const existing = await prisma.pullRequest.findUnique({
             where: { id: prId },
@@ -141,22 +157,16 @@ export async function getRealLocalPrs(repoPath: string, repoId: string) {
           if (existing && existing.status !== "Merged") {
             await prisma.pullRequest.update({
               where: { id: prId },
-              data: {
-                status: "Merged",
-                commitHash: branch.hash,
-              },
+              data: { status: "Merged", commitHash: branch.hash },
             });
-            console.log(`[scan] getRealLocalPrs: marked ${prId} as Merged (branch fully merged into ${baseBranch})`);
+            console.log(`[scan] getRealLocalPrs: marked ${prId} as Merged`);
           }
           continue;
         }
 
-        const filesList = await collectBranchFiles(resolvedPath, baseBranch, branch.name);
+        const filesList = await collectBranchFiles(repo, baseBranch, branch.name);
         if (filesList.length === 0) continue;
 
-        // Preserve existing status — the background poll must NOT reset a
-        // PR that is currently "In Progress" (scanning) or "Completed" back
-        // to "Pending". Only new PRs get "Pending".
         const existing = await prisma.pullRequest.findUnique({
           where: { id: prId },
           select: { status: true },
@@ -164,9 +174,6 @@ export async function getRealLocalPrs(repoPath: string, repoId: string) {
         const status = existing?.status === "In Progress" || existing?.status === "Completed"
           ? existing.status
           : "Pending";
-        if (existing && existing.status !== status) {
-          console.log(`[scan] getRealLocalPrs: preserving status="${existing.status}" for ${prId} (would have reset to "${status}")`);
-        }
 
         const prData = {
           repoId,
@@ -180,18 +187,12 @@ export async function getRealLocalPrs(repoPath: string, repoId: string) {
           description: branch.subject,
         };
 
-        // Upsert handles both create and update atomically.
         await prisma.pullRequest.upsert({
           where: { id: prId },
           create: { id: prId, ...prData },
           update: prData,
         });
 
-        // Replace file rows for this PR. We deliberately do NOT wrap in a
-        // transaction — the Supabase transaction pooler (PgBouncer) caps
-        // interactive transactions at 5s, and the diff fetches can exceed
-        // that. Sequential delete + batched createMany is good enough for
-        // a dev tool: the next poll cycle repairs any partial state.
         await prisma.prFile.deleteMany({ where: { prId } });
         await prisma.prFile.createMany({
           skipDuplicates: true,
@@ -221,59 +222,39 @@ export async function getRealLocalPrs(repoPath: string, repoId: string) {
   }
 }
 
-/**
- * Resolves the base branch deterministically. Order:
- *   1. repo.baseBranch (if it exists in the repo)
- *   2. main
- *   3. master
- *   4. currently-checked-out branch (HEAD)
- *   5. fallback to "main"
- */
-async function detectBaseBranch(repoPath: string, configuredBase: string): Promise<string> {
+async function detectBaseBranch(repo: RepoLike, configuredBase: string): Promise<string> {
   const candidates = [configuredBase, "main", "master"].filter(Boolean);
   for (const candidate of candidates) {
     try {
-      await git(["show-ref", "--verify", "--quiet", `refs/heads/${candidate}`], repoPath);
+      await runGitOrThrow(repo, ["show-ref", "--verify", "--quiet", `refs/heads/${candidate}`]);
       return candidate;
     } catch {}
   }
   try {
-    return (await git(["rev-parse", "--abbrev-ref", "HEAD"], repoPath)).toString().trim();
+    const out = await runGitOrThrow(repo, ["rev-parse", "--abbrev-ref", "HEAD"]);
+    return out.trim();
   } catch {
     return "main";
   }
 }
 
-/**
- * True if `branch` is reachable from `baseBranch` — i.e. fully merged.
- * Uses `git merge-base --is-ancestor` which exits 0 when the first arg
- * is an ancestor of the second. Any non-zero exit (not merged, bad ref,
- * missing repo) returns false.
- */
-export async function isBranchMerged(repoPath: string, baseBranch: string, branch: string): Promise<boolean> {
+export async function isBranchMerged(repo: RepoLike, baseBranch: string, branch: string): Promise<boolean> {
   try {
-    await git(["merge-base", "--is-ancestor", branch, baseBranch], repoPath);
+    await runGitOrThrow(repo, ["merge-base", "--is-ancestor", branch, baseBranch]);
     return true;
   } catch {
     return false;
   }
 }
 
-/**
- * Returns all local branches sorted alphabetically by name. The
- * `--sort=refname` flag guarantees stable ordering across runs.
- */
-async function listBranches(repoPath: string): Promise<BranchInfo[]> {
-  const buffer = await git(
-    [
-      "for-each-ref",
-      "refs/heads/",
-      "--format=%(refname:short)|%(objectname)|%(committerdate:iso-strict)|%(authorname)|%(subject)",
-      "--sort=refname",
-    ],
-    repoPath,
-  );
-  const lines = buffer.toString().trim().split("\n").filter(Boolean);
+async function listBranches(repo: RepoLike): Promise<BranchInfo[]> {
+  const stdout = await runGitOrThrow(repo, [
+    "for-each-ref",
+    "refs/heads/",
+    "--format=%(refname:short)|%(objectname)|%(committerdate:iso-strict)|%(authorname)|%(subject)",
+    "--sort=refname",
+  ]);
+  const lines = stdout.trim().split("\n").filter(Boolean);
   return lines.map((line) => {
     const parts = line.split("|");
     return {
@@ -281,22 +262,18 @@ async function listBranches(repoPath: string): Promise<BranchInfo[]> {
       hash: parts[1] || "HEAD",
       date: parts[2] || new Date().toISOString(),
       author: parts[3] || "Local Dev",
-      // Subject can contain pipes — rejoin the rest.
       subject: parts.slice(4).join("|") || "Auto-detected branch",
     };
   });
 }
 
-export async function refreshPrFiles(repoPath: string, baseBranch: string, branchName: string, prId: string) {
-  const files = await collectBranchFiles(repoPath, baseBranch, branchName);
-  // Deliberately NOT wrapped in $transaction. The Supabase transaction
-  // pooler (PgBouncer) caps interactive transactions at 5s; the createMany
-  // payload here carries full file contents + diffs and routinely exceeds
-  // that on real PRs (we saw 13s on a feature/bug-demo scan). A transaction
-  // wrapper turns a slow write into a hard error. Sequential delete +
-  // createMany is the same pattern used in getRealLocalPrs() above — see
-  // the comment there for the full rationale. The "partial state leaves
-  // zero files" risk is repaired by the next refresh cycle.
+export async function refreshPrFiles(repo: RepoLike, branchName: string, prId: string) {
+  const repoRow = await prisma.repository.findUnique({
+    where: { id: repo.id },
+    select: { baseBranch: true },
+  });
+  const baseBranch = repoRow?.baseBranch || "main";
+  const files = await collectBranchFiles(repo, baseBranch, branchName);
   await prisma.prFile.deleteMany({ where: { prId } });
   if (files.length > 0) {
     await prisma.prFile.createMany({
@@ -318,53 +295,55 @@ export async function refreshPrFiles(repoPath: string, baseBranch: string, branc
 }
 
 async function collectBranchFiles(
-  repoPath: string,
+  repo: RepoLike,
   baseBranch: string,
   branchName: string,
 ): Promise<RepoFile[]> {
   const files: RepoFile[] = [];
+  let changedFilesLines: string[] = [];
   try {
-    const changedFilesBuffer = await git(
-      ["diff", "--name-status", `${baseBranch}...${branchName}`],
-      repoPath,
-    );
-    const changedFilesLines = changedFilesBuffer.toString().trim().split("\n").filter(Boolean);
+    const stdout = await runGitOrThrow(repo, ["diff", "--name-status", `${baseBranch}...${branchName}`]);
+    changedFilesLines = stdout.trim().split("\n").filter(Boolean);
+  } catch {
+    return files;
+  }
 
-    for (const fLine of changedFilesLines) {
-      const parts = fLine.split(/\s+/);
-      const statusChar = parts[0];
-      const filename = parts[1];
-      if (!filename) continue;
+  for (const fLine of changedFilesLines) {
+    const parts = fLine.split(/\s+/);
+    const statusChar = parts[0];
+    const filename = parts[1];
+    if (!filename) continue;
 
-      let diffStr = "";
-      let originalContent = "";
-      let modifiedContent = "";
+    let diffStr = "";
+    let originalContent = "";
+    let modifiedContent = "";
 
-      try {
-        diffStr = (await git(["diff", `${baseBranch}...${branchName}`, "--", filename], repoPath)).toString();
-      } catch {}
-      try {
-        originalContent = (await git(["show", `${baseBranch}:${filename}`], repoPath)).toString();
-      } catch {}
-      try {
-        modifiedContent = (await git(["show", `${branchName}:${filename}`], repoPath)).toString();
-      } catch {}
+    try {
+      diffStr = await runGitOrThrow(
+        repo,
+        ["diff", `${baseBranch}...${branchName}`, "--", filename],
+        FILE_DIFF_TIMEOUT_MS,
+      );
+    } catch {}
+    try {
+      originalContent = await runGitOrThrow(repo, ["show", `${baseBranch}:${filename}`]);
+    } catch {}
+    try {
+      modifiedContent = await runGitOrThrow(repo, ["show", `${branchName}:${filename}`]);
+    } catch {}
 
-      const additions = diffStr.split("\n").filter((l) => l.startsWith("+") && !l.startsWith("+++")).length;
-      const deletions = diffStr.split("\n").filter((l) => l.startsWith("-") && !l.startsWith("---")).length;
+    const additions = diffStr.split("\n").filter((l) => l.startsWith("+") && !l.startsWith("+++")).length;
+    const deletions = diffStr.split("\n").filter((l) => l.startsWith("-") && !l.startsWith("---")).length;
 
-      files.push({
-        filename,
-        status: statusChar === "A" ? "added" : statusChar === "D" ? "deleted" : "modified",
-        additions,
-        deletions,
-        originalContent,
-        modifiedContent,
-        diff: diffStr,
-      });
-    }
-  } catch (err) {
-    console.error(`Git diff failed for branch ${branchName}`, err);
+    files.push({
+      filename,
+      status: statusChar === "A" ? "added" : statusChar === "D" ? "deleted" : "modified",
+      additions,
+      deletions,
+      originalContent,
+      modifiedContent,
+      diff: diffStr,
+    });
   }
   return files;
 }

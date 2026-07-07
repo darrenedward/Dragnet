@@ -77,7 +77,22 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
 
     const repo = await prisma.repository.findUnique({
       where: { id: pr.repoId },
-      select: { id: true, name: true, indexedAt: true, lastCommitHash: true, path: true, baseBranch: true },
+      select: {
+        id: true,
+        name: true,
+        indexedAt: true,
+        lastCommitHash: true,
+        path: true,
+        baseBranch: true,
+        cloneUrl: true,
+        cloneUrlHttps: true,
+        deployKeyCipher: true,
+        deployKeyIv: true,
+        deployKeyTag: true,
+        patCipher: true,
+        patIv: true,
+        patTag: true,
+      },
     });
     if (!repo) {
       console.log(`[scan] route: repo not found for repoId=${pr.repoId}`);
@@ -109,9 +124,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
     const repoPath = repo.path;
     const baseBranch = pr.targetBranch || repo.baseBranch || "main";
     let files: any[] = [];
-    if (repoPath && pr.sourceBranch) {
+    if ((repo.path || repo.cloneUrl) && pr.sourceBranch) {
       console.log(`[scan] route: refreshing PR files from git`);
-      files = await refreshPrFiles(repoPath, baseBranch, pr.sourceBranch, prId);
+      files = await refreshPrFiles(repo, pr.sourceBranch, prId);
       console.log(`[scan] route: got ${files.length} files`);
     } else {
       console.log(`[scan] route: no repoPath or sourceBranch - skipping file refresh`);
@@ -133,7 +148,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
     // there is nothing to review — returning a clean merged state instead
     // of letting runPrScan throw "No modified files". Also marks the PR
     // row so the list view can render it as Merged.
-    if (repoPath && pr.sourceBranch && files.length === 0 && await isBranchMerged(repoPath, baseBranch, pr.sourceBranch)) {
+    if ((repo.path || repo.cloneUrl) && pr.sourceBranch && files.length === 0 && await isBranchMerged(repo, baseBranch, pr.sourceBranch)) {
       console.log(`[scan] route: branch ${pr.sourceBranch} fully merged into ${baseBranch} — returning merged state`);
       await prisma.pullRequest.update({
         where: { id: prId },

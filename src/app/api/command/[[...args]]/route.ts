@@ -41,9 +41,9 @@ async function startTrackedReview(pr: any, repo: any, userId: string | null): Pr
 > {
   const chatChain = getChatChain();
   let files: any[] = [];
-  if (repo?.path && pr.sourceBranch) {
+  if ((repo?.path || repo?.cloneUrl) && pr.sourceBranch) {
     try {
-      files = await refreshPrFiles(repo.path, repo.baseBranch || "main", pr.sourceBranch, pr.id);
+      files = await refreshPrFiles(repo, pr.sourceBranch, pr.id);
     } catch (e) {
       console.warn("[api] prfile refresh failed, using cached:", e);
     }

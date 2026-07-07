@@ -27,7 +27,7 @@ console.log(`Refreshing ${repos.length} repos...\n`);
 for (const r of repos) {
   if (!r.path) { console.log(`  [skip] ${r.name}: no path`); continue; }
   try {
-    const prs = await getRealLocalPrs(r.path, r.id);
+    const prs = await getRealLocalPrs(r);
     const merged = prs?.filter(p => p.status === "Merged").length ?? 0;
     console.log(`  [ok] ${r.name}: ${prs?.length ?? 0} PRs (${merged} marked Merged)`);
   } catch (e: any) {

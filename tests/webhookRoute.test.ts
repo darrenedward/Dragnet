@@ -83,6 +83,7 @@ describe("webhooks/github/route POST", () => {
     mocks.mockFindRepo.mockResolvedValue({
       id: "repo-1",
       localPath: "/tmp/repo",
+      path: "/tmp/repo",
       webhookSecret: "test-secret",
       hostedMode: false,
     });
@@ -206,8 +207,8 @@ describe("webhooks/github/route POST", () => {
     });
     const res = await POST(req);
     expect(res.status).toBe(200);
-    expect(mocks.mockGitFetch).toHaveBeenCalledWith("/tmp/repo");
-    expect(mocks.mockScanRepoPrs).toHaveBeenCalledWith("repo-1", "/tmp/repo");
+    expect(mocks.mockGitFetch).toHaveBeenCalledWith(expect.objectContaining({ id: "repo-1", path: "/tmp/repo" }));
+    expect(mocks.mockScanRepoPrs).toHaveBeenCalledWith(expect.objectContaining({ id: "repo-1", path: "/tmp/repo" }));
     expect(mocks.mockRunPrScan).toHaveBeenCalledWith("pr-1");
     const body = await res.json();
     expect(body.pr).toBe(42);
@@ -264,8 +265,8 @@ describe("webhooks/github/route POST", () => {
     const res = await POST(req);
     expect(res.status).toBe(200);
     expect(mocks.mockEnqueue).toHaveBeenCalledWith("repo-1");
-    expect(mocks.mockGitFetch).toHaveBeenCalledWith("/tmp/remote-repo");
-    expect(mocks.mockScanRepoPrs).toHaveBeenCalledWith("repo-1", "/tmp/remote-repo");
+    expect(mocks.mockGitFetch).toHaveBeenCalledWith(expect.objectContaining({ id: "repo-1", path: "/tmp/remote-repo" }));
+    expect(mocks.mockScanRepoPrs).toHaveBeenCalledWith(expect.objectContaining({ id: "repo-1", path: "/tmp/remote-repo" }));
     expect(mocks.mockRunPrScan).toHaveBeenCalledWith("pr-1");
     const body = await res.json();
     expect(body.afkScans).toBe(1);
@@ -280,8 +281,8 @@ describe("webhooks/github/route POST", () => {
     });
     const res = await POST(req);
     expect(res.status).toBe(200);
-    expect(mocks.mockGitFetch).toHaveBeenCalledWith("/tmp/repo");
-    expect(mocks.mockScanRepoPrs).toHaveBeenCalledWith("repo-1", "/tmp/repo");
+    expect(mocks.mockGitFetch).toHaveBeenCalledWith(expect.objectContaining({ id: "repo-1", path: "/tmp/repo" }));
+    expect(mocks.mockScanRepoPrs).toHaveBeenCalledWith(expect.objectContaining({ id: "repo-1", path: "/tmp/repo" }));
     expect(mocks.mockRunPrScan).toHaveBeenCalledWith("pr-1");
   });
 
@@ -289,6 +290,7 @@ describe("webhooks/github/route POST", () => {
     mocks.mockFindRepo.mockResolvedValue({
       id: "repo-1",
       localPath: null,
+      path: null,
       webhookSecret: "test-secret",
       hostedMode: false,
     });
@@ -301,8 +303,8 @@ describe("webhooks/github/route POST", () => {
     const res = await POST(req);
     expect(res.status).toBe(200);
     expect(mocks.mockEnqueue).toHaveBeenCalledWith("repo-1");
-    expect(mocks.mockGitFetch).toHaveBeenCalledWith("/tmp/remote-repo");
-    expect(mocks.mockScanRepoPrs).toHaveBeenCalledWith("repo-1", "/tmp/remote-repo");
+    expect(mocks.mockGitFetch).toHaveBeenCalledWith(expect.objectContaining({ id: "repo-1", path: "/tmp/remote-repo" }));
+    expect(mocks.mockScanRepoPrs).toHaveBeenCalledWith(expect.objectContaining({ id: "repo-1", path: "/tmp/remote-repo" }));
     expect(mocks.mockRunPrScan).toHaveBeenCalledWith("pr-1");
     const body = await res.json();
     expect(body.afkScans).toBe(1);
@@ -312,6 +314,7 @@ describe("webhooks/github/route POST", () => {
     mocks.mockFindRepo.mockResolvedValue({
       id: "repo-1",
       localPath: null,
+      path: null,
       webhookSecret: "test-secret",
       hostedMode: false,
     });
@@ -382,6 +385,7 @@ describe("webhooks/github/route POST", () => {
       mocks.mockFindRepo.mockResolvedValue({
         id: "repo-1",
         localPath: null,
+        path: null,
         webhookSecret: "test-secret",
         hostedMode: true,
       });

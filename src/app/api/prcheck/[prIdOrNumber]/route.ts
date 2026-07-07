@@ -50,7 +50,22 @@ export async function GET(req: Request, { params }: { params: Promise<{ prIdOrNu
 
     const repo = await prisma.repository.findUnique({
       where: { id: pr.repoId },
-      select: { id: true, name: true, indexedAt: true, lastCommitHash: true, path: true, baseBranch: true },
+      select: {
+        id: true,
+        name: true,
+        indexedAt: true,
+        lastCommitHash: true,
+        path: true,
+        baseBranch: true,
+        cloneUrl: true,
+        cloneUrlHttps: true,
+        deployKeyCipher: true,
+        deployKeyIv: true,
+        deployKeyTag: true,
+        patCipher: true,
+        patIv: true,
+        patTag: true,
+      },
     });
     if (!repo) {
       return NextResponse.json({
@@ -75,9 +90,9 @@ export async function GET(req: Request, { params }: { params: Promise<{ prIdOrNu
     // short-circuit), unlike the dashboard route.
     const chatChain = getChatChain();
     let files: any[] = [];
-    if (repo.path && pr.sourceBranch) {
+    if ((repo.path || repo.cloneUrl) && pr.sourceBranch) {
       try {
-        files = await refreshPrFiles(repo.path, repo.baseBranch || "main", pr.sourceBranch, pr.id);
+        files = await refreshPrFiles(repo, pr.sourceBranch, pr.id);
       } catch (e) {
         console.warn("[prcheck] refreshPrFiles failed, using cached:", e);
       }
@@ -97,7 +112,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ prIdOrNu
     const tier = assertTier(manifest);
 
     // Merged-branch short-circuit — same rationale as scan/route.ts.
-    if (repo.path && pr.sourceBranch && files.length === 0 && await isBranchMerged(repo.path, baseBranch, pr.sourceBranch)) {
+    if ((repo.path || repo.cloneUrl) && pr.sourceBranch && files.length === 0 && await isBranchMerged(repo, baseBranch, pr.sourceBranch)) {
       await prisma.pullRequest.update({
         where: { id: pr.id },
         data: { status: "Merged" },

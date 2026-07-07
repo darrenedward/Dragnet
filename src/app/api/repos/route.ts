@@ -132,7 +132,7 @@ export async function POST(req: Request) {
         throw createErr;
       }
 
-      await getRealLocalPrs(repoPath, cleanId);
+      await getRealLocalPrs(await prisma.repository.findUniqueOrThrow({ where: { id: cleanId } }));
 
       const localKey = generateApiKey();
       await prisma.apiKey.create({

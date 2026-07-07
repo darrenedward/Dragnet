@@ -99,9 +99,9 @@ export async function POST(request: Request) {
     }
 
     const prIds: string[] = [];
-    if (matched.localPath) {
-      gitFetch(matched.localPath);
-      const ids = await scanRepoPrs(matched.id, matched.localPath);
+    if (matched.path || matched.cloneUrl) {
+      await gitFetch(matched);
+      const ids = await scanRepoPrs(matched);
       prIds.push(...ids);
     } else {
       const localPath = await enqueue(matched.id).catch((err) => {
@@ -109,8 +109,8 @@ export async function POST(request: Request) {
         return null;
       });
       if (localPath) {
-        gitFetch(localPath);
-        const ids = await scanRepoPrs(matched.id, localPath);
+        await gitFetch({ ...matched, path: localPath });
+        const ids = await scanRepoPrs({ ...matched, path: localPath });
         prIds.push(...ids);
       }
     }
@@ -132,9 +132,9 @@ export async function POST(request: Request) {
     }
 
     const prIds: string[] = [];
-    if (matched.localPath) {
-      gitFetch(matched.localPath);
-      const ids = await scanRepoPrs(matched.id, matched.localPath);
+    if (matched.path || matched.cloneUrl) {
+      await gitFetch(matched);
+      const ids = await scanRepoPrs(matched);
       prIds.push(...ids);
     } else {
       const localPath = await enqueue(matched.id).catch((err) => {
@@ -142,8 +142,8 @@ export async function POST(request: Request) {
         return null;
       });
       if (localPath) {
-        gitFetch(localPath);
-        const ids = await scanRepoPrs(matched.id, localPath);
+        await gitFetch({ ...matched, path: localPath });
+        const ids = await scanRepoPrs({ ...matched, path: localPath });
         prIds.push(...ids);
       }
     }

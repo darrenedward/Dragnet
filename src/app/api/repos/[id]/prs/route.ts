@@ -63,9 +63,9 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     }
 
     // Fire-and-forget: return current DB state immediately, refresh in background.
-    if (repo.path && !refreshPromises.has(id)) {
+    if ((repo.path || repo.cloneUrl) && !refreshPromises.has(id)) {
       refreshPromises.set(id,
-        getRealLocalPrs(repo.path, id)
+        getRealLocalPrs(repo)
           .catch((err) => console.warn(`Background PR refresh failed for ${id}:`, err))
           .finally(() => refreshPromises.delete(id))
       );
@@ -103,7 +103,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       return NextResponse.json({ error: "Repository not found" }, { status: 404 });
     }
 
-    if (repo.path) await getRealLocalPrs(repo.path, id);
+    if (repo.path || repo.cloneUrl) await getRealLocalPrs(repo);
 
     const includeMerged = new URL(req.url).searchParams.get("include_merged") === "true";
     const prs = await prisma.pullRequest.findMany({
