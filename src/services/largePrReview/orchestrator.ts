@@ -9,6 +9,7 @@ import { assertTier, buildDiffManifest } from "./manifest";
 import { runGlobalDeterministicChecks } from "./globalDeterministicChecks";
 import { appendReport, formatReportLine } from "./reportLogger";
 import { getInstallationToken } from "@/src/lib/githubApp";
+import { resolveSymbolsBatch, buildFindingFingerprint } from "./fingerprint";
 import type {
   ChunkPlan,
   DiffManifest,
@@ -16,6 +17,78 @@ import type {
   LargePrTier,
   ReviewFileInput,
 } from "./types";
+
+/**
+ * Persist global deterministic findings (Tier 1+2) exactly once per scan
+ * with reviewChunkId: null. This avoids N redundant DB writes when the
+ * same findings are appended to each chunk's output in large-PR mode.
+ */
+async function persistGlobalDeterministicFindings(
+  reviewRunId: string,
+  prId: string,
+  repoId: string,
+  findings: DeterministicFinding[],
+): Promise<void> {
+  if (findings.length === 0) return;
+
+  const repoPath = (await prisma.repository.findUnique({
+    where: { id: repoId },
+    select: { path: true },
+  }))?.path ?? "";
+
+  const symbolMap = await resolveSymbolsBatch(
+    repoId,
+    findings.map((f) => ({ filePath: f.filename, line: f.line })),
+  );
+
+  const findingsData = findings.map((finding) => {
+    const resolution = symbolMap.get(`${finding.filename}:${finding.line ?? "?"}`);
+    const symbolId = resolution?.symbolId ?? null;
+    const sourceHashAtInsert = resolution?.sourceHash ?? null;
+    const fingerprint = buildFindingFingerprint({
+      symbolId,
+      filePath: finding.filename,
+      category: finding.category,
+    });
+
+    return {
+      id: randomUUID(),
+      prId,
+      reviewRunId,
+      reviewChunkId: null, // Global findings are not tied to a specific chunk
+      repoId,
+      category: finding.category || "Style",
+      severity: finding.severity === "error" ? "blocker" : finding.severity === "warning" ? "warning" : "suggestion",
+      exploitability: "moderate",
+      impact: "medium",
+      filename: finding.filename || "<unattributed>",
+      line: finding.line || null,
+      explanation: finding.explanation || "No explanation provided.",
+      diffSuggestion: finding.diffSuggestion || null,
+      evidenceChain: null,
+      confidence: null,
+      confidenceReason: null,
+      verificationStatus: null,
+      verificationNote: null,
+      source: finding.source ?? "deterministic",
+      timestamp: new Date().toISOString(),
+      fingerprint,
+      firstSeenRunId: reviewRunId,
+      lastSeenRunId: reviewRunId,
+      status: "open",
+      sourceHashAtInsert,
+    };
+  });
+
+  await prisma.reviewFinding.createMany({ data: findingsData });
+  await logRun(
+    prId,
+    reviewRunId,
+    repoPath,
+    `Persisted ${findingsData.length} global deterministic findings (reviewChunkId: null)`,
+    "info",
+  );
+}
 
 type ChunkRunner = (
   prId: string,
@@ -232,6 +305,16 @@ export async function runLargePrReview({
     repoPath,
     `Global deterministic checks: ${globalChecks.findings.length} finding(s) — results shared across ${plans.length} chunk(s)`,
     "info",
+  );
+
+  // Persist global deterministic findings ONCE with reviewChunkId: null.
+  // Each chunk will receive these via precomputedFindings but they will NOT
+  // be re-persisted per-chunk — avoiding N redundant DB writes.
+  await persistGlobalDeterministicFindings(
+    reviewRunId,
+    prId,
+    run.repoId,
+    globalChecks.findings,
   );
 
   let consecutiveErrorKey: string | null = null;

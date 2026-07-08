@@ -2031,13 +2031,22 @@ ${diffPayload}${deterministicPayload}`;
   await assertReviewRunStillActive(reviewRunId);
 
   // Merge deterministic findings (tsc/eslint) with the LLM findings so
-  // they're persisted together and visible in one list. Deterministic
-  // findings are NOT factored into the LLM's rating — they're additive.
+  // they're visible in the final output and run through the verifier.
+  // Deterministic findings are NOT factored into the LLM's rating — they're additive.
   findings = [...findings, ...deterministicFindings];
 
   // 6. Persist findings
+  // 
+  // Large-PR mode: when precomputedFindings are provided, the deterministic
+  // findings have already been persisted globally (reviewChunkId: null) by the
+  // orchestrator. Filter them out of the persistence batch to avoid N redundant
+  // writes (one per chunk).
+  const findingsToPersist = options?.precomputedFindings
+    ? findings.filter(f => f.source !== "tsc" && f.source !== "eslint" && f.source !== "runner")
+    : findings;
+
   void logReview(prId, `Verifying ${findings.length} finding(s)...`, "info", reviewRunId, reviewChunkId);
-  console.log(`[scan] runPrScan: persisting ${findings.length} findings`);
+  console.log(`[scan] runPrScan: persisting ${findingsToPersist.length} findings (filtered from ${findings.length})`);
   await prisma.reviewFinding.deleteMany({
     where: reviewChunkId
       ? { reviewChunkId }
@@ -2049,6 +2058,9 @@ ${diffPayload}${deterministicPayload}`;
   // 6a. Run the verifier BEFORE persistence so verification status is
   // stored on each row. Assign candidate IDs up front so the verifier
   // result map can be keyed by ID and looked up during the row build.
+  // 
+  // Note: verifier runs on ALL findings (including deterministic) for
+  // consistency. The filter for persistence happens later.
   const withIds = findings.map(finding => ({ finding, id: randomUUID() }));
   const candidates: CandidateFinding[] = withIds.map(({ finding, id }) => ({
     id,
@@ -2088,7 +2100,15 @@ ${diffPayload}${deterministicPayload}`;
     })),
   );
 
-  const findingsData = withIds.map(({ finding, id }) => {
+  // Large-PR mode: filter out precomputed deterministic findings from
+  // persistence (they're already in DB with reviewChunkId: null).
+  const withIdsForPersistence = options?.precomputedFindings
+    ? withIds.filter(({ finding }) =>
+        finding.source !== "tsc" && finding.source !== "eslint" && finding.source !== "runner"
+      )
+    : withIds;
+
+  const findingsData = withIdsForPersistence.map(({ finding, id }) => {
     const v = verification.get(id);
     const filename = finding.filename || "<unattributed>";
     const line = finding.line || null;
