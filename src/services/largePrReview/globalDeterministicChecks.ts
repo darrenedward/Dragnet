@@ -1,5 +1,6 @@
-import { runDeterministicChecks, runContainerizedChecks, type DeterministicFinding } from "@/src/services/deterministicChecks";
+import { runDeterministicChecks, runContainerizedChecks, logReview, type DeterministicFinding } from "@/src/services/deterministicChecks";
 import { detectBuildSystem } from "@/src/lib/buildsystemDetect";
+import { withRetry, isStepFailure } from "@/src/services/stepPipeline";
 import { prisma } from "@/src/lib/prisma";
 
 export interface GlobalChecksResult {
@@ -36,7 +37,6 @@ export async function runGlobalDeterministicChecks(
         patCipher: true,
         patIv: true,
         patTag: true,
-        localPath: true,
       },
     }),
     prisma.pullRequest.findUnique({
@@ -56,7 +56,15 @@ export async function runGlobalDeterministicChecks(
       const tier1 = await runDeterministicChecks(repo.path);
       findings.push(...tier1);
       tier1HadErrors = tier1.some((f) => f.severity === "error");
+      const counts = tier1.reduce((acc, f) => {
+        acc[f.source] = (acc[f.source] ?? 0) + 1; return acc;
+      }, {} as Record<string, number>);
+      const summary = Object.keys(counts).length === 0
+        ? "clean (no tsc/eslint findings)"
+        : Object.entries(counts).map(([k, v]) => `${v} ${k}`).join(", ");
+      void logReview(prId, `[global] Tier 1 deterministic checks: ${summary}`, "info", reviewRunId);
     } catch (err: any) {
+      void logReview(prId, `[global] Tier 1 deterministic checks crashed: ${err?.message ?? String(err)}`, "warn", reviewRunId);
       findings.push({
         filename: "",
         line: null,
@@ -85,7 +93,16 @@ export async function runGlobalDeterministicChecks(
     (Boolean(repo.path) || Boolean(repo.cloneUrl)) &&
     !skipTier2 && !tier1HadErrors && tier2Supported;
 
-  if (tier2ShouldRun) {
+  if (!tier2ShouldRun) {
+    const reason = skipTier2
+      ? "per-repo toggle"
+      : tier1HadErrors
+        ? "Tier 1 found errors"
+        : !tier2Supported
+          ? "unsupported build system (non-Node.js)"
+          : "no repo path or clone URL";
+    void logReview(prId, `[global] Tier 2 skipped: ${reason}`, "info", reviewRunId);
+  } else {
     try {
       const { decryptSecret, hasMasterKey } = await import("@/src/lib/crypto");
       let deployKey: string | undefined;
@@ -96,23 +113,37 @@ export async function runGlobalDeterministicChecks(
       if (repo.patCipher && repo.patIv && repo.patTag && hasMasterKey()) {
         pat = decryptSecret(repo.patCipher, repo.patIv, repo.patTag);
       }
-      const tier2Image = repo.path
-        ? (repo.runnerImage ?? "node:20-alpine")
-        : (repo.runnerImage ?? "node:20-alpine");
+      const tier2Image = repo.runnerImage ?? "node:20-alpine";
 
-      const tier2 = await runContainerizedChecks({
-        repoId: repo.id,
-        cloneUrl: repo.cloneUrl ?? "",
-        commitHash: pr.commitHash,
-        deployKey,
-        pat,
-        runnerImage: tier2Image,
-        installCommand: repo.installCommand ?? "npm install",
-        testCommand: repo.testCommand ?? "npm test && npm run lint",
-        prId,
-        reviewRunId,
-      });
-      findings.push(...tier2);
+      const tier2Result = await withRetry<DeterministicFinding[]>(
+        async () => {
+          const tier2 = await runContainerizedChecks({
+            repoId: repo.id,
+            cloneUrl: repo.cloneUrl ?? "",
+            commitHash: pr.commitHash,
+            deployKey,
+            pat,
+            runnerImage: tier2Image,
+            installCommand: repo.installCommand ?? "npm install",
+            testCommand: repo.testCommand ?? "npm test && npm run lint",
+            prId,
+            reviewRunId,
+          });
+          return { ok: true, data: tier2 };
+        },
+        { stepName: "Tier2: container checks", maxRetries: 1 },
+      );
+
+      if (isStepFailure(tier2Result)) {
+        return {
+          abort: true,
+          infrastructureFailure: true,
+          findings,
+          errorMessage: `Tier 2 (containerized checks) infrastructure failure: ${tier2Result.error.message}`,
+        };
+      }
+      void logReview(prId, `[global] Tier 2 containerized checks → ${tier2Result.data.length} finding(s)`, "info", reviewRunId);
+      findings.push(...tier2Result.data);
     } catch (err: any) {
       return {
         abort: true,
