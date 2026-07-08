@@ -164,7 +164,7 @@ export async function runLargePrReview({
       data: {
         status: "completed",
         completedAt: new Date(),
-        rating: 10,
+        rating: null,
         reliability: "complete",
         chunksTotal: 0,
         chunksCompleted: 0,
@@ -172,12 +172,13 @@ export async function runLargePrReview({
         chunksSkipped: 0,
       },
     });
-    await prisma.pullRequest.updateMany({ where: { id: prId }, data: { status: "Completed", rating: 10 } });
+    await prisma.pullRequest.updateMany({ where: { id: prId }, data: { status: "Completed", rating: null } });
     return {
       success: true,
-      rating: 10,
+      rating: null,
       findings: [],
       usedModel: "large-pr-mode",
+      systemWarn: "No code files to review — all changes are documentation, generated, or lockfile changes",
       largePrMode: true,
       tier: effectiveTier,
       reliability: "complete",
