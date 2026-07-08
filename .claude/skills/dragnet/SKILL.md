@@ -21,12 +21,12 @@ You drive it through the Dragnet HTTP API at `http://localhost:3300` (override v
 
 ```bash
 REPO_ID="${DRAGNET_REPO_ID:-}"
-KEY="${DRAGNET_API_KEY:-}"
+KEY="${DRAGNET_REPO_KEY:-${DRAGNET_API_KEY:-}}"
 URL="${DRAGNET_URL:-http://localhost:3300}"
 echo "repoId=$REPO_ID key=${KEY:0:10}... url=$URL"
 ```
 
-If `REPO_ID` or `KEY` is empty: **stop and tell the user** which is missing and how to fix (set `DRAGNET_REPO_ID` from the Dragnet UI project settings; or generate an API key from Settings → API Keys). Do not continue to step 2.
+If `REPO_ID` or `KEY` is empty: **stop and tell the user** which is missing and how to fix (set `DRAGNET_REPO_ID` from the Dragnet UI project settings; or generate an API key from Settings → API Keys and set `DRAGNET_REPO_KEY` in your `.env` file). Do not continue to step 2.
 
 ### Step 2 — POST to `/api/command`
 
@@ -57,7 +57,7 @@ If `prlist` returns 401 with `{"jsonrpc":"2.0","error":{"code":-32001,"message":
 1. **Don't transcribe the key value by hand.** Re-run Step 1 + Step 2 using `$KEY` from the shell variable.
 2. Confirm by running this exact line (no transcription):
    ```bash
-   KEY="${DRAGNET_API_KEY:-}"
+   KEY="${DRAGNET_REPO_KEY:-${DRAGNET_API_KEY:-}}"
    REPO_ID="${DRAGNET_REPO_ID:-}"
    curl -s -X POST "${DRAGNET_URL:-http://localhost:3300}/api/command" \
      -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
@@ -147,11 +147,21 @@ Read it from the `DRAGNET_REPO_ID` env var. If it's not set, **stop and tell the
 
 ## Auth
 
-Every call needs `Authorization: Bearer dr_<key>`. Resolve the key from the `DRAGNET_API_KEY` env var.
+Every call needs `Authorization: Bearer dr_<key>`. Resolve the key in this order:
 
-If not set, **stop and tell the user**: "No API key in `$DRAGNET_API_KEY`. Generate one from the Dragnet UI → Settings → API Keys or from the project settings → API Key section."
+1. `$DRAGNET_REPO_KEY` env var (set in `.env` or shell profile). **Primary method.**
+2. `$DRAGNET_API_KEY` env var as a fallback (legacy name, still supported).
 
-**Note for agents:** Claude Code's Bash tool runs commands in a non-interactive shell that does not source `~/.zshrc`, so `$DRAGNET_API_KEY` will typically be empty even if the user has exported it in their terminal. The user must set `DRAGNET_API_KEY` in their Claude Code project config or pass it explicitly.
+If neither yields a key, **stop and tell the user**: "No API key found. Set `DRAGNET_REPO_KEY` in your `.env` file (or `.env.local`), or generate a key from the Dragnet UI → Settings → API Keys."
+
+**Setting up `.env`:**
+```bash
+# In your repo root (or add to ~/.zshrc)
+echo "DRAGNET_URL=http://localhost:3300" >> .env
+echo "DRAGNET_REPO_KEY=dr_your_key_here" >> .env
+```
+
+**Note for agents:** Claude Code's Bash tool runs commands in a non-interactive shell that does not source `~/.zshrc`, so `$DRAGNET_REPO_KEY` must be set in the repo's `.env` file or the command's environment.
 
 ## API shape (legacy command endpoint)
 
@@ -413,5 +423,6 @@ Don't poll faster than the table — it spams the DB and doesn't speed anything 
 
 - Dragnet dev server running on port 3300 (`npm run dev` in the Dragnet repo).
 - Current repo registered and indexed in Dragnet.
-- `DRAGNET_API_KEY` and `DRAGNET_REPO_ID` env vars set (from Dragnet UI → project settings → API Key section).
+- `DRAGNET_REPO_KEY` env var set (in `.env` file or shell profile). Falls back to `DRAGNET_API_KEY` for backward compatibility.
+- `DRAGNET_REPO_ID` env var set (from Dragnet UI → project settings → API Key section).
 - A PR exists for the current branch (or pass `<n>` explicitly to pick from the list).
