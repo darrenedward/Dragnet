@@ -1,7 +1,6 @@
 import { withRetry } from "./retry";
 import {
-  isStepSuccess,
-  isStepFailure,
+  match,
   type StepDefinition,
   type PipelineStepResult,
   type PipelineResult,
@@ -26,36 +25,32 @@ export class StepPipeline {
 
       stepResults.push({ stepName: step.name, result: stepResult });
 
-      if (isStepSuccess(stepResult)) {
-        if (Array.isArray(stepResult.data)) {
-          findings.push(...stepResult.data);
-        }
-      }
+      match(stepResult, {
+        ok: (data) => {
+          if (Array.isArray(data)) findings.push(...data);
+        },
+        err: (error, errFindings) => {
+          if (errFindings) findings.push(...errFindings);
+        },
+      });
 
-      if (isStepFailure(stepResult)) {
-        if (stepResult.findings) {
-          findings.push(...stepResult.findings);
-        }
+      const shouldAbort = match(stepResult, {
+        ok: () => false as const,
+        err: (error) => error.isInfrastructure || step.critical,
+      });
 
-        if (stepResult.error.isInfrastructure) {
-          return {
-            aborted: true,
-            infrastructureFailure: true,
-            stepResults,
-            findings,
-            lastStepName: step.name,
-          };
-        }
-
-        if (step.critical) {
-          return {
-            aborted: true,
-            infrastructureFailure: false,
-            stepResults,
-            findings,
-            lastStepName: step.name,
-          };
-        }
+      if (shouldAbort) {
+        const infrastructureFailure = match(stepResult, {
+          ok: () => false,
+          err: (error) => error.isInfrastructure,
+        });
+        return {
+          aborted: true,
+          infrastructureFailure,
+          stepResults,
+          findings,
+          lastStepName: step.name,
+        };
       }
     }
 

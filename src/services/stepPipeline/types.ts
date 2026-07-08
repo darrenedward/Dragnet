@@ -22,6 +22,19 @@ export function isStepFailure<T>(r: StepResult<T>): r is { ok: false; error: Ste
   return !r.ok;
 }
 
+export function match<T, R>(
+  result: StepResult<T>,
+  handlers: {
+    ok: (data: T) => R;
+    err: (error: StepError, findings?: DeterministicFinding[]) => R;
+  },
+): R {
+  if (isStepSuccess(result)) {
+    return handlers.ok(result.data);
+  }
+  return handlers.err(result.error, result.findings);
+}
+
 export interface StepDefinition<T = any> {
   name: string;
   critical: boolean;

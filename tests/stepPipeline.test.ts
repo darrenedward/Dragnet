@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { StepError, isStepSuccess, isStepFailure } from "../src/services/stepPipeline/types";
+import type { DeterministicFinding } from "../src/services/deterministicChecks";
+import { StepError, match, isStepSuccess, isStepFailure, type StepResult } from "../src/services/stepPipeline/types";
 import { withRetry } from "../src/services/stepPipeline/retry";
 import { StepPipeline } from "../src/services/stepPipeline/stepPipeline";
-import type { DeterministicFinding } from "../src/services/deterministicChecks";
 
 describe("StepError", () => {
   it("sets name and isInfrastructure flag", () => {
@@ -15,6 +15,78 @@ describe("StepError", () => {
   it("sets isInfrastructure to false for code errors", () => {
     const err = new StepError("tsc exited with code 2", false);
     expect(err.isInfrastructure).toBe(false);
+  });
+});
+
+describe("match", () => {
+  it("calls ok handler with data on success", () => {
+    const result: StepResult<number> = { ok: true, data: 42 };
+    const handler = vi.fn();
+    const errHandler = vi.fn();
+
+    match(result, { ok: handler, err: errHandler });
+
+    expect(handler).toHaveBeenCalledWith(42);
+    expect(errHandler).not.toHaveBeenCalled();
+  });
+
+  it("calls err handler with error on failure", () => {
+    const error = new StepError("disk full", true);
+    const result: StepResult<string> = { ok: false, error };
+    const okHandler = vi.fn();
+    const errHandler = vi.fn();
+
+    match(result, { ok: okHandler, err: errHandler });
+
+    expect(errHandler).toHaveBeenCalledWith(error, undefined);
+    expect(okHandler).not.toHaveBeenCalled();
+  });
+
+  it("calls err handler with findings when present", () => {
+    const error = new StepError("lint error", false);
+    const findings: DeterministicFinding[] = [{ filename: "a.ts", line: 1, severity: "error", category: "style", explanation: "bad", source: "eslint" }];
+    const result: StepResult<string> = { ok: false, error, findings };
+    const errHandler = vi.fn();
+
+    match(result, { ok: () => {}, err: errHandler });
+
+    expect(errHandler).toHaveBeenCalledWith(error, findings);
+  });
+
+  it("returns the value from the ok handler", () => {
+    const result: StepResult<number> = { ok: true, data: 42 };
+
+    const output = match(result, {
+      ok: (data) => `got ${data}`,
+      err: () => "error",
+    });
+
+    expect(output).toBe("got 42");
+  });
+
+  it("returns the value from the err handler", () => {
+    const result: StepResult<number> = { ok: false, error: new StepError("fail", false) };
+
+    const output = match(result, {
+      ok: () => "success",
+      err: (error) => `error: ${error.message}`,
+    });
+
+    expect(output).toBe("error: fail");
+  });
+
+  it("works with isStepSuccess type guard after match (predicates still public)", () => {
+    const result: StepResult<string> = { ok: true, data: "hello" };
+
+    let called = false;
+    match(result, {
+      ok: (data) => { called = true; expect(data).toBe("hello"); },
+      err: () => { called = true; },
+    });
+    expect(called).toBe(true);
+
+    expect(isStepSuccess(result)).toBe(true);
+    expect(isStepFailure(result)).toBe(false);
   });
 });
 
