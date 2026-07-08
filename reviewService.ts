@@ -45,6 +45,7 @@ export interface ScanResult {
   interrupted?: boolean;
   rating: number | null;
   findings: any[];
+  summary?: string;
   usedModel: string;
   systemWarn?: string | null;
   /**
@@ -1391,6 +1392,7 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
     systemWarn?: string | null;
     rating: number | null;
     findings: any[];
+    summary: string;
     usedModel: string;
     providerAttempts: ProviderAttempt[];
     refused: boolean;
@@ -1416,7 +1418,7 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
         const logSummary = buildSystemWarn
           ? `${buildSystemWarn} No code changes detected — Tier 3 LLM review skipped.`
           : "PR contains only config, documentation, or generated file changes — Tier 3 LLM review skipped.";
-        return { ok: true, data: { skipped: true, rating: null, findings: [], usedModel: "none (skipped)", providerAttempts: [], refused: false, refusalNote: null, systemWarn: logSummary } };
+        return { ok: true, data: { skipped: true, rating: null, findings: [], summary: "", usedModel: "none (skipped)", providerAttempts: [], refused: false, refusalNote: null, systemWarn: logSummary } };
       }
 
       const deterministicPayload = deterministicFindings.length > 0
@@ -1944,6 +1946,7 @@ ${diffPayload}${deterministicPayload}`;
             skipped: false,
             rating: clampedRating,
             findings: clampedFindings,
+            summary: finalReview.summary || "",
             usedModel,
             providerAttempts: providerAttempts as ProviderAttempt[],
             refused,
@@ -2018,6 +2021,7 @@ ${diffPayload}${deterministicPayload}`;
   // Extract LLM output for post-processing
   rating = llmData.rating;
   findings = llmData.findings;
+  const scanSummary = llmData.summary || "";
   usedModel = llmData.usedModel;
   systemWarn = llmData.systemWarn;
   // Merge provider attempts from step data (step fn mutates the outer
@@ -2208,6 +2212,7 @@ ${diffPayload}${deterministicPayload}`;
     success: true,
     rating,
     findings,
+    summary: scanSummary,
     usedModel,
     systemWarn,
   };

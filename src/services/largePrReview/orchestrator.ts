@@ -290,7 +290,7 @@ export async function runLargePrReview({
           status: "completed",
           completedAt: new Date(),
           rating: result.scan.rating,
-          summary: `${result.scan.findings.length} finding${result.scan.findings.length === 1 ? "" : "s"}`,
+          summary: result.scan.summary || `${result.scan.findings.length} finding${result.scan.findings.length === 1 ? "" : "s"}`,
           errorMessage: null,
         },
       });
@@ -451,7 +451,7 @@ export async function retryFailedChunks(
           status: "completed",
           completedAt: new Date(),
           rating: result.scan.rating,
-          summary: `${result.scan.findings.length} finding${result.scan.findings.length === 1 ? "" : "s"}`,
+          summary: result.scan.summary || `${result.scan.findings.length} finding${result.scan.findings.length === 1 ? "" : "s"}`,
           errorMessage: null,
         },
       });
