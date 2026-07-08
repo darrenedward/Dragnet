@@ -53,13 +53,13 @@ beforeEach(() => {
 });
 
 async function getMod() {
-  return import("../../src/lib/getRealLocalPrs");
+  return import("../../src/lib/getRealPrs");
 }
 
-describe("getRealLocalPrs — local-path mode", () => {
+describe("getRealPrs — local-path mode", () => {
   it("returns null when path doesn't exist", async () => {
-    const { getRealLocalPrs } = await getMod();
-    const result = await getRealLocalPrs({ id: "r1", path: "/nonexistent/path/xyz" });
+    const { getRealPrs } = await getMod();
+    const result = await getRealPrs({ id: "r1", path: "/nonexistent/path/xyz" });
     expect(result).toBeNull();
     expect(mocks.mockRunGitInRepo).not.toHaveBeenCalled();
   });
@@ -67,8 +67,8 @@ describe("getRealLocalPrs — local-path mode", () => {
   it("returns null when not a git repo", async () => {
     const emptyDir = mkdtempSync(join(tmpdir(), "dragnet-empty-"));
     try {
-      const { getRealLocalPrs } = await getMod();
-      const result = await getRealLocalPrs({ id: "r1", path: emptyDir });
+      const { getRealPrs } = await getMod();
+      const result = await getRealPrs({ id: "r1", path: emptyDir });
       expect(result).toBeNull();
     } finally {
       rmSync(emptyDir, { recursive: true, force: true });
@@ -120,8 +120,8 @@ describe("getRealLocalPrs — local-path mode", () => {
     });
     mocks.mockPrFindUnique.mockResolvedValue(null);
 
-    const { getRealLocalPrs } = await getMod();
-    const result = await getRealLocalPrs(repo);
+    const { getRealPrs } = await getMod();
+    const result = await getRealPrs(repo); 
 
     expect(result).not.toBeNull();
     expect(result!.length).toBe(1);
@@ -135,7 +135,7 @@ describe("getRealLocalPrs — local-path mode", () => {
   });
 });
 
-describe("getRealLocalPrs — remote-volume mode (uses runGitInRepo)", () => {
+describe("getRealPrs — remote-volume mode (uses runGitInRepo)", () => {
   it("dispatches git reads to runGitInRepo when cloneUrl is set", async () => {
     const repo = { id: "remote-r1", cloneUrl: "git@github.com:o/r.git" };
     mocks.mockRepoFindUnique.mockResolvedValue({
@@ -170,8 +170,8 @@ describe("getRealLocalPrs — remote-volume mode (uses runGitInRepo)", () => {
       return { stdout: "", stderr: "", exitCode: 0 };
     });
 
-    const { getRealLocalPrs } = await getMod();
-    const result = await getRealLocalPrs(repo);
+    const { getRealPrs } = await getMod();
+    const result = await getRealPrs(repo); 
 
     expect(mocks.mockRunGitInRepo).toHaveBeenCalledWith(
       expect.objectContaining({ cloneUrl: "git@github.com:o/r.git" }),
@@ -191,6 +191,7 @@ describe("getRealLocalPrs — remote-volume mode (uses runGitInRepo)", () => {
   });
 
   it("creates PR record for 0-diff unmerged branch (not merged, but no file changes)", async () => {
+    // No credentials → GitHub API path skipped, exercises local fallback.
     const repo = { id: "remote-r3", cloneUrl: "git@github.com:o/r.git" };
     mocks.mockRepoFindUnique.mockResolvedValue({
       id: "remote-r3",
@@ -224,8 +225,8 @@ describe("getRealLocalPrs — remote-volume mode (uses runGitInRepo)", () => {
       return { stdout: "", stderr: "", exitCode: 0 };
     });
 
-    const { getRealLocalPrs } = await getMod();
-    const result = await getRealLocalPrs(repo);
+    const { getRealPrs } = await getMod();
+    const result = await getRealPrs(repo); 
 
     // PR record MUST be created even with 0 diffs
     expect(result).not.toBeNull();
@@ -272,8 +273,8 @@ describe("getRealLocalPrs — remote-volume mode (uses runGitInRepo)", () => {
     });
     mocks.mockPrFindUnique.mockResolvedValue({ id: "real-pr-remote-r2-merged", status: "Open" });
 
-    const { getRealLocalPrs } = await getMod();
-    await getRealLocalPrs(repo);
+    const { getRealPrs } = await getMod();
+    await getRealPrs(repo);
 
     expect(mocks.mockPrUpdate).toHaveBeenCalledWith(
       expect.objectContaining({

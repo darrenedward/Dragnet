@@ -3,6 +3,8 @@ import fs from "fs";
 import path from "path";
 import { prisma } from "@/src/lib/prisma";
 import { runGitInRepo, type RepoLike } from "./repoAccess";
+import { getInstallationToken } from "@/src/lib/githubApp";
+import { decryptSecret, hasMasterKey } from "@/src/lib/crypto";
 
 /**
  * Postgres TEXT columns reject NUL bytes (0x00) — git can produce them
@@ -63,6 +65,90 @@ async function runGitOrThrow(repo: RepoLike, args: string[], timeoutMs?: number)
 }
 
 /**
+ * Parse a GitHub clone URL and return owner + repo.
+ * Supports https://github.com/o/r.git and git@github.com:o/r.git.
+ */
+function parseGitHubUrl(url: string): { owner: string; repo: string } | null {
+  const https = url.match(/github\.com[/:]([^/]+)\/([^/.]+?)(?:\.git)?$/);
+  if (https) return { owner: https[1], repo: https[2] };
+  const ssh = url.match(/git@github\.com:([^/]+)\/([^/.]+?)(?:\.git)?$/);
+  if (ssh) return { owner: ssh[1], repo: ssh[2] };
+  return null;
+}
+
+/**
+ * Fetch live PRs from GitHub's REST API for a repo.
+ *
+ * Returns `{ open, merged }` — `open` are currently-open PRs and
+ * `merged` are recently-closed PRs that were merged (so the DB can
+ * mark them as Merged and they stop appearing in the sidebar).
+ *
+ * Returns `null` when the URL isn't GitHub or auth fails — caller
+ * should fall back to local-branch detection in that case.
+ */
+async function fetchGitHubPrs(repo: RepoLike): Promise<{
+  open: { number: number; title: string; headRef: string; baseRef: string; updatedAt: string }[];
+  merged: { number: number; headRef: string }[];
+} | null> {
+  if (!repo.cloneUrl) return null;
+  const parsed = parseGitHubUrl(repo.cloneUrl);
+  if (!parsed) return null;
+
+  let token: string | undefined;
+  if (repo.installationId) {
+    try {
+      token = await getInstallationToken(repo.installationId);
+    } catch (err: any) {
+      console.warn(`[scan] getRealPrs: GitHub auth token failed for ${repo.id}:`, err.message);
+    }
+  }
+  if (!token && repo.patCipher && repo.patIv && repo.patTag && hasMasterKey()) {
+    try {
+      token = decryptSecret(repo.patCipher, repo.patIv, repo.patTag);
+    } catch {}
+  }
+
+  const headers: Record<string, string> = {
+    Accept: "application/vnd.github.v3+json",
+    "User-Agent": "dragnet/1.0",
+  };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+
+  const apiBase = `https://api.github.com/repos/${parsed.owner}/${parsed.repo}/pulls`;
+
+  // Open PRs
+  const openRes = await fetch(`${apiBase}?state=open&per_page=100`, { headers });
+  if (!openRes.ok) {
+    console.warn(`[scan] getRealPrs: GitHub API ${openRes.status} for open PRs in ${parsed.owner}/${parsed.repo}`);
+    return null;
+  }
+  const openRaw = (await openRes.json()) as any[];
+  const open = openRaw.map((pr) => ({
+    number: pr.number,
+    title: pr.title || `PR #${pr.number}`,
+    headRef: pr.head?.ref || "",
+    baseRef: pr.base?.ref || "main",
+    updatedAt: pr.updated_at || new Date().toISOString(),
+  }));
+
+  // Recently closed (last 30) to detect merges
+  const closedRes = await fetch(`${apiBase}?state=closed&sort=updated&direction=desc&per_page=30`, {
+    headers,
+  });
+  const merged: { number: number; headRef: string }[] = [];
+  if (closedRes.ok) {
+    const closedRaw = (await closedRes.json()) as any[];
+    for (const pr of closedRaw) {
+      if (pr.merged_at) {
+        merged.push({ number: pr.number, headRef: pr.head?.ref || "" });
+      }
+    }
+  }
+
+  return { open, merged };
+}
+
+/**
  * For local-path mode, verify the directory actually exists before we
  * try to run any git commands. Remote-volume mode skips this check
  * entirely — the clone either succeeded or it didn't, and that's
@@ -81,18 +167,21 @@ function localPathExists(repo: RepoLike): boolean {
 }
 
 /**
- * Deterministic local-branch → PR detection.
+ * Deterministic PR detection — fetches live PRs from GitHub API
+ * for remote repos (so the DB always matches GitHub's current state:
+ * new PRs appear, merged PRs are removed). Falls back to local-branch
+ * detection for local-path repos or when the GitHub API is unavailable.
  *
  * Stability properties:
- *  - Branch list ordering: `git for-each-ref --sort=refname` returns
- *    branches in alphabetical order every time.
- *  - `createdAt`: uses the branch tip's committerdate (iso-strict), so
- *    the value is invariant across runs.
- *  - `id`: derived from `repoId + branch name` — never changes for a
- *    given branch.
- *  - Stale PRs: branches that no longer exist (or no longer match the
- *    pattern) have their PR records deleted. The DB state converges to
- *    exactly the set of currently-matching branches.
+ *  - For remote repos with a GitHub cloneUrl: PRs come directly from
+ *    `GET /repos/:owner/:repo/pulls?state=open` + recently closed PRs.
+ *    New PRs are upserted into the DB; merged PRs are deleted from the
+ *    DB so they no longer appear in the sidebar.
+ *  - For local-path repos: branches are listed via git, matching the
+ *    old behaviour (branch list ordering, createdAt, id all stable).
+ *  - Stale PRs (branches that no longer exist on GitHub/local) have
+ *    their records deleted. The DB state converges to exactly the set
+ *    of currently-live PRs.
  *  - Files: deleted + recreated per scan, so file content always
  *    matches the current diff.
  *
@@ -105,12 +194,89 @@ function localPathExists(repo: RepoLike): boolean {
  * cloned — call `gitService.syncToCommit({ commitHash: "HEAD" })`
  * before this if you need a guaranteed-fresh clone.
  */
-export async function getRealLocalPrs(repo: RepoLike) {
+export async function getRealPrs(repo: RepoLike) {
   const repoId = repo.id;
-  console.log(`[scan] getRealLocalPrs: repoId=${repoId} mode=${repo.path ? "local-path" : "remote-volume"}`);
+  console.log(`[scan] getRealPrs: repoId=${repoId} mode=${repo.path ? "local-path" : "remote-volume"}`);
+
+  // For GitHub repos with credentials, fetch live PRs from the API so the
+  // DB always reflects GitHub's current state (new PRs appear, merged
+  // PRs are deleted from the sidebar). We only attempt this when we have
+  // a way to authenticate (GitHub App installation token or PAT) — without
+  // it the API would 401 and we'd silently fall back to local detection.
+  if (
+    repo.cloneUrl &&
+    repo.cloneUrl.includes("github.com") &&
+    (repo.installationId || (repo.patCipher && repo.patIv && repo.patTag))
+  ) {
+    const livePrs = await fetchGitHubPrs(repo);
+    if (livePrs !== null) {
+      // Upsert live PRs into DB
+      for (const ghPr of livePrs.open) {
+        const prId = `real-pr-${repoId}-${ghPr.headRef.replace(/\//g, "-")}`;
+        await prisma.pullRequest.upsert({
+          where: { id: prId },
+          create: {
+            id: prId,
+            repoId,
+            title: ghPr.title,
+            sourceBranch: ghPr.headRef,
+            targetBranch: ghPr.baseRef,
+            status: "Pending",
+            author: "GitHub",
+            commitHash: "",
+            createdAt: ghPr.updatedAt,
+            description: `GitHub PR #${ghPr.number}`,
+          },
+          update: {
+            title: ghPr.title,
+            sourceBranch: ghPr.headRef,
+            targetBranch: ghPr.baseRef,
+          },
+        });
+      }
+
+      // Mark merged PRs as Merged in DB
+      for (const ghPr of livePrs.merged) {
+        const prId = `real-pr-${repoId}-${ghPr.headRef.replace(/\//g, "-")}`;
+        await prisma.pullRequest.updateMany({
+          where: { id: prId },
+          data: { status: "Merged", commitHash: "" },
+        });
+      }
+
+      // Delete DB records for branches that no longer exist on GitHub
+      // (they were closed without being merged, or the branch was deleted)
+      const liveBranchNames = new Set(livePrs.open.map((p) => p.headRef));
+      const existingPrs = await prisma.pullRequest.findMany({
+        where: { repoId },
+        select: { id: true, sourceBranch: true, status: true },
+      });
+      const staleIds = existingPrs
+        .filter((p) => !liveBranchNames.has(p.sourceBranch) && p.status === "Pending")
+        .map((p) => p.id);
+      if (staleIds.length > 0) {
+        await prisma.pullRequest.deleteMany({ where: { id: { in: staleIds } } });
+        console.log(`[scan] getRealPrs: removed ${staleIds.length} stale PR(s) for ${repoId}`);
+      }
+
+      return livePrs.open.map((p) => ({
+        id: `real-pr-${repoId}-${p.headRef.replace(/\//g, "-")}`,
+        title: p.title,
+        sourceBranch: p.headRef,
+        targetBranch: p.baseRef,
+        status: "Pending",
+        author: "GitHub",
+        commitHash: "",
+        createdAt: p.updatedAt,
+        description: `GitHub PR #${p.number}`,
+      }));
+    }
+    // else: fall through to local-branch detection as a fallback
+  }
+
   try {
     if (repo.path && !localPathExists(repo)) {
-      console.log(`[scan] getRealLocalPrs: local path not found or not a directory: ${repo.path}`);
+      console.log(`[scan] getRealPrs: local path not found or not a directory: ${repo.path}`);
       return null;
     }
 
@@ -160,7 +326,7 @@ export async function getRealLocalPrs(repo: RepoLike) {
               where: { id: prId },
               data: { status: "Merged", commitHash: branch.hash },
             });
-            console.log(`[scan] getRealLocalPrs: marked ${prId} as Merged`);
+            console.log(`[scan] getRealPrs: marked ${prId} as Merged`);
           }
           continue;
         }

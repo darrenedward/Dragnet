@@ -1,13 +1,13 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/src/lib/prisma";
-import { getRealLocalPrs } from "@/src/lib/getRealLocalPrs";
+import { getRealPrs } from "@/src/lib/getRealPrs";
 import { authenticateSessionOrKey, enforceRepoScope } from "@/src/lib/apiAuth";
 import { computePrSizeProfile } from "@/src/lib/prSizeProfile";
 import { readPrCommitCount } from "@/src/lib/prSizeProfile.server";
 
 /**
  * Map of in-flight refresh promises keyed by repo ID. Prevents the
- * stale-delete / upsert gap in getRealLocalPrs() from being observed
+ * stale-delete / upsert gap in getRealPrs() from being observed
  * by concurrent readers: every GET that arrives while a refresh is
  * in progress waits for the same promise, then reads a consistent
  * snapshot. Lives only in this dev server process.
@@ -42,7 +42,7 @@ async function attachSizeProfiles(prs: any[], repo: import("@/src/lib/repoAccess
  * Returns the current PR list for a repo. Ensures the git-based PR
  * scan runs at most once concurrently per repo — all callers during
  * the scan wait for the same result, so no one observes the partial
- * state inside getRealLocalPrs()'s delete-then-upsert update.
+ * state inside getRealPrs()'s delete-then-upsert update.
  *
  * Merged PRs are excluded by default — they cluttered the active
  * review queue with already-shipped work. Pass ?include_merged=true
@@ -65,7 +65,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     // Fire-and-forget: return current DB state immediately, refresh in background.
     if ((repo.path || repo.cloneUrl) && !refreshPromises.has(id)) {
       refreshPromises.set(id,
-        getRealLocalPrs(repo)
+        getRealPrs(repo)
           .catch((err) => console.warn(`Background PR refresh failed for ${id}:`, err))
           .finally(() => refreshPromises.delete(id))
       );
@@ -103,7 +103,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       return NextResponse.json({ error: "Repository not found" }, { status: 404 });
     }
 
-    if (repo.path || repo.cloneUrl) await getRealLocalPrs(repo);
+    if (repo.path || repo.cloneUrl) await getRealPrs(repo);
 
     const includeMerged = new URL(req.url).searchParams.get("include_merged") === "true";
     const prs = await prisma.pullRequest.findMany({

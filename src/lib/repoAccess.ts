@@ -41,6 +41,8 @@ export interface RepoLike {
   /** Remote git URL — cloneUrl is SSH (git@…), cloneUrlHttps is https. */
   cloneUrl?: string | null;
   cloneUrlHttps?: string | null;
+  /** GitHub App installation ID (for repos imported via the GitHub App flow). */
+  installationId?: string | null;
   /** Encrypted auth — either SSH deploy key OR GitHub PAT, never both. */
   deployKeyCipher?: string | null;
   deployKeyIv?: string | null;

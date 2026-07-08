@@ -5,7 +5,7 @@ import { runPrScan, SYSTEM_INSTRUCTION } from "@/reviewService";
 import { authenticateApiRequest } from "@/src/lib/apiAuth";
 import { IndexingService } from "@/src/services/indexingService";
 import { assertIndexFresh } from "@/src/lib/indexFreshness";
-import { refreshPrFiles, isBranchMerged } from "@/src/lib/getRealLocalPrs";
+import { refreshPrFiles, isBranchMerged } from "@/src/lib/getRealPrs";
 import { getChatChain } from "@/src/lib/llmClient";
 import { acquireReviewLock, endReview } from "@/src/lib/reviewLocks";
 import { computePrSizeProfile } from "@/src/lib/prSizeProfile";

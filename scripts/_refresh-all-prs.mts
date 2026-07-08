@@ -1,4 +1,4 @@
-// One-shot: force getRealLocalPrs on every repo. Applies merged-detection
+// One-shot: force getRealPrs on every repo. Applies merged-detection
 // + full-hash fixes to existing DB rows.
 //
 // Run with: npx tsx scripts/_refresh-all-prs.mts
@@ -6,7 +6,7 @@
 import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import pg from "pg";
-import { getRealLocalPrs } from "../src/lib/getRealLocalPrs.ts";
+import { getRealPrs } from "../src/lib/getRealPrs.ts";
 
 const cs = process.env.DATABASE_URL;
 if (!cs) {
@@ -27,7 +27,7 @@ console.log(`Refreshing ${repos.length} repos...\n`);
 for (const r of repos) {
   if (!r.path) { console.log(`  [skip] ${r.name}: no path`); continue; }
   try {
-    const prs = await getRealLocalPrs(r);
+    const prs = await getRealPrs(r);
     const merged = prs?.filter(p => p.status === "Merged").length ?? 0;
     console.log(`  [ok] ${r.name}: ${prs?.length ?? 0} PRs (${merged} marked Merged)`);
   } catch (e: any) {

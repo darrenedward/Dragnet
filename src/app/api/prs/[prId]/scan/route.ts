@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/src/lib/prisma";
 import { runPrScan, SYSTEM_INSTRUCTION } from "@/reviewService";
-import { refreshPrFiles, isBranchMerged } from "@/src/lib/getRealLocalPrs";
+import { refreshPrFiles, isBranchMerged } from "@/src/lib/getRealPrs";
 import { assertIndexFresh } from "@/src/lib/indexFreshness";
 import { IndexingService } from "@/src/services/indexingService";
 import { getChatChain, getEmbeddingChain } from "@/src/lib/llmClient";

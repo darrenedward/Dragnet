@@ -113,8 +113,8 @@ export async function gitFetch(repo: RepoLike): Promise<boolean> {
 
 export async function scanRepoPrs(repo: RepoLike): Promise<string[]> {
   try {
-    const { getRealLocalPrs } = await import("./getRealLocalPrs");
-    const prs = await getRealLocalPrs(repo);
+    const { getRealPrs } = await import("./getRealPrs");
+    const prs = await getRealPrs(repo);
     return (prs ?? []).map((p: any) => p.id);
   } catch (err) {
     console.error(`PR scan failed for ${repo.id}:`, err);

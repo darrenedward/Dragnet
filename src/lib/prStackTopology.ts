@@ -25,7 +25,7 @@
  *
  * **Staleness caveat:** Dragnet's `targetBranch` is set to `baseBranch`
  * at PR creation and never re-synced from GitHub (see
- * `getRealLocalPrs.ts:175`). Retargeted PRs (common in stacked-PR
+ * `getRealPrs.ts:175`). Retargeted PRs (common in stacked-PR
  * workflows) will show stale topology here. Callers that need
  * authoritative topology MUST re-walk via `gh pr list --json
  * baseRefName,headRefName`. The fields below are advisory/hint.
