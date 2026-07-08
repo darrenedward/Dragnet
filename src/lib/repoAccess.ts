@@ -70,6 +70,39 @@ export interface RunGitOptions {
 }
 
 /**
+ * Ensure the remote-mode clone is up-to-date and has both the PR branch
+ * and the base branch available locally. Used by getRealPrs /
+ * refreshPrFiles before running `git diff`. Without this, a stale
+ * clone (4 days old, base branch moved on remote) silently returns an
+ * empty diff and the scan runs against zero files.
+ *
+ * No-op for local-path repos (they're already on disk).
+ *
+ * Throws when the clone can't be refreshed so the caller can surface
+ * a clear "clone sync failed" error instead of "no code changes".
+ */
+export async function syncCloneForPr(
+  repo: RepoLike,
+  branch: string,
+  baseBranch: string,
+): Promise<void> {
+  if (repo.path) return; // local-path: no clone to sync
+  if (!repo.cloneUrl) return; // nothing to sync
+  const access = resolveRepoAccess(repo);
+  if (access.mode !== "remote-volume") return; // belt + braces
+  const { gitService } = await import("./gitService");
+  await gitService.syncToBranch({
+    repoId: repo.id,
+    volumeName: access.volumeName!,
+    cloneUrl: repo.cloneUrl,
+    branch,
+    alsoFetch: [baseBranch],
+    deployKey: access.auth?.deployKey,
+    pat: access.auth?.pat,
+  });
+}
+
+/**
  * Decide which mode a repo should be accessed in and return the
  * volume-name / path / auth needed to drive subsequent calls.
  *

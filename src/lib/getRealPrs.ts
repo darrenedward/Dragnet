@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import fs from "fs";
 import path from "path";
 import { prisma } from "@/src/lib/prisma";
-import { runGitInRepo, type RepoLike } from "./repoAccess";
+import { runGitInRepo, syncCloneForPr, type RepoLike } from "./repoAccess";
 import { getInstallationToken } from "@/src/lib/githubApp";
 import { decryptSecret, hasMasterKey } from "@/src/lib/crypto";
 
@@ -292,6 +292,23 @@ export async function getRealPrs(repo: RepoLike) {
     if (!repoRow) return null;
 
     const baseBranch = await detectBaseBranch(repo, repoRow.baseBranch);
+
+    // For remote repos, fetch the latest refs from origin so a stale
+    // 4-day-old clone doesn't make `git diff base...branch` report
+    // an empty diff (because main has moved on remote and the PR
+    // branch is effectively merged into the stale main).
+    // Best-effort: if the sync fails we still try the diff so the
+    // user gets a result; just log the issue.
+    if (!repo.path && repo.cloneUrl) {
+      try {
+        await syncCloneForPr(repo, baseBranch, baseBranch);
+        // NB: this fetches base only — listing branches below doesn't
+        // need every PR branch present, only the base for diffs.
+      } catch (err: any) {
+        console.warn(`[scan] getRealPrs: clone sync failed for ${repoId}:`, err.message);
+      }
+    }
+
     const allBranches = await listBranches(repo);
 
     const pattern = repoRow.branchPattern || "*";
@@ -476,6 +493,18 @@ export async function refreshPrFiles(repo: RepoLike, branchName: string, prId: s
       select: { baseBranch: true },
     });
     const baseBranch = repoRow?.baseBranch || "main";
+
+    // Ensure clone has both branches before running the diff. Best-effort:
+    // surface a clear log if sync fails but still attempt the diff so the
+    // scanner can produce SOMETHING rather than hard-failing.
+    if (!repo.path && repo.cloneUrl) {
+      try {
+        await syncCloneForPr(repo, branchName, baseBranch);
+      } catch (err: any) {
+        console.warn(`[refreshPrFiles] clone sync failed for ${repo.id}:`, err.message);
+      }
+    }
+
     const files = await collectBranchFiles(repo, baseBranch, branchName);
     await prisma.prFile.deleteMany({ where: { prId } });
     if (files.length > 0) {
@@ -506,11 +535,47 @@ async function collectBranchFiles(
   branchName: string,
 ): Promise<RepoFile[]> {
   const files: RepoFile[] = [];
+
+  // Verify both branches actually exist in the clone before running diff.
+  // Silently returning an empty list on missing refs is what caused the
+  // "No code changes detected" false-positive — the diff technically
+  // succeeded (exit 0) but with no commits in common so emitted nothing.
+  if (!repo.path && repo.cloneUrl) {
+    const branchCheck = await runGitInRepo(repo, [
+      "rev-parse",
+      "--verify",
+      "--quiet",
+      `refs/heads/${branchName}`,
+    ]);
+    if (branchCheck.exitCode !== 0) {
+      console.warn(
+        `[scan] collectBranchFiles: branch ${branchName} not found in clone for ${repo.id} — returning empty diff`,
+      );
+      return files;
+    }
+    const baseCheck = await runGitInRepo(repo, [
+      "rev-parse",
+      "--verify",
+      "--quiet",
+      `refs/heads/${baseBranch}`,
+    ]);
+    if (baseCheck.exitCode !== 0) {
+      console.warn(
+        `[scan] collectBranchFiles: base ${baseBranch} not found in clone for ${repo.id} — returning empty diff`,
+      );
+      return files;
+    }
+  }
+
   let changedFilesLines: string[] = [];
   try {
     const stdout = await runGitOrThrow(repo, ["diff", "--name-status", `${baseBranch}...${branchName}`]);
     changedFilesLines = stdout.trim().split("\n").filter(Boolean);
-  } catch {
+  } catch (err: any) {
+    console.warn(
+      `[scan] collectBranchFiles: diff failed for ${repo.id} (${baseBranch}...${branchName}):`,
+      err.message,
+    );
     return files;
   }
 

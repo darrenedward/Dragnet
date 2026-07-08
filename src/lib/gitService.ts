@@ -58,11 +58,31 @@ export interface SyncOptions {
   pat?: string;
 }
 
+export interface SyncBranchOptions {
+  repoId: string;
+  volumeName: string;
+  cloneUrl: string;
+  /** Branch name to fetch + checkout (becomes the working tree's HEAD). */
+  branch: string;
+  /** Other branches to fetch (no checkout) — typically the base branch
+   *  so diffs against it see the latest remote state. */
+  alsoFetch?: string[];
+  deployKey?: string;
+  pat?: string;
+}
+
 export interface GitServiceInterface {
   /** Clone or fetch a remote repo into a named Docker volume, then
    *  checkout the given commit hash. Returns the working directory path
    *  inside the container (always /workspace). */
   syncToCommit(opts: SyncOptions): Promise<string>;
+  /** Clone or fetch a remote repo and ensure the given branch (+ any
+   *  auxiliary branches in `alsoFetch`) exist locally. Used by
+   *  PR-detection code paths that don't have a specific commit hash
+   *  (e.g. when GitHub provides the branch name but no SHA via the
+   *  pulls API), or by file-refresh code that needs the base branch
+   *  up-to-date so `git diff base...pr-branch` reports correctly. */
+  syncToBranch(opts: SyncBranchOptions): Promise<string>;
   /** Get the HEAD commit hash from a local path (for local-mode repos). */
   currentHead(localPath: string): string | null;
 }
@@ -136,6 +156,93 @@ class RealGitService implements GitServiceInterface {
     }
     if (result.timedOut) {
       throw new Error(`Git sync timed out after 120 s for repo ${opts.repoId}`);
+    }
+
+    return "/workspace";
+  }
+
+  /**
+   * Like syncToCommit but for "I have a branch name, not a SHA". Used
+   * by getRealPrs / refreshPrFiles so the local clone is guaranteed to
+   * contain both the PR branch and the base branch (with `git fetch`
+   * pulling the latest refs from origin first) before `git diff` runs
+   * against it. Without this, a stale clone (4 days old, base branch
+   * moved on remote) silently returns zero diffs → "No code changes
+   * detected" → empty scan.
+   */
+  async syncToBranch(opts: SyncBranchOptions): Promise<string> {
+    const orchestrator = ContainerOrchestrator.getInstance();
+
+    // Ensure the volume exists (no-op if already created).
+    await orchestrator.createVolume(opts.volumeName);
+
+    // Interpolate PAT into URL if present.
+    let cloneUrl = opts.cloneUrl;
+    if (opts.pat) {
+      try {
+        const u = new URL(opts.cloneUrl);
+        if (u.protocol === "https:") {
+          u.username = "x-access-token";
+          u.password = opts.pat;
+          cloneUrl = u.toString();
+        }
+      } catch {
+        /* non-URL (SSH) — pat ignored, deployKey used instead */
+      }
+    }
+
+    // Steps:
+    //   1. Init /workspace as a git repo if not already (volume is reused
+    //      across scans, so .git may already exist).
+    //   2. Set the remote URL (idempotent).
+    //   3. Fetch the PR branch + any aux branches (shallow, --depth=100
+    //      is enough — we're diffing, not auditing history).
+    //   4. Checkout the PR branch as the working tree HEAD so subsequent
+    //      `git diff base...branch` resolves against local refs.
+    const escapedUrl = shellEscape(cloneUrl);
+    const escapedBranch = shellEscape(opts.branch);
+    const fetchTargets = [opts.branch, ...(opts.alsoFetch ?? [])].join(" ");
+    const syncScript = [
+      "set -e",
+      "[ -d /workspace/.git ] || git init /workspace",
+      "cd /workspace",
+      `git remote get-url origin 2>/dev/null && git remote set-url origin '${escapedUrl}' || git remote add origin '${escapedUrl}'`,
+      // Prune so branches deleted on remote disappear locally too;
+      // depth=100 is plenty for review use cases.
+      `git fetch origin --prune --depth=100 ${shellEscape(opts.branch)} ${(opts.alsoFetch ?? []).map(shellEscape).join(" ")}`.trim(),
+      // If the branch exists remotely, create-or-checkout the local ref.
+      // `git switch -C` creates the branch pointing at FETCH_HEAD iff
+      // missing; if it already exists, `git switch` just moves to it.
+      `git switch -C '${escapedBranch}' FETCH_HEAD`,
+    ].join(" && ");
+
+    const extraEnv: Record<string, string> = {};
+    let result: RunResult;
+
+    {
+      using ssh = opts.deployKey
+        ? buildSshEnv(opts.deployKey, `syncbranch-${opts.repoId}`)
+        : { env: {} as Record<string, string>, [Symbol.dispose]() {} };
+
+      Object.assign(extraEnv, ssh.env);
+
+      result = await orchestrator.runRunner({
+        volumeName: opts.volumeName,
+        image: RealGitService.GIT_IMAGE,
+        commands: [syncScript],
+        networkMode: "bridge",
+        env: extraEnv,
+        timeoutMs: 120_000,
+      });
+    }
+
+    if (result.exitCode !== 0 && !result.timedOut) {
+      throw new Error(
+        `Git syncToBranch failed (exit ${result.exitCode}): ${result.stderr || result.stdout}`,
+      );
+    }
+    if (result.timedOut) {
+      throw new Error(`Git syncToBranch timed out after 120 s for repo ${opts.repoId}`);
     }
 
     return "/workspace";
