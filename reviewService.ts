@@ -1239,7 +1239,6 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
     // Large-PR mode: Tier 1+2 already ran globally before the chunk loop.
     // Use those findings directly; skip the Tier 1+2 pipeline entirely.
     deterministicFindings = options.precomputedFindings;
-    tier1HadErrors = deterministicFindings.some((f) => f.severity === "error");
     void logReview(
       prId,
       `Using ${deterministicFindings.length} pre-computed deterministic findings (global scan)`,
