@@ -160,4 +160,79 @@ describe("Empty-diff PR handling — issue #61", () => {
 
     expect(prismaMocks.reviewHistoryCreate).toHaveBeenCalledTimes(1);
   });
+
+  it("includes reviewConfigHash in cache lookup when options provide it", async () => {
+    const { runPrScan } = await import("../reviewService");
+
+    await runPrScan("pr-empty", undefined, undefined, undefined, undefined, {
+      checkpointMetadata: {
+        commitHash: "abc123",
+        diffHash: "def456",
+        reviewConfigHash: "config-hash-xyz",
+      },
+    });
+
+    expect(prismaMocks.reviewRunFindFirst).toHaveBeenCalledWith({
+      where: {
+        prId: "pr-empty",
+        status: "completed",
+        rating: { not: null },
+        reviewConfigHash: "config-hash-xyz",
+      },
+      orderBy: { completedAt: "desc" },
+      select: { rating: true },
+    });
+  });
+
+  it("omits reviewConfigHash from cache lookup when options are absent", async () => {
+    const { runPrScan } = await import("../reviewService");
+
+    await runPrScan("pr-empty");
+
+    expect(prismaMocks.reviewRunFindFirst).toHaveBeenCalledWith({
+      where: {
+        prId: "pr-empty",
+        status: "completed",
+        rating: { not: null },
+      },
+      orderBy: { completedAt: "desc" },
+      select: { rating: true },
+    });
+  });
+
+  it("returns cached rating when reviewConfigHash matches", async () => {
+    const { runPrScan } = await import("../reviewService");
+    prismaMocks.reviewRunFindFirst.mockResolvedValue({ rating: 9 });
+
+    const result = await runPrScan("pr-empty", undefined, undefined, undefined, undefined, {
+      checkpointMetadata: {
+        commitHash: "abc123",
+        diffHash: "def456",
+        reviewConfigHash: "matching-hash",
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.rating).toBe(9);
+    expect(result.usedModel).toBe("cached (no code changes)");
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("falls through to no-cache path when reviewConfigHash does not match (simulated by null return)", async () => {
+    const { runPrScan } = await import("../reviewService");
+
+    const result = await runPrScan("pr-empty", undefined, undefined, undefined, undefined, {
+      checkpointMetadata: {
+        commitHash: "abc123",
+        diffHash: "def456",
+        reviewConfigHash: "new-config",
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.rating).toBeNull();
+    expect(result.systemWarn).toBe(
+      "No code changes detected. Push your changes and re-scan. If this PR is intentionally empty, close it.",
+    );
+  });
 });
