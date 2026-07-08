@@ -68,6 +68,7 @@ model Repository {
   edges                  Edge[]
   files                  File[]
   scanTokens             ScanToken[]
+  userRepos              UserRepo[]
 
   @@map("repositories")
 }
@@ -322,6 +323,7 @@ model User {
   oauthConnections OAuthConnection[]
   apiKeys          ApiKey[]
   reviewRuns       ReviewRun[]
+  userRepos        UserRepo[]
 
   @@map("users")
 }
@@ -458,6 +460,52 @@ model WebhookDelivery {
   @@index([deliveryGuid])
   @@index([status])
   @@map("webhook_deliveries")
+}
+
+/// Join table linking a teammate to a repo they've been invited to.
+/// Created after the teammate accepts an org-level invitation.
+model UserRepo {
+  id          String     @id @default(cuid())
+  userId      String
+  repoId      String
+  role        String     @default("member") // "member" | "admin"
+  invitedById String?
+  invitedAt   DateTime   @default(now())
+  user        User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  repository  Repository @relation(fields: [repoId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, repoId])
+  @@index([userId])
+  @@index([repoId])
+  @@map("user_repos")
+}
+
+/// Links a pending invitation to the repos the inviter selected.
+/// Cleaned up after acceptance or when invitation expires.
+model PendingRepoAssignment {
+  id           String   @id @default(cuid())
+  invitationId String
+  repoId       String
+  createdAt    DateTime @default(now())
+
+  @@unique([invitationId, repoId])
+  @@index([invitationId])
+  @@map("pending_repo_assignments")
+}
+
+/// Audit trail for API key usage — one row per authenticated action.
+model ApiKeyUsage {
+  id        String   @id @default(cuid())
+  keyId     String
+  userId    String?
+  repoId    String?
+  action    String   // e.g. "scan", "prcheck", "command", "prcomments"
+  ip        String?
+  timestamp DateTime @default(now())
+
+  @@index([keyId, timestamp])
+  @@index([repoId, timestamp])
+  @@map("api_key_usage")
 }
 
 model LLMPreset {

@@ -6,6 +6,11 @@ import { Check, Copy, Mail, Plus, Trash2, Users, X } from "lucide-react";
 import { authClient } from "../../../lib/auth-client";
 import { toast } from "../../../lib/toast";
 
+interface RepoSummary {
+  id: string;
+  name: string;
+}
+
 interface MemberRow {
   id: string;
   userId: string;
@@ -33,19 +38,22 @@ export default function TeamPanel() {
   const [members, setMembers] = useState<MemberRow[]>([]);
   const [invitations, setInvitations] = useState<InvitationRow[]>([]);
   const [keyCounts, setKeyCounts] = useState<Record<string, number>>({});
+  const [repos, setRepos] = useState<RepoSummary[]>([]);
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState<"member" | "admin">("member");
+  const [inviteRepoIds, setInviteRepoIds] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const refresh = async () => {
     try {
-      const [activeRes, listRes, invRes, keysRes] = await Promise.all([
+      const [activeRes, listRes, invRes, keysRes, reposRes] = await Promise.all([
         authClient.organization.getFullOrganization({}),
         authClient.organization.listMembers({}),
         authClient.organization.listInvitations({}),
         fetch("/api/team/member-stats").then((r) => (r.ok ? r.json() : { counts: {} })),
+        fetch("/api/repos").then((r) => (r.ok ? r.json() : [])),
       ]);
       if (activeRes.data) {
         setActiveOrg({
@@ -69,6 +77,11 @@ export default function TeamPanel() {
           : [],
       );
       setKeyCounts(keysRes.counts ?? {});
+      setRepos(
+        Array.isArray(reposRes)
+          ? reposRes.map((r: any) => ({ id: r.id, name: r.name }))
+          : [],
+      );
     } catch (e: any) {
       setError(e?.message || "Failed to load team data.");
     } finally {
@@ -82,18 +95,29 @@ export default function TeamPanel() {
 
   const handleInvite = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (inviteRepoIds.length === 0) {
+      setError("Select at least one repo.");
+      return;
+    }
     setSubmitting(true);
     setError(null);
     try {
-      const { error: err } = await authClient.organization.inviteMember({
-        email: inviteEmail.trim(),
-        role: inviteRole,
+      const res = await fetch("/api/team/invite", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: inviteEmail.trim(),
+          role: inviteRole,
+          repoIds: inviteRepoIds,
+        }),
       });
-      if (err) {
-        setError(err.message || err.statusText || "Invitation failed.");
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setError(data?.error || "Invitation failed.");
         return;
       }
       setInviteEmail("");
+      setInviteRepoIds([]);
       toast.success(`Invitation sent to ${inviteEmail.trim()}`);
       await refresh();
     } catch (e: any) {
@@ -281,40 +305,73 @@ export default function TeamPanel() {
           </div>
         </div>
 
-        <form onSubmit={handleInvite} className="space-y-3 pt-4 border-t border-white/5">
-          <h4 className="text-[10px] uppercase tracking-[0.2em] text-slate-500 font-mono font-bold">
-            Invite a teammate
-          </h4>
-          <div className="flex flex-col sm:flex-row gap-2">
-            <input
-              type="email"
-              required
-              value={inviteEmail}
-              onChange={(e) => setInviteEmail(e.target.value)}
-              placeholder="teammate@example.com"
-              className="flex-1 bg-slate-900 border border-white/10 rounded-lg px-3 py-2 text-xs font-mono text-slate-300 placeholder:text-slate-600 focus:outline-none focus:border-cyan-500/40"
-            />
-            <select
-              value={inviteRole}
-              onChange={(e) => setInviteRole(e.target.value as "member" | "admin")}
-              className="bg-slate-900 border border-white/10 rounded-lg px-3 py-2 text-xs font-mono text-slate-300 focus:outline-none focus:border-cyan-500/40"
-            >
-              <option value="member">Member</option>
-              <option value="admin">Admin</option>
-            </select>
+          <form onSubmit={handleInvite} className="space-y-3 pt-4 border-t border-white/5">
+            <h4 className="text-[10px] uppercase tracking-[0.2em] text-slate-500 font-mono font-bold">
+              Invite a teammate
+            </h4>
+            <div className="flex flex-col sm:flex-row gap-2">
+              <input
+                type="email"
+                required
+                value={inviteEmail}
+                onChange={(e) => setInviteEmail(e.target.value)}
+                placeholder="teammate@example.com"
+                className="flex-1 bg-slate-900 border border-white/10 rounded-lg px-3 py-2 text-xs font-mono text-slate-300 placeholder:text-slate-600 focus:outline-none focus:border-cyan-500/40"
+              />
+              <select
+                value={inviteRole}
+                onChange={(e) => setInviteRole(e.target.value as "member" | "admin")}
+                className="bg-slate-900 border border-white/10 rounded-lg px-3 py-2 text-xs font-mono text-slate-300 focus:outline-none focus:border-cyan-500/40"
+              >
+                <option value="member">Member</option>
+                <option value="admin">Admin</option>
+              </select>
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-[10px] uppercase tracking-[0.2em] text-slate-500 font-mono font-bold">
+                Repos to grant access
+              </label>
+              <div className="max-h-32 overflow-y-auto space-y-1 bg-slate-900/60 border border-white/5 rounded-lg p-2">
+                {repos.length === 0 ? (
+                  <div className="text-[10px] text-slate-600 font-mono italic">No repos yet.</div>
+                ) : (
+                  repos.map((r) => (
+                    <label key={r.id} className="flex items-center gap-2 text-xs font-mono text-slate-300 cursor-pointer hover:text-white">
+                      <input
+                        type="checkbox"
+                        checked={inviteRepoIds.includes(r.id)}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setInviteRepoIds([...inviteRepoIds, r.id]);
+                          } else {
+                            setInviteRepoIds(inviteRepoIds.filter((id) => id !== r.id));
+                          }
+                        }}
+                        className="rounded border-white/10 bg-slate-900 text-cyan-500 focus:ring-cyan-500/20"
+                      />
+                      <span className="truncate">{r.name}</span>
+                    </label>
+                  ))
+                )}
+              </div>
+              {inviteRepoIds.length > 0 && (
+                <div className="text-[9px] text-slate-500 font-mono">
+                  {inviteRepoIds.length} repo{inviteRepoIds.length === 1 ? "" : "s"} selected
+                </div>
+              )}
+            </div>
             <button
               type="submit"
-              disabled={submitting || !inviteEmail.trim()}
-              className="bg-cyan-500 hover:bg-cyan-600 disabled:opacity-50 text-black font-semibold text-xs px-4 py-2 rounded-lg transition-all flex items-center gap-2 shadow-[0_4px_12px_rgba(6,182,212,0.15)] cursor-pointer"
+              disabled={submitting || !inviteEmail.trim() || inviteRepoIds.length === 0}
+              className="w-full bg-cyan-500 hover:bg-cyan-600 disabled:opacity-50 text-black font-semibold text-xs px-4 py-2 rounded-lg transition-all flex items-center justify-center gap-2 shadow-[0_4px_12px_rgba(6,182,212,0.15)] cursor-pointer"
             >
               <Plus size={13} />
               <span>{submitting ? "Sending..." : "Send invite"}</span>
             </button>
-          </div>
-          <p className="text-[10px] text-slate-500 font-mono">
-            Sends a server-issued invitation. Recipients can accept via the link on the invitation or by signing up at this URL and using it.
-          </p>
-        </form>
+            <p className="text-[10px] text-slate-500 font-mono">
+              Sends an invitation. Teammate will be able to generate API keys for the selected repos after accepting.
+            </p>
+          </form>
       </div>
     </motion.div>
   );

@@ -2,6 +2,19 @@ import { prisma } from "./prisma";
 import crypto from "crypto";
 import { requireSession } from "./api-auth";
 
+export async function verifyUserCanCreateRepoKey(
+  userId: string,
+  repoId: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const assignment = await prisma.userRepo.findUnique({
+    where: { userId_repoId: { userId, repoId } },
+  });
+  if (!assignment) {
+    return { ok: false, error: "You are not assigned to this repository. Contact an admin." };
+  }
+  return { ok: true };
+}
+
 const KEY_PREFIX = "dr_";
 
 export function generateApiKey(): { raw: string; prefix: string; hash: string } {
@@ -49,6 +62,20 @@ export async function authenticateApiRequest(req: Request): Promise<AuthResult> 
       .update({ where: { id: key.id }, data: { lastUsedAt: new Date() } })
       .catch(() => {});
   }
+
+  // Audit trail: one ApiKeyUsage row per authenticated action.
+  // Fire-and-forget — request latency must not depend on this write.
+  prisma.apiKeyUsage
+    .create({
+      data: {
+        keyId: key.id,
+        userId: key.userId ?? null,
+        repoId: key.repoId ?? null,
+        action: "api_request",
+        ip: req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || null,
+      },
+    })
+    .catch(() => {});
 
   return { ok: true, repoId: key.repoId ?? null, userId: key.userId ?? null };
 }

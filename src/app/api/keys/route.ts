@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/src/lib/prisma";
-import { generateApiKey } from "@/src/lib/apiAuth";
+import { generateApiKey, verifyUserCanCreateRepoKey } from "@/src/lib/apiAuth";
 import { requireSession } from "@/src/lib/api-auth";
 
 export async function GET(req: Request) {
@@ -57,6 +57,10 @@ export async function POST(req: Request) {
     userId,
   };
   if (body.repoId && typeof body.repoId === "string") {
+    const repoCheck = await verifyUserCanCreateRepoKey(userId, body.repoId);
+    if (!repoCheck.ok) {
+      return NextResponse.json({ error: repoCheck.error }, { status: 403 });
+    }
     data.repoId = body.repoId;
   }
 

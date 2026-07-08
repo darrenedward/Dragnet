@@ -41,6 +41,12 @@ function InviteFlow({ code }: { code: string }) {
         } catch {
           /* storage blocked — banner won't appear but acceptance still succeeded */
         }
+        // Create UserRepo records for the accepted invitation
+        try {
+          await fetch(`/api/team/invite/${code}/accept`, { method: "POST" });
+        } catch {
+          /* non-critical — records may already exist or can be retried */
+        }
         setTimeout(() => router.push(callbackURL), 1200);
       } catch (e: any) {
         if (cancelled) return;

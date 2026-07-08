@@ -29,6 +29,7 @@ import EditRepoModal from "./components/modals/editRepo";
 import RepoSettingsModal from "./components/modals/repoSettings/RepoSettingsModal";
 import WebhookPrompt from "./components/modals/addRepo/WebhookPrompt";
 import TeamPanel from "./components/views/team/TeamPanel";
+import MyReposView from "./components/views/MyReposView";
 import FirstKeyPrompt from "./components/FirstKeyPrompt";
 import DashboardTitleBar from "./components/DashboardTitleBar";
 import { useDashboardData } from "./hooks/useDashboardData";
@@ -187,7 +188,9 @@ export default function App() {
 
               {activeTab === "llm_config" && <LlmConfigView />}
 
-              {activeTab === "team" && <TeamPanel />}
+               {activeTab === "team" && <TeamPanel />}
+
+               {activeTab === "my_repos" && <MyReposView />}
 
               {activeTab === "codebase" && (
                 <motion.div
