@@ -93,21 +93,22 @@ async function main() {
       console.log(`Pruned ${pruned} orphaned volume(s).`);
       break;
     }
-      default:
-        console.log(`Usage: dragnet <command> [options]
+        default:
+          console.log(`Usage: dragnet <command> [options]
         
 Commands:
-  install-hooks         Install pre-push hook (requires DRAGNET_REPO_KEY)
+  install-hooks         Install pre-push hook (requires API key)
   uninstall-hooks       Remove pre-push hook
-  review <branch>       Run review on branch (requires DRAGNET_REPO_KEY)
+  review <branch>       Run review on branch (requires API key)
   prune-volumes         Remove orphaned Docker volumes
 
 Environment variables:
   DRAGNET_URL          Dragnet server URL (default: http://localhost:3300)
   DRAGNET_REPO_KEY     API key for authentication (generated in UI)
+                        Falls back to DRAGNET_API_KEY for backward compatibility
 
 Set these in your shell profile or .env file.`);
-        process.exit(1);
+          process.exit(1);
   }
 }
 

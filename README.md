@@ -86,7 +86,7 @@ DRAGNET_REPO_KEY=dr_your_key_here
 3. Click **Generate key**
 4. Copy the key and add it to your `.env` file
 
-**Note:** `.dragnet/` directories under your repo root are used for server-side artifacts (provider health, checkpoints, scan reports). Client configuration uses `.env` files only.
+**Note:** `~/.dragnet/` is used for server-side artifacts (provider health, checkpoints, scan reports). Client configuration uses `.env` files only. Repo-specific `.dragnet/` directories (under the repo root) are also server-side only — they hold provider health state, checkpoints, and scan reports for that repo.
 
 ---
 
