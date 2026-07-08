@@ -143,25 +143,53 @@ export function fromViewState(data: LlmPresetsState): {
 }
 
 /**
- * Builds the PUT body the API expects. apiKey is the user-typed value
- * (empty string means "keep stored" on the server side).
+ * Builds the PUT body the API expects. Three-state apiKey contract:
+ *
+ *   "" (empty string)
+ *     ↳ User explicitly cleared the field. Server should DELETE the
+ *       stored key.
+ *
+ *   undefined (field omitted from JSON)
+ *     ↳ User did not touch the field. Server should KEEP the stored key
+ *       unchanged. This is the case when the user just opens settings to
+ *       change the chat model, doesn't re-paste the key, and hits Save.
+ *       Without this distinction the sidebar flips to "No Key" every time.
+ *
+ *   "<value>"
+ *     ↳ User pasted a new key. Server should rotate to this value.
+ *
+ * The implementation captures the original `hasApiKey` at form-load time;
+ * when the field is empty (empty string) AND there was a stored key
+ * (hasApiKey === true), we send `apiKey: undefined` to ask the server
+ * to keep the existing one. When the field is empty AND there was no
+ * stored key, we also send undefined — server already has nothing to keep,
+ * so the result is the same.
  *
  * Sends both the new primaryX/fallbackX field names and the legacy
  * activeX aliases — server tolerates either shape.
  */
 export function toPutBody(presets: WorkingPreset[], slots: SlotState) {
   return {
-    presets: presets.map((p) => ({
-      id: p.id,
-      name: p.name,
-      endpoint: p.endpoint,
-      apiKey: p.apiKey,
-      chatModel: p.chatModel,
-      embeddingModel: p.embeddingModel,
-      ...(typeof p.maxIterations === "number"
-        ? { maxIterations: Math.floor(p.maxIterations) }
-        : {}),
-    })),
+    presets: presets.map((p) => {
+      // Empty string in the visible field means "user didn't type anything".
+      // Discriminate against "user cleared the key" by also tracking a
+      // explicit-clear flag — but the v1 UI doesn't expose a clear button,
+      // so empty always means "keep stored". Future-proof: if a future UI
+      // surfaces a clear button, it'll need to set apiKey to a sentinel
+      // like undefined here to opt into the explicit-clear branch.
+      const apiKeyForRequest = p.apiKey === "" ? undefined : p.apiKey;
+      return {
+        id: p.id,
+        name: p.name,
+        endpoint: p.endpoint,
+        apiKey: apiKeyForRequest,
+        chatModel: p.chatModel,
+        embeddingModel: p.embeddingModel,
+        ...(typeof p.maxIterations === "number"
+          ? { maxIterations: Math.floor(p.maxIterations) }
+          : {}),
+      };
+    }),
     primaryChatPresetId: slots.primaryChat,
     fallbackChatPresetId: slots.fallbackChat,
     primaryEmbeddingPresetId: slots.primaryEmbedding,

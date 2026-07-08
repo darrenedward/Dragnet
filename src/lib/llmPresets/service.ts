@@ -262,7 +262,14 @@ function validatePresetsArray(input: unknown): asserts input is {
     ids.add(preset.id);
     if (typeof preset.name !== "string") throw new Error("preset.name must be a string.");
     if (typeof preset.endpoint !== "string") throw new Error("preset.endpoint must be a string.");
-    if (typeof preset.apiKey !== "string") throw new Error("preset.apiKey must be a string.");
+    // apiKey may be omitted entirely (undefined) to signal "keep the
+    // currently-stored key". An empty string ("") is a deliberate "clear".
+    // This three-state contract is what makes the LLM-Settings UX
+    // possible — without it, every "Save" without re-pasting the key
+    // wipes the stored key and the sidebar shows "No Key".
+    if (preset.apiKey !== undefined && typeof preset.apiKey !== "string") {
+      throw new Error("preset.apiKey must be a string when provided.");
+    }
     if (typeof preset.chatModel !== "string") throw new Error("preset.chatModel must be a string.");
     if (typeof preset.embeddingModel !== "string") throw new Error("preset.embeddingModel must be a string.");
     if (
@@ -319,18 +326,32 @@ export async function savePresets(state: PresetsFile): Promise<void> {
       let apiKeyIv = prev?.apiKeyIv ?? null;
       let apiKeyTag = prev?.apiKeyTag ?? null;
 
-      if (p.apiKey && canEncrypt) {
-        const encrypted = encryptApiKey(p.apiKey);
-        if (encrypted) {
-          apiKeyCipher = encrypted.cipher;
-          apiKeyIv = encrypted.iv;
-          apiKeyTag = encrypted.tag;
+      // Three-state contract (matches validatePresetsArray above):
+      //   p.apiKey === undefined → keep stored cipher unchanged
+      //   p.apiKey === ""        → explicitly clear the key
+      //   p.apiKey === "<value>" → rotate to the new value
+      if (p.apiKey !== undefined && p.apiKey !== "") {
+        if (canEncrypt) {
+          const encrypted = encryptApiKey(p.apiKey);
+          if (encrypted) {
+            apiKeyCipher = encrypted.cipher;
+            apiKeyIv = encrypted.iv;
+            apiKeyTag = encrypted.tag;
+          }
+        } else {
+          // No master key configured — can't encrypt, refuse to silently
+          // drop the value. Caller should set DRAGNET_MASTER_KEY.
+          throw new Error(
+            `Cannot save key for preset "${p.name}": DRAGNET_MASTER_KEY is not set. ` +
+              `Set it in .dragnet/secrets.env or via the UI Install modal before saving keys.`,
+          );
         }
-      } else if (!p.apiKey) {
+      } else if (p.apiKey === "") {
         apiKeyCipher = null;
         apiKeyIv = null;
         apiKeyTag = null;
       }
+      // else (undefined) → leave apiKeyCipher/Iv/Tag pointing at prev.'s values.
 
       await tx.lLMPreset.upsert({
         where: { id: p.id },

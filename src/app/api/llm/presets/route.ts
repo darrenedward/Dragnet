@@ -39,7 +39,11 @@ export async function PUT(req: Request) {
         id: p.id,
         name: p.name,
         endpoint: p.endpoint,
-        apiKey: p.apiKey || "",
+        // Three-state contract: undefined = "keep stored", "" = "clear",
+        // "value" = "rotate". Preserve undefined as-is instead of forcing
+        // it to "" — that's what was wiping the stored key on every Save
+        // when the user only wanted to change a model field.
+        apiKey: p.apiKey === undefined ? undefined : p.apiKey,
         chatModel: p.chatModel,
         embeddingModel: p.embeddingModel,
         ...(typeof p.maxIterations === "number"
