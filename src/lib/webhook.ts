@@ -16,8 +16,13 @@ export function verifyGithubSignature(payload: string, signature: string, secret
 
 export function verifyGitlabToken(token: string, secret: string): boolean {
   if (!token || !secret) return false;
+  // Use HMAC/SHA-256 to hash both before comparison to prevent length-leaking
+  // timing attacks (timingSafeEqual throws if lengths differ). GitLab sends
+  // the token as a plaintext header, unlike GitHub's HMAC signature.
+  const tokenHash = createHmac("sha256", secret).update(token).digest();
+  const secretHash = createHmac("sha256", secret).update(secret).digest();
   try {
-    return timingSafeEqual(Buffer.from(token), Buffer.from(secret));
+    return timingSafeEqual(tokenHash, secretHash);
   } catch {
     return false;
   }

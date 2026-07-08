@@ -14,7 +14,10 @@ export async function GET(req: NextRequest) {
 
   if (dir) {
     const lowerDir = dir.toLowerCase();
-    const pathMatch = repos.find((r) => dir.startsWith(r.path) || lowerDir.startsWith(r.path.toLowerCase()));
+    const pathMatch = repos.find((r) => {
+      if (!r.path) return false; // Skip remote repos (null path) to avoid TypeError on startsWith
+      return dir.startsWith(r.path) || lowerDir.startsWith(r.path.toLowerCase());
+    });
     if (pathMatch) return NextResponse.json({ repo: { id: pathMatch.id, name: pathMatch.name } });
 
     const basename = dir.split("/").filter(Boolean).pop() || "";

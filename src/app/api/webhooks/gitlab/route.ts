@@ -11,6 +11,13 @@ export async function POST(request: Request) {
   const token = request.headers.get("x-gitlab-token") || "";
   const rawBody = await request.text();
 
+  // Reject requests with no token header before any DB work — mirrors the
+  // GitHub gate. Prevents unauthenticated attackers from spaming arbitrary
+  // clone_url values and forcing a per-request DB scan.
+  if (!token) {
+    return NextResponse.json({ error: "Missing x-gitlab-token header" }, { status: 401 });
+  }
+
   let payload: any;
   try {
     payload = JSON.parse(rawBody);
