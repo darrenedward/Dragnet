@@ -1,5 +1,7 @@
 import { withRetry } from "./retry";
 import {
+  isStepSuccess,
+  isStepFailure,
   type StepDefinition,
   type PipelineStepResult,
   type PipelineResult,
@@ -24,16 +26,18 @@ export class StepPipeline {
 
       stepResults.push({ stepName: step.name, result: stepResult });
 
-      if (stepResult.ok) {
+      if (isStepSuccess(stepResult)) {
         if (Array.isArray(stepResult.data)) {
           findings.push(...stepResult.data);
         }
-      } else {
+      }
+
+      if (isStepFailure(stepResult)) {
         if (stepResult.findings) {
           findings.push(...stepResult.findings);
         }
 
-        if (stepResult.error?.isInfrastructure) {
+        if (stepResult.error.isInfrastructure) {
           return {
             aborted: true,
             infrastructureFailure: true,

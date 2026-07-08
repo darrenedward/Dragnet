@@ -1,12 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { StepError } from "../src/services/stepPipeline/types";
+import { StepError, isStepSuccess, isStepFailure } from "../src/services/stepPipeline/types";
 import { withRetry } from "../src/services/stepPipeline/retry";
 import { StepPipeline } from "../src/services/stepPipeline/stepPipeline";
 import type { DeterministicFinding } from "../src/services/deterministicChecks";
 
-// ---------------------------------------------------------------------------
-// StepError
-// ---------------------------------------------------------------------------
 describe("StepError", () => {
   it("sets name and isInfrastructure flag", () => {
     const err = new StepError("disk full", true);
@@ -21,16 +18,13 @@ describe("StepError", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// withRetry
-// ---------------------------------------------------------------------------
 describe("withRetry", () => {
   it("returns ok result on first success", async () => {
     const fn = vi.fn().mockResolvedValue({ ok: true, data: 42 });
     const result = await withRetry(fn, { maxRetries: 2, stepName: "test" });
 
     expect(result.ok).toBe(true);
-    expect(result.data).toBe(42);
+    if (isStepSuccess(result)) expect(result.data).toBe(42);
     expect(fn).toHaveBeenCalledTimes(1);
   });
 
@@ -45,7 +39,7 @@ describe("withRetry", () => {
     const result = await withRetry(fn, { maxRetries: 2, stepName: "test" });
 
     expect(result.ok).toBe(true);
-    expect(result.data).toBe("recovered");
+    if (isStepSuccess(result)) expect(result.data).toBe("recovered");
     expect(fn).toHaveBeenCalledTimes(3);
   });
 
@@ -56,7 +50,7 @@ describe("withRetry", () => {
     const result = await withRetry(fn, { maxRetries: 2, stepName: "test" });
 
     expect(result.ok).toBe(false);
-    expect(result.error).toBe(codeErr);
+    if (isStepFailure(result)) expect(result.error).toBe(codeErr);
     expect(fn).toHaveBeenCalledTimes(1);
   });
 
@@ -94,7 +88,7 @@ describe("withRetry", () => {
     const result = await withRetry(fn, { maxRetries: 3, stepName: "test" });
 
     expect(result.ok).toBe(true);
-    expect(result.data).toBe("ok");
+    if (isStepSuccess(result)) expect(result.data).toBe("ok");
     expect(fn).toHaveBeenCalledTimes(2);
   });
 
@@ -104,8 +98,10 @@ describe("withRetry", () => {
     const result = await withRetry(fn, { maxRetries: 1, stepName: "test" });
 
     expect(result.ok).toBe(false);
-    expect(result.error?.isInfrastructure).toBe(true);
-    expect(result.error?.message).toContain("ECONNREFUSED");
+    if (isStepFailure(result)) {
+      expect(result.error.isInfrastructure).toBe(true);
+      expect(result.error.message).toContain("ECONNREFUSED");
+    }
   });
 
   it("recovers after a thrown infrastructure error", async () => {
@@ -117,7 +113,7 @@ describe("withRetry", () => {
     const result = await withRetry(fn, { maxRetries: 2, stepName: "test" });
 
     expect(result.ok).toBe(true);
-    expect(result.data).toBe("recovered");
+    if (isStepSuccess(result)) expect(result.data).toBe("recovered");
     expect(fn).toHaveBeenCalledTimes(2);
   });
 
@@ -132,9 +128,6 @@ describe("withRetry", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// StepPipeline
-// ---------------------------------------------------------------------------
 describe("StepPipeline", () => {
   it("runs a single step and returns its data", async () => {
     const pipeline = new StepPipeline();

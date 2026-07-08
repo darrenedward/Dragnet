@@ -8,7 +8,7 @@ import { verifyFindings, isDocumentationFile, type CandidateFinding } from "./sr
 import { completeReviewRun, setReviewRunTokens, setReviewRunLastCheckpointAt, setReviewChunkLastCheckpointAt } from "./src/lib/reviewFreshness";
 import { safeReadFileSync, resolveSafePath } from "./src/lib/pathSafety";
 import { runDeterministicChecks, runContainerizedChecks, logReview, type DeterministicFinding } from "./src/services/deterministicChecks";
-import { StepPipeline, StepError, type StepResult } from "./src/services/stepPipeline";
+import { StepPipeline, StepError, isStepFailure, isStepSuccess, type StepResult } from "./src/services/stepPipeline";
 import { detectBuildSystem } from "./src/lib/buildsystemDetect";
 import { classifyDiff } from "./src/lib/diffClassifier";
 import { buildFindingFingerprint, resolveSymbolsBatch } from "./src/services/largePrReview/fingerprint";
@@ -1937,9 +1937,9 @@ ${diffPayload}${deterministicPayload}`;
   // Handle abort: infrastructure error or code error (no review produced).
   if (llmResult.aborted) {
     const sr = llmResult.stepResults[0]?.result;
-    if (sr && !sr.ok) {
-      const infra = sr.error?.isInfrastructure;
-      const msg = sr.error?.message || systemWarn || "LLM review failed.";
+    if (sr && isStepFailure(sr)) {
+      const infra = sr.error.isInfrastructure;
+      const msg = sr.error.message || systemWarn || "LLM review failed.";
       return {
         success: false,
         rating: null,
@@ -1958,7 +1958,8 @@ ${diffPayload}${deterministicPayload}`;
     };
   }
 
-  const llmData = llmResult.stepResults[0]?.result?.data as LlmStepData | undefined;
+  const stepResult = llmResult.stepResults[0]?.result;
+  const llmData: LlmStepData | undefined = stepResult && isStepSuccess(stepResult) ? stepResult.data : undefined;
   if (!llmData) {
     return {
       success: false,

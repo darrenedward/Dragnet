@@ -1,4 +1,4 @@
-import { StepError, type StepResult } from "./types";
+import { StepError, isStepFailure, type StepResult } from "./types";
 
 export interface RetryOptions {
   maxRetries: number;
@@ -16,15 +16,13 @@ export async function withRetry<T>(
     try {
       const result = await fn();
 
-      if (result.ok) {
+      if (isStepFailure(result)) {
+        if (result.error.isInfrastructure && attempt < maxRetries) {
+          onRetry?.(attempt + 1, result.error);
+          continue;
+        }
         return result;
       }
-
-      if (result.error?.isInfrastructure && attempt < maxRetries) {
-        onRetry?.(attempt + 1, result.error);
-        continue;
-      }
-
       return result;
     } catch (err: any) {
       const stepError = err instanceof StepError

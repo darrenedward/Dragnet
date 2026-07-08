@@ -10,11 +10,16 @@ export class StepError extends Error {
   }
 }
 
-export interface StepResult<T = void> {
-  ok: boolean;
-  data?: T;
-  error?: StepError;
-  findings?: DeterministicFinding[];
+export type StepResult<T> =
+  | { ok: true; data: T }
+  | { ok: false; error: StepError; findings?: DeterministicFinding[] };
+
+export function isStepSuccess<T>(r: StepResult<T>): r is { ok: true; data: T } {
+  return r.ok;
+}
+
+export function isStepFailure<T>(r: StepResult<T>): r is { ok: false; error: StepError; findings?: DeterministicFinding[] } {
+  return !r.ok;
 }
 
 export interface StepDefinition<T = any> {
