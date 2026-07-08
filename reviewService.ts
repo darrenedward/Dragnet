@@ -498,6 +498,10 @@ const reviewResponseSchema = {
             type: "number",
             description: "Confidence score from 0.0 to 1.0 indicating how certain you are this is a real issue. High confidence (>0.8) = definite bug. Low confidence (<0.4) = possible nitpick.",
           },
+          confidenceReason: {
+            type: "string",
+            description: "Brief justification for the confidence score — what evidence supports or undermines this finding. E.g. 'variable is user-controlled with no sanitization' or 'pattern is shared across many files but impact is limited'. Omit if the reason is obvious from the explanation.",
+          },
           evidenceChain: {
             type: "array",
             description: "Multi-hop trace showing how a bug propagates across related files or functions. List of trace points in execution path order.",
@@ -913,6 +917,7 @@ Every finding MUST include:
 - Exact file path and line number
 - Detailed explanation of WHY this is dangerous
 - A confidence score 0.0-1.0. Be ruthless, but DO NOT GUESS. False positives waste developers' time. If you do not have a high degree of confidence (>0.7) that this is a real, exploitable bug or serious anti-pattern, DO NOT report it.
+- A confidenceReason field explaining WHY you chose that score — what evidence supports it or what uncertainty remains. Keep it 1-2 sentences. Omit only if the reason is obvious from the explanation.
 - A concrete code suggestion in diffSuggestion
 - Evidence chain showing how the issue propagates
 
@@ -1731,7 +1736,7 @@ ${diffPayload}${deterministicPayload}`;
                 content:
                   "You did not submit the review. Return ONLY a valid JSON object now with this exact shape: " +
                   "{\"rating\": number from 1 to 10, \"summary\": string, \"findings\": array}. " +
-                  "Each finding MUST include: filename (a source code file path from the diff's `--- FILE: <path> ---` sections — NEVER a .md, README, CHANGELOG, docs/, or .agent-os/ file), line (number), severity, category, explanation, diffSuggestion, confidence (0-1). " +
+                  "Each finding MUST include: filename (a source code file path from the diff's `--- FILE: <path> ---` sections — NEVER a .md, README, CHANGELOG, docs/, or .agent-os/ file), line (number), severity, category, explanation, diffSuggestion, confidence (0-1), and optionally confidenceReason (justification for the confidence score). " +
                   "If you cannot cite a specific source code file for a finding, omit that finding. " +
                   "If there are no issues, use findings: [] and a production-ready rating.",
               },
@@ -2110,6 +2115,7 @@ ${diffPayload}${deterministicPayload}`;
       diffSuggestion: finding.diffSuggestion || null,
       evidenceChain: finding.evidenceChain ? JSON.stringify(finding.evidenceChain) : null,
       confidence: finding.confidence != null ? finding.confidence : null,
+      confidenceReason: finding.confidenceReason || null,
       verificationStatus: v?.status ?? null,
       verificationNote: v?.note ?? null,
       source: finding.source ?? null,

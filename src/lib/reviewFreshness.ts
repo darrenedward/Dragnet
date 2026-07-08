@@ -117,6 +117,7 @@ export interface LatestReviewResult {
     diffSuggestion: string | null;
     evidenceChain: string | null;
     confidence: number | null;
+    confidenceReason: string | null;
     verificationStatus: string | null;
     verificationNote: string | null;
     source: string | null;
@@ -137,6 +138,7 @@ export interface LatestReviewResult {
     diffSuggestion: string | null;
     evidenceChain: string | null;
     confidence: number | null;
+    confidenceReason: string | null;
     verificationStatus: string | null;
     verificationNote: string | null;
     source: string | null;

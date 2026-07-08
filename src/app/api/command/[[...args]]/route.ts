@@ -253,7 +253,8 @@ function formatFindings(pr: any, findings: any[], sizeProfile?: PrSizeProfile): 
     out += "No findings.\n";
   } else {
     for (const f of findings) {
-      out += `### ${f.filename}:${f.line}\n**[${f.category}|${f.severity}${f.exploitability ? `|${f.exploitability}` : ""}]** (confidence: ${((f.confidence ?? 0.5) * 100).toFixed(0)}%${f.impact ? `, impact: ${f.impact}` : ""})\n${f.explanation}\n`;
+      const confPct = ((f.confidence ?? 0.5) * 100).toFixed(0);
+      out += `### ${f.filename}:${f.line}\n**[${f.category}|${f.severity}${f.exploitability ? `|${f.exploitability}` : ""}]** (confidence: ${confPct}%${f.confidenceReason ? ` — ${f.confidenceReason}` : ""}${f.impact ? `, impact: ${f.impact}` : ""})\n${f.explanation}\n`;
       if (f.diffSuggestion) {
         out += `Suggested fix:\n\`\`\`diff\n${f.diffSuggestion}\n\`\`\`\n`;
       }
@@ -339,7 +340,8 @@ async function handlePrCheckStatus(args: any, _userId: string | null): Promise<s
     out += `\n## Regressions (reappeared findings)\n\n`;
     out += `The following findings were previously resolved but have reappeared:\n\n`;
     for (const f of latest.regressions) {
-      out += `### ${f.filename}:${f.line}\n**[${f.category}|${f.severity}${f.exploitability ? `|${f.exploitability}` : ""}]** (confidence: ${((f.confidence ?? 0.5) * 100).toFixed(0)}%${f.impact ? `, impact: ${f.impact}` : ""})\n${f.explanation}\n`;
+      const confPct = ((f.confidence ?? 0.5) * 100).toFixed(0);
+      out += `### ${f.filename}:${f.line}\n**[${f.category}|${f.severity}${f.exploitability ? `|${f.exploitability}` : ""}]** (confidence: ${confPct}%${f.confidenceReason ? ` — ${f.confidenceReason}` : ""}${f.impact ? `, impact: ${f.impact}` : ""})\n${f.explanation}\n`;
       if (f.diffSuggestion) {
         out += `Suggested fix:\n\`\`\`diff\n${f.diffSuggestion}\n\`\`\`\n`;
       }

@@ -228,6 +228,7 @@ model ReviewFinding {
   diffSuggestion     String?
   evidenceChain      String?
   confidence         Float?
+  confidenceReason   String? // LLM's justification for the confidence score
   verificationStatus String?
   verificationNote   String?
   source             String?

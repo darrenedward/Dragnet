@@ -149,7 +149,10 @@ export default function FindingsList({ findings, onCopySuggestion, copyFeedback,
                       </div>
                       <div className="flex items-center gap-2">
                         {finding.confidence !== undefined && finding.confidence !== null && (
-                          <span className="text-[9px] font-mono text-slate-500 bg-slate-950 px-1.5 py-0.5 rounded border border-white/5">
+                          <span
+                            className="text-[9px] font-mono text-slate-500 bg-slate-950 px-1.5 py-0.5 rounded border border-white/5"
+                            title={finding.confidenceReason ?? undefined}
+                          >
                             {(finding.confidence * 100).toFixed(0)}%
                           </span>
                         )}

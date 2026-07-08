@@ -104,7 +104,8 @@ function formatFindings(activePR: PullRequest | undefined, findings: ReviewFindi
       lines.push(`### ${f.filename}:${f.line}`);
       lines.push(`**Category:** ${f.category}`);
       if (f.confidence !== undefined && f.confidence !== null) {
-        lines.push(`**Confidence:** ${(f.confidence * 100).toFixed(0)}%`);
+        const confidenceLine = `**Confidence:** ${(f.confidence * 100).toFixed(0)}%`;
+        lines.push(f.confidenceReason ? `${confidenceLine} — ${f.confidenceReason}` : confidenceLine);
       }
       lines.push("");
       lines.push(f.explanation);

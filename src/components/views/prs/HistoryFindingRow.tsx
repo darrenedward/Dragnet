@@ -18,6 +18,7 @@ interface HistoryFinding {
   verificationStatus?: string | null;
   source?: string | null;
   confidence?: number | null;
+  confidenceReason?: string | null;
   exploitability?: string | null;
   impact?: string | null;
 }
@@ -109,7 +110,10 @@ export default function HistoryFindingRow({ finding, rejected = false }: { findi
           </span>
         )}
         {finding.confidence !== null && finding.confidence !== undefined && (
-          <span className="text-[9px] font-mono text-slate-500 bg-slate-950 px-1.5 py-0.5 rounded border border-white/5 ml-auto">
+          <span
+            className="text-[9px] font-mono text-slate-500 bg-slate-950 px-1.5 py-0.5 rounded border border-white/5 ml-auto"
+            title={finding.confidenceReason ?? undefined}
+          >
             {(finding.confidence * 100).toFixed(0)}%
           </span>
         )}

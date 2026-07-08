@@ -76,6 +76,7 @@ export interface ReviewFinding {
   diffSuggestion: string;
   evidenceChain?: string;
   confidence?: number;
+  confidenceReason?: string;
   timestamp: string;
   verificationStatus?: "verified" | "downgraded" | "rejected" | "unverified" | null;
   verificationNote?: string | null;
