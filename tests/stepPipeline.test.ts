@@ -96,7 +96,7 @@ describe("withRetry", () => {
     const result = await withRetry(fn, { maxRetries: 2, stepName: "test" });
 
     expect(result.ok).toBe(true);
-    if (isStepSuccess(result)) expect(result.data).toBe(42);
+    expect(result).toHaveProperty("data", 42);
     expect(fn).toHaveBeenCalledTimes(1);
   });
 
@@ -111,7 +111,7 @@ describe("withRetry", () => {
     const result = await withRetry(fn, { maxRetries: 2, stepName: "test" });
 
     expect(result.ok).toBe(true);
-    if (isStepSuccess(result)) expect(result.data).toBe("recovered");
+    expect(result).toHaveProperty("data", "recovered");
     expect(fn).toHaveBeenCalledTimes(3);
   });
 
@@ -122,7 +122,7 @@ describe("withRetry", () => {
     const result = await withRetry(fn, { maxRetries: 2, stepName: "test" });
 
     expect(result.ok).toBe(false);
-    if (isStepFailure(result)) expect(result.error).toBe(codeErr);
+    expect(result).toHaveProperty("error", codeErr);
     expect(fn).toHaveBeenCalledTimes(1);
   });
 
@@ -160,7 +160,7 @@ describe("withRetry", () => {
     const result = await withRetry(fn, { maxRetries: 3, stepName: "test" });
 
     expect(result.ok).toBe(true);
-    if (isStepSuccess(result)) expect(result.data).toBe("ok");
+    expect(result).toHaveProperty("data", "ok");
     expect(fn).toHaveBeenCalledTimes(2);
   });
 
@@ -170,10 +170,8 @@ describe("withRetry", () => {
     const result = await withRetry(fn, { maxRetries: 1, stepName: "test" });
 
     expect(result.ok).toBe(false);
-    if (isStepFailure(result)) {
-      expect(result.error.isInfrastructure).toBe(true);
-      expect(result.error.message).toContain("ECONNREFUSED");
-    }
+    expect(result).toHaveProperty("error.isInfrastructure", true);
+    expect(result).toHaveProperty("error.message", expect.stringContaining("ECONNREFUSED"));
   });
 
   it("recovers after a thrown infrastructure error", async () => {
@@ -185,7 +183,7 @@ describe("withRetry", () => {
     const result = await withRetry(fn, { maxRetries: 2, stepName: "test" });
 
     expect(result.ok).toBe(true);
-    if (isStepSuccess(result)) expect(result.data).toBe("recovered");
+    expect(result).toHaveProperty("data", "recovered");
     expect(fn).toHaveBeenCalledTimes(2);
   });
 
