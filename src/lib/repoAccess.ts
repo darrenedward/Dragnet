@@ -90,6 +90,27 @@ export async function syncCloneForPr(
   if (!repo.cloneUrl) return; // nothing to sync
   const access = resolveRepoAccess(repo);
   if (access.mode !== "remote-volume") return; // belt + braces
+
+  // Pick the auth that's actually valid for THIS URL. An HTTPS cloneUrl
+  // can only be authenticated by a PAT (PAT is interpolated into the
+  // URL before fetch); an SSH cloneUrl only works with a deploy key
+  // (via GIT_SSH_COMMAND). Sending the wrong one causes git to either
+  // ignore the SSH key and prompt for Username (exit 128 → "no such
+  // device or address"), or push the bare URL with no creds.
+  const isHttps = repo.cloneUrl.startsWith("https://") || repo.cloneUrl.startsWith("http://");
+  let pat: string | undefined;
+  let deployKey: string | undefined;
+  if (isHttps) {
+    pat =
+      repo.patCipher && repo.patIv && repo.patTag
+        ? decryptSecret(repo.patCipher, repo.patIv, repo.patTag)
+        : undefined;
+    // Only fall back to deploy key if the URL is SSH.
+    if (!pat) deployKey = access.auth?.deployKey;
+  } else {
+    deployKey = access.auth?.deployKey;
+  }
+
   const { gitService } = await import("./gitService");
   await gitService.syncToBranch({
     repoId: repo.id,
@@ -97,8 +118,8 @@ export async function syncCloneForPr(
     cloneUrl: repo.cloneUrl,
     branch,
     alsoFetch: [baseBranch],
-    deployKey: access.auth?.deployKey,
-    pat: access.auth?.pat,
+    deployKey,
+    pat,
   });
 }
 
