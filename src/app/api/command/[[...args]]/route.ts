@@ -13,6 +13,7 @@ import { readPrCommitCount } from "@/src/lib/prSizeProfile.server";
 import { computeStackTopology, type PrTopologyInput } from "@/src/lib/prStackTopology";
 import { assertTier, buildDiffManifest, runLargePrReview } from "@/src/services/largePrReview";
 import { readLimits } from "@/src/lib/prSizeConfig";
+import { logReview } from "@/src/services/deterministicChecks/logging";
 import {
   computeDiffHash,
   computeReviewConfigHash,
@@ -39,16 +40,44 @@ async function startTrackedReview(pr: any, repo: any, userId: string | null): Pr
   | { sourceBranch: string; sizeProfile: PrSizeProfile }
   | { conflict: true; runId: string; startedAt: Date }
 > {
+  // Each step logs an info row to reviewLog so the sidebar's "in progress"
+  // UI shows what's happening during the 1-15s warm-up where otherwise
+  // nothing visible happens. Best-effort: logReview swallows its own errors,
+  // so a DB hiccup never blocks the scan.
+  void logReview(pr.id, `> Scan requested for ${pr.sourceBranch}`, "info");
+
   const chatChain = getChatChain();
+  void logReview(
+    pr.id,
+    `> Resolving LLM chain: ${chatChain.length} provider(s) configured${chatChain.length > 0 ? `, primary=${chatChain[0]?.model ?? "unknown"}` : " — chat review will be skipped"}`,
+    chatChain.length > 0 ? "info" : "warn",
+  );
+
   let files: any[] = [];
   if ((repo?.path || repo?.cloneUrl) && pr.sourceBranch) {
+    void logReview(pr.id, `> Syncing repository (clone path or container fetch)…`, "info");
     try {
       files = await refreshPrFiles(repo, pr.sourceBranch, pr.id);
+      void logReview(
+        pr.id,
+        `> Diff files refreshed — ${files.length} file${files.length === 1 ? "" : "s"} in scope`,
+        "info",
+      );
     } catch (e) {
       console.warn("[api] prfile refresh failed, using cached:", e);
+      void logReview(pr.id, `> WARNING: prfile refresh failed, falling back to cached files: ${(e as Error).message}`, "warn");
     }
+  } else {
+    void logReview(pr.id, `> No repo path/cloneUrl on the record, skipping file refresh`, "warn");
   }
+
   const sizeProfile = await loadPrSizeProfile(pr, repo, files.length > 0 ? files : undefined);
+  void logReview(
+    pr.id,
+    `> Size profile computed — tier=${sizeProfile.tier}, codeLines=${sizeProfile.codeLines.toLocaleString()}, files=${sizeProfile.codeFiles}/${sizeProfile.totalFiles}${sizeProfile.message ? ` (${sizeProfile.message})` : ""}`,
+    "info",
+  );
+
   const limits = readLimits();
   const manifest = buildDiffManifest(files, sizeProfile.commitCount, {
     normalMaxLines: limits.normalMaxLines,
@@ -66,8 +95,10 @@ async function startTrackedReview(pr: any, repo: any, userId: string | null): Pr
   // window that the previous assertNoActiveScan→createReviewRun→beginReview
   // sequence left open. Same helper as scan/prcheck/prepush so all four
   // entry points share identical guard semantics.
+  void logReview(pr.id, `> Acquiring scan lock…`, "info");
   const lock = await acquireReviewLock(pr.id, false);
   if (lock.status === "busy") {
+    void logReview(pr.id, `> Scan already in progress (runId=${lock.runId}), aborting`, "warn");
     return {
       conflict: true,
       runId: lock.runId,
@@ -97,6 +128,12 @@ async function startTrackedReview(pr: any, repo: any, userId: string | null): Pr
     triggerReason: "prcheck",
     createdByUserId: userId,
   });
+
+  if (tier.tier === "normal") {
+    void logReview(pr.id, `> Scan started — single-shot mode (no chunking), runId=${reviewRunId}`, "info");
+  } else {
+    void logReview(pr.id, `> Scan started — Large PR mode (${tier.tier}), splitting into chunks, runId=${reviewRunId}`, "info");
+  }
 
   const runPromise = tier.tier === "normal"
     ? runPrScan(pr.id, files, reviewRunId)

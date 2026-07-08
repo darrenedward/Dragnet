@@ -48,6 +48,12 @@ export default function LargePrModePanel({
   const reliability = reviewRun.reliability || "pending";
   const cfg = reliabilityConfig(reliability);
   const ReliabilityIcon = cfg.Icon;
+  const total = reviewRun.chunksTotal ?? chunks.length;
+  const done = reviewRun.chunksCompleted ?? 0;
+  const failed = reviewRun.chunksFailed ?? 0;
+  const skipped = reviewRun.chunksSkipped ?? 0;
+  const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+  const inFlight = chunks.find((c) => c.status === "running");
 
   return (
     <div className="border-b border-white/10 bg-slate-950/40 px-4 py-3">
@@ -63,10 +69,26 @@ export default function LargePrModePanel({
               {cfg.label}
             </span>
           </div>
+          {/* Progress bar — makes the "where are we?" question answerable at a glance
+              even when the chunk grid below visually scrambles due to async update timing. */}
+          <div className="mt-1.5 flex items-center gap-2">
+            <div className="flex-1 h-1.5 rounded-full bg-slate-800 overflow-hidden">
+              <div
+                className="h-full bg-cyan-400 transition-all duration-500"
+                style={{ width: `${pct}%` }}
+                aria-label={`${done}/${total} chunks completed`}
+              />
+            </div>
+            <span className="text-[10px] font-mono text-slate-400 tabular-nums shrink-0">
+              {done}/{total} ({pct}%)
+            </span>
+          </div>
           <div className="mt-1 text-[10px] font-mono text-slate-500">
-            {(reviewRun.chunksCompleted ?? 0)}/{reviewRun.chunksTotal ?? chunks.length} chunks completed
-            {(reviewRun.chunksFailed ?? 0) > 0 ? ` · ${reviewRun.chunksFailed} failed` : ""}
-            {(reviewRun.chunksSkipped ?? 0) > 0 ? ` · ${reviewRun.chunksSkipped} skipped` : ""}
+            {inFlight
+              ? `Scanning chunk ${chunks.findIndex((c) => c.id === inFlight.id) + 1} of ${total}: ${inFlight.label}…`
+              : done === total
+                ? `All ${total} chunks completed${failed ? ` · ${failed} failed` : ""}${skipped ? ` · ${skipped} skipped` : ""}`
+                : `${done}/${total} chunks completed${failed ? ` · ${failed} failed` : ""}${skipped ? ` · ${skipped} skipped` : ""}`}
           </div>
           <div className="mt-1 text-[10px] font-mono text-amber-300/80">
             Cross-chunk bugs may be missed in v1; split recommended for oversized PRs.
@@ -89,7 +111,7 @@ export default function LargePrModePanel({
 
       {chunks.length > 0 && (
         <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-1.5">
-          {chunks.map((chunk) => {
+          {chunks.map((chunk, idx) => {
             const status = statusConfig(chunk.status);
             const StatusIcon = status.Icon;
             const iter = iterationsByChunk?.[chunk.id];
@@ -99,6 +121,9 @@ export default function LargePrModePanel({
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-1.5 min-w-0">
                     <StatusIcon size={11} className={status.iconClass} />
+                    <span className="text-[10px] font-mono text-slate-500 shrink-0" title={`Chunk ${idx + 1} of ${chunks.length}`}>
+                      {idx + 1}/{chunks.length}
+                    </span>
                     <span className="text-[10px] font-mono text-slate-300 truncate" title={chunk.filePaths.join("\n")}>
                       {chunk.label}
                     </span>

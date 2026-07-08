@@ -25,6 +25,7 @@ import {
   RUN_CHECKPOINT_ID,
   type CheckpointState,
 } from "@/src/services/checkpointStore";
+import { logReview } from "@/src/services/deterministicChecks/logging";
 
 export async function POST(req: Request, { params }: { params: Promise<{ prId: string }> }) {
   // Route-level auth: this is the UI scan trigger (the API-key path is
@@ -36,8 +37,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
   if (prScopeErr) return NextResponse.json(prScopeErr, { status: 403 });
   await req.json().catch(() => ({}));
   console.log(`[scan] route: POST received for prId=${prId}`);
-
   const force = new URL(req.url).searchParams.get("force") === "true";
+  void logReview(prId, `> Scan requested via /api/prs/.../scan (force=${force})`, "info");
   // Phase 7 resume parameters. `resume=true` loads the prior run's
   // checkpoint and continues at the saved iteration. `fresh=true` marks
   // the prior run failed/interrupted, deletes its checkpoints, and
@@ -119,6 +120,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
         );
       }
       console.log(`[scan] route: STALE_INDEX - triggering incremental index`);
+    void logReview(prId, `> Index is stale — running incremental reindex inline…`, "info");
       if (repo.path) {
         await IndexingService.indexFolder(pr.repoId, repo.path);
         console.log(`[scan] route: incremental index complete`);
@@ -136,6 +138,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
       console.log(`[scan] route: refreshing PR files from git`);
       files = await refreshPrFiles(repo, pr.sourceBranch, prId);
       console.log(`[scan] route: got ${files.length} files`);
+    void logReview(prId, `> Diff files refreshed — ${files.length} file${files.length === 1 ? "" : "s"} in scope`, "info");
 
       // Check if Stop was clicked during the (potentially slow) file
       // collection phase. When no review lock exists yet, abortScan
@@ -167,6 +170,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
       oversizedCodeFiles: limits.oversizedCodeFiles,
     });
     const tier = assertTier(manifest);
+    const tierLines = "codeLines" in manifest && typeof manifest.codeLines === "number" ? manifest.codeLines.toLocaleString() + " code lines" : "n/a";
+    void logReview(
+      prId,
+      `> Tier detected: ${tier.tier} (${tierLines})`,
+      "info",
+    );
 
     // Merged-branch short-circuit. If the branch is fully merged into base,
     // there is nothing to review — returning a clean merged state instead
@@ -223,6 +232,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
       }
       // fresh.ok === false → narrowed to STALE_RUN / NO_RUN
       console.log(`[scan] route: cache MISS — running scan`);
+      void logReview(prId, `> Cache miss — kicking off fresh ${tier.tier} scan`, "info");
     }
 
     // Concurrency guard — shared with the command/prcheck/prepush routes.
