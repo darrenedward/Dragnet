@@ -2,9 +2,11 @@ import { randomUUID } from "node:crypto";
 import { prisma } from "@/src/lib/prisma";
 import { readLimits } from "@/src/lib/prSizeConfig";
 import { runPrScan, type ScanResult, type PrManifestEntry, type RunPrScanOptions } from "@/reviewService";
+import type { DeterministicFinding } from "@/src/services/deterministicChecks";
 import { aggregateResults } from "./aggregator";
 import { chunkDiff } from "./chunker";
 import { assertTier, buildDiffManifest } from "./manifest";
+import { runGlobalDeterministicChecks } from "./globalDeterministicChecks";
 import { appendReport, formatReportLine } from "./reportLogger";
 import { getInstallationToken } from "@/src/lib/githubApp";
 import type {
@@ -187,6 +189,50 @@ export async function runLargePrReview({
     };
   }
 
+  // Run Tier 1 (tsc/eslint) + Tier 2 (containerized checks) ONCE before the
+  // chunk loop. Each chunk receives these pre-computed findings and skips
+  // its own deterministic scan — avoiding N redundant runs of the same
+  // compiler/linter/container tests. Infrastructure failure aborts the
+  // entire large-PR scan (no chunks run), matching existing behaviour in
+  // normal-sized PR scans (AC: "Infrastructure failure stops the scan").
+  const globalChecks = await runGlobalDeterministicChecks(reviewRunId, prId);
+  if (globalChecks.abort) {
+    await logRun(
+      prId,
+      reviewRunId,
+      repoPath,
+      `Global deterministic checks failed with infrastructure error: ${globalChecks.errorMessage ?? "unknown"}`,
+      "error",
+    );
+    await prisma.reviewRun.update({
+      where: { id: reviewRunId },
+      data: { status: "failed", completedAt: new Date(), reliability: "partial" },
+    });
+    await prisma.pullRequest.updateMany({ where: { id: prId }, data: { status: "Failed" } });
+    return {
+      success: false,
+      rating: null,
+      findings: globalChecks.findings,
+      usedModel: "none",
+      systemWarn: `Global deterministic checks failed: ${globalChecks.errorMessage ?? "infrastructure failure"}`,
+      largePrMode: true,
+      tier: effectiveTier,
+      reliability: "partial",
+      chunksTotal: plans.length,
+      chunksCompleted: 0,
+      chunksFailed: 0,
+      chunksSkipped: 0,
+      warning: effectiveWarning,
+    };
+  }
+  await logRun(
+    prId,
+    reviewRunId,
+    repoPath,
+    `Global deterministic checks: ${globalChecks.findings.length} finding(s) — results shared across ${plans.length} chunk(s)`,
+    "info",
+  );
+
   let consecutiveErrorKey: string | null = null;
   let consecutiveErrorCount = 0;
 
@@ -244,6 +290,7 @@ export async function runLargePrReview({
       prManifest: buildPrManifest(files),
       signal,
       checkpointMetadata,
+      precomputedFindings: globalChecks.findings,
     });
     if (result.ok === true) {
       // Phase 4: if a chunk returned the typed interrupted variant, stop
@@ -494,6 +541,7 @@ async function runChunkWithRetry({
   prManifest,
   signal,
   checkpointMetadata,
+  precomputedFindings,
 }: {
   prId: string;
   reviewRunId: string;
@@ -504,11 +552,16 @@ async function runChunkWithRetry({
   prManifest?: PrManifestEntry[];
   signal?: AbortSignal;
   checkpointMetadata?: { commitHash: string; diffHash: string; reviewConfigHash: string };
+  precomputedFindings?: DeterministicFinding[];
 }): Promise<{ ok: true; scan: ScanResult } | { ok: false; error: Error }> {
   let lastError: Error | null = null;
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
-      const scan = await runner(prId, plan.files, reviewRunId, chunkId, prManifest, { signal, checkpointMetadata });
+      const scan = await runner(prId, plan.files, reviewRunId, chunkId, prManifest, {
+        signal,
+        checkpointMetadata,
+        precomputedFindings,
+      });
       return { ok: true, scan };
     } catch (err: any) {
       lastError = err instanceof Error ? err : new Error(String(err));
