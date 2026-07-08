@@ -72,6 +72,29 @@ export function resolveCallsToEdges(
   const lookupFn = (k: string): string | undefined =>
     hasOwn(k) ? lookup[k] : undefined;
 
+  // Optimized suffix lookup: replaces O(C*S) full-scan with O(S) pre-index.
+  // We map the last segment of dotted (a.b) or namespaced (a::b) keys to
+  // their symbol IDs. This matches the "fuzzy" method resolution logic
+  // without the quadratic performance cost.
+  const dotSuffixMap = new Map<string, string>();
+  const colonSuffixMap = new Map<string, string>();
+
+  for (const k in lookup) {
+    if (!hasOwn(k)) continue;
+
+    const lastDot = k.lastIndexOf(".");
+    if (lastDot !== -1) {
+      const suffix = k.substring(lastDot + 1);
+      if (!dotSuffixMap.has(suffix)) dotSuffixMap.set(suffix, lookup[k]);
+    }
+
+    const lastColon = k.lastIndexOf("::");
+    if (lastColon !== -1) {
+      const suffix = k.substring(lastColon + 2);
+      if (!colonSuffixMap.has(suffix)) colonSuffixMap.set(suffix, lookup[k]);
+    }
+  }
+
   const edges: EdgeRow[] = [];
   let edgeIndex = startEdgeIndex;
 
@@ -83,14 +106,8 @@ export function resolveCallsToEdges(
 
     let toSymbolId = lookupFn(`${call.filePath}|${call.toRaw}`);
     if (!toSymbolId) {
-      const matches = Object.keys(lookup).filter(
-        (k) =>
-          hasOwn(k) &&
-          (k.endsWith(`.${call.toRaw}`) || k.endsWith(`::${call.toRaw}`)),
-      );
-      if (matches.length > 0) {
-        toSymbolId = lookup[matches[0]];
-      }
+      // Try suffix matches (method calls) from the pre-indexed maps
+      toSymbolId = dotSuffixMap.get(call.toRaw) || colonSuffixMap.get(call.toRaw);
     }
     if (!toSymbolId) {
       toSymbolId = lookupFn(call.toRaw);
