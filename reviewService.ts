@@ -1039,9 +1039,6 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
   console.log(`[scan] runPrScan: got ${files.length} files`);
   if (files.length === 0) {
     console.log(`[scan] runPrScan: 0 files, handling empty-diff PR prId=${prId}`);
-    // Check for a cached rating from a prior completed ReviewRun.
-    // Filter by reviewConfigHash when available so a config change
-    // (model, iterations, limits) invalidates the cache.
     const configHash = options?.checkpointMetadata?.reviewConfigHash;
     const prevRun = await prisma.reviewRun.findFirst({
       where: {
