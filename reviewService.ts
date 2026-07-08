@@ -1334,6 +1334,9 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
     if (reviewRunId && !reviewChunkId) {
       await completeReviewRun(reviewRunId, { status: "failed" });
     }
+    if (!reviewChunkId) {
+      await prisma.pullRequest.updateMany({ where: { id: prId }, data: { status: "Failed" } });
+    }
     return {
       success: false,
       rating: null,
@@ -1936,6 +1939,9 @@ ${diffPayload}${deterministicPayload}`;
 
   // Handle abort: infrastructure error or code error (no review produced).
   if (llmResult.aborted) {
+    if (!reviewChunkId) {
+      await prisma.pullRequest.updateMany({ where: { id: prId }, data: { status: "Failed" } });
+    }
     const sr = llmResult.stepResults[0]?.result;
     if (sr && isStepFailure(sr)) {
       const infra = sr.error.isInfrastructure;
@@ -1961,6 +1967,9 @@ ${diffPayload}${deterministicPayload}`;
   const stepResult = llmResult.stepResults[0]?.result;
   const llmData: LlmStepData | undefined = stepResult && isStepSuccess(stepResult) ? stepResult.data : undefined;
   if (!llmData) {
+    if (!reviewChunkId) {
+      await prisma.pullRequest.updateMany({ where: { id: prId }, data: { status: "Failed" } });
+    }
     return {
       success: false,
       rating: null,
