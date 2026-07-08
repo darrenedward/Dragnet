@@ -244,15 +244,17 @@ export async function getRealPrs(repo: RepoLike) {
         });
       }
 
-      // Delete DB records for branches that no longer exist on GitHub
-      // (they were closed without being merged, or the branch was deleted)
+      // Delete DB records for branches that no longer exist on GitHub so
+      // they stop appearing in the sidebar. Merged PRs are preserved
+      // (history + finding data is still valuable), but anything else
+      // that's not currently an open PR on GitHub gets cleaned up.
       const liveBranchNames = new Set(livePrs.open.map((p) => p.headRef));
       const existingPrs = await prisma.pullRequest.findMany({
         where: { repoId },
         select: { id: true, sourceBranch: true, status: true },
       });
       const staleIds = existingPrs
-        .filter((p) => !liveBranchNames.has(p.sourceBranch) && p.status === "Pending")
+        .filter((p) => !liveBranchNames.has(p.sourceBranch) && p.status !== "Merged")
         .map((p) => p.id);
       if (staleIds.length > 0) {
         await prisma.pullRequest.deleteMany({ where: { id: { in: staleIds } } });
