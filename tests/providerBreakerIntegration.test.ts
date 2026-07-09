@@ -169,10 +169,17 @@ function nvidiaResponse(body: any) {
           },
         },
       ],
+      // Token telemetry — reviewService reads `response.usage` to
+      // track cost. Without it the chain reads `undefined.usage`
+      // and the run aborts as a quality failure. The shape is
+      // intentionally tiny (zero tokens) so the test isn't
+      // sensitive to the LLM-call volume.
+      usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
     };
   }
   return {
     choices: [{ message: { role: "assistant", content: "I cannot produce a review." } }],
+    usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
   };
 }
 
@@ -230,22 +237,23 @@ describe("Phase 3.17 — 5 quality failures pause NVIDIA, 6th scan skips it", ()
 
     const { runPrScan } = await import("../reviewService");
 
-    // Minimax will also fail (no submitReview in our mock), so this
-    // throws. The load-bearing assertions are call counts, not the
-    // return value.
-    await expect(
-      runPrScan("pr-1", [
-        {
-          filename: "src/test.ts",
-          status: "modified",
-          additions: 1,
-          deletions: 1,
-          originalContent: "",
-          modifiedContent: "export const x = 1;\n",
-          diff: "+export const x = 1;\n",
-        },
-      ]),
-    ).rejects.toThrow();
+    // runPrScan no longer throws on chain-exhaustion — it resolves
+    // with success=false and a systemWarn describing the failure.
+    // The contract that matters here is: the breaker filtered NVIDIA
+    // out, and the scan completed without invoking NVIDIA's LLM call.
+    const result = await runPrScan("pr-1", [
+      {
+        filename: "src/test.ts",
+        status: "modified",
+        additions: 1,
+        deletions: 1,
+        originalContent: "",
+        modifiedContent: "export const x = 1;\n",
+        diff: "+export const x = 1;\n",
+      },
+    ]);
+    expect(result.success).toBe(false);
+    expect(result.usedModel).not.toMatch(/nvidia/i);
 
     // Critical: NVIDIA's chat.completions.create was NEVER invoked.
     // The breaker filtered it out before the loop body ran.
@@ -261,19 +269,21 @@ describe("Phase 3.17 — 5 quality failures pause NVIDIA, 6th scan skips it", ()
 
     const { runPrScan } = await import("../reviewService");
 
-    await expect(
-      runPrScan("pr-1", [
-        {
-          filename: "src/test.ts",
-          status: "modified",
-          additions: 1,
-          deletions: 1,
-          originalContent: "",
-          modifiedContent: "export const x = 1;\n",
-          diff: "+export const x = 1;\n",
-        },
-      ]),
-    ).rejects.toThrow();
+    // Below threshold: the chain includes NVIDIA. The scan resolves
+    // with a quality-failure result (NVIDIA's response here doesn't
+    // call submitReview, so it counts as a quality failure).
+    const result = await runPrScan("pr-1", [
+      {
+        filename: "src/test.ts",
+        status: "modified",
+        additions: 1,
+        deletions: 1,
+        originalContent: "",
+        modifiedContent: "export const x = 1;\n",
+        diff: "+export const x = 1;\n",
+      },
+    ]);
+    expect(result.success).toBe(false);
 
     // NVIDIA WAS invoked — still closed means still eligible.
     expect(nvidiaCreate).toHaveBeenCalled();
@@ -290,26 +300,32 @@ describe("Phase 3.18 — transport failures do not open the circuit", () => {
     // Minimax also throws — both providers fail, scan rejects. That's
     // fine; we're inspecting the health file, not the scan result.
     minimaxCreate.mockImplementation(() => transportErrorResponse());
+    // reviewService writes the breaker health file to
+    // `<repo.path>/.dragnet/provider-health.json`. The test's tmpRepo
+    // is created fresh per test (no .dragnet subdir) — the first scan
+    // would otherwise fail with ENOENT. Create the dir eagerly so
+    // we test the breaker *logic*, not the file-creation race.
+    fs.mkdirSync(path.join(tmpRepo, ".dragnet"), { recursive: true });
   });
 
   it("5 scans with transport failures leave the breaker closed", async () => {
     const { runPrScan } = await import("../reviewService");
 
     for (let i = 0; i < 5; i++) {
-      // Each scan will throw because both providers fail with 429.
-      await expect(
-        runPrScan("pr-1", [
-          {
-            filename: "src/test.ts",
-            status: "modified",
-            additions: 1,
-            deletions: 1,
-            originalContent: "",
-            modifiedContent: "export const x = 1;\n",
-            diff: "+export const x = 1;\n",
-          },
-        ]),
-      ).rejects.toThrow();
+      // runPrScan resolves with success=false on transport failures
+      // (no breaker opening, no quality failure recorded).
+      const result = await runPrScan("pr-1", [
+        {
+          filename: "src/test.ts",
+          status: "modified",
+          additions: 1,
+          deletions: 1,
+          originalContent: "",
+          modifiedContent: "export const x = 1;\n",
+          diff: "+export const x = 1;\n",
+        },
+      ]);
+      expect(result.success).toBe(false);
     }
 
     // Inspect the health file directly — transport failures must not

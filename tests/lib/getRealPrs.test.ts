@@ -242,8 +242,9 @@ describe("getRealPrs — remote-volume mode (uses runGitInRepo)", () => {
         }),
       }),
     );
-    // prFile createMany should still be called (with empty data)
-    expect(mocks.mockPrFileCreateMany).toHaveBeenCalled();
+    // prFile.createMany is skipped when there are no files (avoiding
+    // a useless empty INSERT). The PR record is still created above.
+    expect(mocks.mockPrFileCreateMany).not.toHaveBeenCalled();
   });
 
   it("marks merged branches as Merged when found via for-each-ref", async () => {

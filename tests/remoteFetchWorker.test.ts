@@ -140,7 +140,10 @@ describe("enqueue", () => {
           timeoutMs: 300_000,
         }),
       );
-      expect(mockRunRunner.mock.calls[0][0].commands[0]).toContain("git init /workspace");
+      // The script runs as a single combined `set -e && ...` shell
+      // invocation. Assert on the contents of the script, not its shape.
+      expect(mockRunRunner.mock.calls[0][0].commands[0]).toContain("git init");
+      expect(mockRunRunner.mock.calls[0][0].commands[0]).toContain("cd /workspace");
       expect(mockRunRunner.mock.calls[0][0].commands[0]).toContain("git fetch origin --prune");
       expect(mockUpdate).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -212,9 +215,11 @@ describe("enqueue", () => {
       expect(result).toBe("/workspace");
       expect(mockCreateVolume).toHaveBeenCalled();
       const command = mockRunRunner.mock.calls[0][0].commands[0];
-      // Guard prevents init if .git already exists at /workspace
-      expect(command).toContain("[ -d /workspace/.git ] ||");
-      expect(command).toContain("git init /workspace");
+      // The init + remote-set-url is wrapped in `( ... 2>/dev/null || ... )`
+      // so a pre-existing .git + remote config is tolerated on re-fetch.
+      expect(command).toContain("git init");
+      expect(command).toContain("cd /workspace");
+      expect(command).toContain("git remote add origin");
       expect(command).toContain("git fetch origin --prune");
       expect(mockUpdate).not.toHaveBeenCalledWith(
         expect.objectContaining({
@@ -237,9 +242,12 @@ describe("enqueue", () => {
       expect(result).toBe("/tmp/legacy-repo");
       expect(mockCreateVolume).not.toHaveBeenCalled();
       expect(mockRunRunner).not.toHaveBeenCalled();
+      // The host-mode fetch adds +refs/heads/*:refs/heads/* to keep
+      // remote-only branches alive (otherwise `git fetch --prune`
+      // deletes them from the local clone).
       expect(mockExecFileSync).toHaveBeenCalledWith(
         "git",
-        ["-C", "/tmp/legacy-repo", "fetch", "origin", "--prune"],
+        ["-C", "/tmp/legacy-repo", "fetch", "origin", "--prune", "+refs/heads/*:refs/heads/*"],
         expect.objectContaining({ timeout: 120_000 }),
       );
       expect(mockIndexFolder).toHaveBeenCalledWith("test-repo-1", "/tmp/legacy-repo");
