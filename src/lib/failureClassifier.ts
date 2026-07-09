@@ -36,6 +36,26 @@ export type OutcomeClass =
   | "interrupted"
   | "unknown_failure";
 
+/**
+ * Per-provider attempt record for cost telemetry. Lives here (rather than
+ * in `reviewService.ts`) so one-shot LLM callers like `skepticRerate.ts`
+ * can construct attempts without importing the 2300-line reviewService
+ * (circular-dep risk). `reviewService.ts` re-exports this for back-compat.
+ */
+export interface ProviderAttempt {
+  provider: string;
+  model: string;
+  iterationsUsed: number;
+  maxIterations: number;
+  submitReviewCalled: boolean;
+  rating: number | null;
+  error: unknown;
+  outcome: OutcomeClass;
+  promptTokens: number;
+  completionTokens: number;
+  costUsd: number;
+}
+
 export interface ClassifyInput {
   /** Thrown error or null when no exception occurred. */
   error: unknown;

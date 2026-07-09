@@ -7,7 +7,9 @@ import { randomUUID } from "node:crypto";
 import { verifyFindings, isDocumentationFile, type CandidateFinding } from "./src/services/findingVerifier";
 import { runSkepticPass, stepSeverityDown } from "./src/services/findingVerifier/skepticPass";
 import { readSkeptic } from "./src/lib/skepticConfig";
-import { recomputeRatingAfterSkeptic } from "./src/lib/skepticRating";
+import { summarizeRejects } from "./src/lib/skepticRating";
+import { rerateWithSurvivors } from "./src/services/findingVerifier/skepticRerate";
+import { reasoningOptions, supportsJsonResponseFormat } from "./src/lib/llmResponseFormat";
 import { completeReviewRun, setReviewRunTokens, setReviewRunLastCheckpointAt, setReviewChunkLastCheckpointAt } from "./src/lib/reviewFreshness";
 import { safeReadFileSync, resolveSafePath } from "./src/lib/pathSafety";
 import { runDeterministicChecks, runContainerizedChecks, logReview, type DeterministicFinding } from "./src/services/deterministicChecks";
@@ -16,7 +18,7 @@ import { detectBuildSystem } from "./src/lib/buildsystemDetect";
 import { classifyDiff } from "./src/lib/diffClassifier";
 import { buildFindingFingerprint, resolveSymbolsBatch } from "./src/services/largePrReview/fingerprint";
 import { dedupFindingsWithinRun, reconcileFindingsAcrossRuns } from "./src/services/largePrReview/reconcile";
-import { classifyProviderOutcome, type OutcomeClass } from "./src/lib/failureClassifier";
+import { classifyProviderOutcome, type OutcomeClass, type ProviderAttempt } from "./src/lib/failureClassifier";
 import { computeCost } from "./src/lib/llmPricing";
 import { recordProviderQualityFailure, recordProviderSuccess } from "./src/lib/providerHealth";
 import {
@@ -72,19 +74,12 @@ export interface ScanResult {
  * model's price entry via `computeCost()`; unknown models report $0 with a
  * console warning rather than a fabricated number.
  */
-export interface ProviderAttempt {
-  provider: string;
-  model: string;
-  iterationsUsed: number;
-  maxIterations: number;
-  submitReviewCalled: boolean;
-  rating: number | null;
-  error: unknown;
-  outcome: OutcomeClass;
-  promptTokens: number;
-  completionTokens: number;
-  costUsd: number;
-}
+// `ProviderAttempt` is imported above for internal use and re-exported
+// here for back-compat with any external consumers expecting it from
+// reviewService. The canonical home is now `src/lib/failureClassifier.ts`
+// so one-shot LLM callers (skepticRerate.ts) can construct attempts
+// without a circular dep on this 2300-line module.
+export type { ProviderAttempt };
 
 /**
  * Phase 2 cost-telemetry payload persisted to `ReviewRun.tokensUsed`.
@@ -355,85 +350,6 @@ function clearCheckpoint(
   } catch (err) {
     console.warn(`[checkpoint] failed to clear checkpoint for ${reviewRunId}/${checkpointIdFor(reviewChunkId)}:`, err);
   }
-}
-
-/**
- * Build provider-specific request options for chat.completions.create.
- *
- * Four reasoning-model families, each with its OWN top tier — they are
- * NOT interchangeable. Sending the wrong tier (e.g. `xhigh` to a Claude
- * model) 400s instantly.
- *
- * - GPT-5 family (gpt-5, gpt-5.1, gpt-5.2, gpt-5.4, gpt-5-pro):
- *     requires `max_completion_tokens` (NOT `max_tokens`) + top-level
- *     `reasoning_effort`. "xhigh" is the deepest tier. gpt-5.2 supports
- *     none/low/medium/high/xhigh; gpt-5-pro only supports "high" and
- *     silently coerces; gpt-5.1 defaults to "none" so MUST be set
- *     explicitly. ~2x latency + cost vs baseline.
- * - Anthropic Claude 4 family via OpenAI-compat endpoint (claude-sonnet-4,
- *     claude-opus-4, claude-haiku-4): `reasoning_effort` accepts
- *     low/medium/high. "high" is the top tier — there is no xhigh.
- * - Zhipu GLM 4.5+ (glm-4.5, glm-4.5-flash, glm-4.6, glm-5.x):
- *     `reasoning_effort` accepts low/medium/high/max. "max" is GLM's top
- *     tier — distinct from OpenAI's xhigh and Anthropic's high.
- * - NVIDIA Nemotron-3 (nemotron-3-ultra-*, nemotron-3-super-*,
- *     nemotron-3-nano-*): all emit heavy `reasoning_content` that
- *     exhausts `max_tokens` before the JSON finalizer can produce
- *     structured output. NVIDIA NIM accepts top-level `reasoning_effort`
- *     (NOT the `nvext` wrapper — that path produces <unk> garbage).
- *     "low" is the only tier that consistently fits the 90s JSON
- *     finalizer budget; deeper tiers (medium/high) work for the main
- *     agentic loop but time out the finalizer. Verified July 2026 on
- *     nemotron-3-super-120b-a12b: low returns clean JSON in ~1s.
- *
- * Non-reasoning providers (OpenRouter non-reasoning routes, MiniMax,
- * Ollama, LM Studio) stay on the universal `max_tokens` form and would
- * 400 on `reasoning_effort`.
- *
- * Tradeoff across all four: ~2x latency + cost vs deeper chain-of-
- * thought — for a code reviewer that's the right default. Override per
- * preset via `reasoningEffort` field if we expose it later.
- */
-function reasoningOptions(model: string, maxTokens: number): Record<string, unknown> {
-  if (/^gpt-5/i.test(model)) {
-    return {
-      reasoning_effort: "xhigh" as const,
-      max_completion_tokens: maxTokens,
-    };
-  }
-  if (/^claude-(sonnet|opus|haiku)-4/i.test(model)) {
-    return {
-      reasoning_effort: "high" as const,
-      max_tokens: maxTokens,
-    };
-  }
-  if (/^glm-(4\.[5-9]|[5-9])/i.test(model)) {
-    return {
-      reasoning_effort: "max" as const,
-      max_tokens: maxTokens,
-    };
-  }
-  if (/nemotron-3/i.test(model)) {
-    return {
-      reasoning_effort: "low" as const,
-      max_tokens: maxTokens,
-    };
-  }
-  return { max_tokens: maxTokens };
-}
-
-function supportsJsonResponseFormat(endpoint: string | null | undefined): boolean {
-  if (!endpoint) return true;
-  try {
-    const host = new URL(endpoint).host;
-    // NVIDIA's OpenAI-compatible endpoint can accept normal chat completions
-    // while hanging or 404ing on `response_format: json_object` for some
-    // hosted models. Use the plain JSON instruction path there first.
-    if (host === "integrate.api.nvidia.com") return false;
-  } catch {
-    // If the endpoint is not parseable, use the standard path.
-  }
-  return true;
 }
 
 /**
@@ -2038,7 +1954,7 @@ ${diffPayload}${deterministicPayload}`;
   // Extract LLM output for post-processing
   rating = llmData.rating;
   findings = llmData.findings;
-  const scanSummary = llmData.summary || "";
+  let scanSummary = llmData.summary || "";
   usedModel = llmData.usedModel;
   systemWarn = llmData.systemWarn;
   // Merge provider attempts from step data (step fn mutates the outer
@@ -2123,13 +2039,16 @@ ${diffPayload}${deterministicPayload}`;
     console.log(`[skeptic] disabled or no fallback — skipping`);
   }
 
-  // Recompute the rating after verifier + skeptic rejects (issue #72).
+  // Reconcile the rating with verifier + skeptic rejects (issue #72).
   //   - All rejected (verifier + skeptic combined): null the rating. The
   //     LLM was hallucinating; its score can't be trusted with zero
   //     visible findings.
-  //   - Some rejected: bump the rating up by a severity-weighted amount
-  //     per rejected finding. False positives dragged the score down;
-  //     removing them lets the score recover proportionally.
+  //   - Some rejected: re-prompt the LLM with the survivors so it can
+  //     produce a fresh holistic rating. The previous severity-weighted
+  //     bump was uncalibrated noise dressed up as a rating — violates the
+  //     "rating must be truth" project memory. The literal spec reading
+  //     is "uses the same rating logic the scan already uses, just on the
+  //     filtered set" — the scan's rating logic IS asking the LLM.
   //   - No rejects: rating unchanged.
   if (candidates.length > 0) {
     const verifierRejectedIds = new Set(
@@ -2137,31 +2056,76 @@ ${diffPayload}${deterministicPayload}`;
         .filter(({ id }) => verification.get(id)?.status === "rejected")
         .map(({ id }) => id),
     );
-    const recompute = recomputeRatingAfterSkeptic({
-      originalRating: rating,
+    const summary = summarizeRejects({
       candidates,
       verifierRejectedIds,
       skepticMap,
     });
-    const totalRejected = recompute.skepticRejectedCount + recompute.verifierRejectedCount;
-    if (recompute.allRejected) {
+
+    if (summary.allRejected) {
       console.log(
         `[scan] runPrScan: all ${candidates.length} findings rejected ` +
-          `(verifier=${recompute.verifierRejectedCount}, skeptic=${recompute.skepticRejectedCount}) ` +
+          `(verifier=${summary.verifierRejectedCount}, skeptic=${summary.skepticRejectedCount}) ` +
           `— nulling rating (was ${rating})`,
       );
       rating = null;
       systemWarn = `LLM produced ${candidates.length} findings but all were rejected ` +
-        `(${recompute.verifierRejectedCount} by verifier, ${recompute.skepticRejectedCount} by skeptic). ` +
+        `(${summary.verifierRejectedCount} by verifier, ${summary.skepticRejectedCount} by skeptic). ` +
         `Rating nulled — re-scan recommended.`;
-    } else if (recompute.adjusted) {
-      console.log(
-        `[scan] runPrScan: skeptic/verifier rejected ${totalRejected}/${candidates.length} findings ` +
-          `— adjusting rating ${rating} → ${recompute.rating}`,
-      );
-      rating = recompute.rating;
-      systemWarn = `Skeptic/verifier rejected ${totalRejected} of ${candidates.length} findings. ` +
-        `Rating adjusted from the LLM's pre-skeptic value to ${recompute.rating}/10 to reflect survivors.`;
+    } else if (summary.anyRejected && rating !== null) {
+      const originalRating = rating;
+      const survivors = candidates.filter(c => !summary.combinedRejectedIds.has(c.id));
+      const rejectedWithReasons = withIds
+        .filter(({ id }) => summary.combinedRejectedIds.has(id))
+        .map(({ id, finding }) => {
+          const verdict = skepticMap.get(id);
+          return {
+            id,
+            category: finding.category || "Unknown",
+            severity: finding.severity || "warning",
+            reason: verdict?.note || "rejected by verifier/skeptic",
+          };
+        });
+
+      const rerate = await rerateWithSurvivors({
+        survivors,
+        rejected: rejectedWithReasons,
+        originalRating,
+        originalSummary: scanSummary,
+        repoPath: repoPathForVerifier ?? null,
+      });
+
+      if (rerate.ok && rerate.rating !== null) {
+        const delta = rerate.rating - originalRating;
+        console.log(
+          `[skeptic] re-rated: ${originalRating} → ${rerate.rating} ` +
+            `(Δ${delta >= 0 ? "+" : ""}${delta}) after ${summary.totalRejected} reject(s)`,
+        );
+        rating = rerate.rating;
+        if (rerate.summary) {
+          scanSummary = rerate.summary;
+        }
+        systemWarn = `Skeptic rejected ${summary.totalRejected} of ${candidates.length} findings. ` +
+          `Rating re-evaluated by primary model: was ${originalRating}/10, now ${rating}/10.`;
+      } else {
+        console.warn(
+          `[skeptic] re-rate failed after ${summary.totalRejected} reject(s): ${rerate.error ?? "unknown"}`,
+        );
+        systemWarn = `Skeptic rejected ${summary.totalRejected} of ${candidates.length} findings, ` +
+          `but re-rating failed (${rerate.error ?? "unknown error"}). ` +
+          `Rating left at ${rating}/10 — treat with caution.`;
+      }
+
+      // Persist re-rate tokens (idempotent update — initial write below at
+      // the tokensUsed checkpoint).
+      if (reviewRunId && !reviewChunkId && rerate.attempts.length > 0) {
+        (providerAttempts as any[]).push(...rerate.attempts);
+        try {
+          await setReviewRunTokens(reviewRunId, buildTokensUsed(providerAttempts));
+        } catch (err) {
+          console.warn(`[scan] failed to persist re-rate tokensUsed:`, err);
+        }
+      }
     }
   }
 
