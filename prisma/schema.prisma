@@ -62,6 +62,8 @@ model Repository {
   repoId                 String?         @unique
   canonicalRemote        String?
   hostedMode             Boolean         @default(false)
+  ownerId                String?
+  owner                  User?           @relation("RepositoryOwner", fields: [ownerId], references: [id], onDelete: SetNull)
   reviewHistory          ReviewHistory[]
   pullRequests           PullRequest[]
   symbols                Symbol[]
@@ -70,6 +72,7 @@ model Repository {
   scanTokens             ScanToken[]
   userRepos              UserRepo[]
 
+  @@index([ownerId])
   @@map("repositories")
 }
 
@@ -324,6 +327,7 @@ model User {
   apiKeys          ApiKey[]
   reviewRuns       ReviewRun[]
   userRepos        UserRepo[]
+  ownedRepositories Repository[] @relation("RepositoryOwner")
 
   @@map("users")
 }
