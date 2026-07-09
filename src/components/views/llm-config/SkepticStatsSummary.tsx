@@ -48,15 +48,15 @@ interface StatsSnapshot {
 
 interface Props {
   /**
-   * Client-side hint of the current fallback preset, in
-   * `endpoint|chatModel` form. When present, rows whose key matches the
-   * server-reported fallback key are highlighted as "current".
-   * Null when the client doesn't yet know the fallback (still loading).
+   * No props — the component fetches everything it needs from
+   * `/api/llm/skeptic-stats` (including the current fallback key, which
+   * it uses to highlight the matching row). The parent re-renders this
+   * component via the `LLM_PRESETS_CHANGED_EVENT` window event when the
+   * fallback changes, so no prop wiring is needed.
    */
-  fallbackKey: string | null;
 }
 
-export function SkepticStatsSummary({ fallbackKey: _fallbackKey }: Props) {
+export function SkepticStatsSummary(_: Props) {
   const [snapshot, setSnapshot] = useState<StatsSnapshot | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [resetting, setResetting] = useState(false);

@@ -6,14 +6,12 @@ import {
   listProviderStats,
   rejectRate,
   resetProviderStats,
-  statsFilePath,
   WARN_MIN_ADJUDICATED,
   WARN_REJECT_RATE,
   type ProviderSkepticStats,
 } from "@/src/lib/skepticStats";
 import { breakerKeyFor } from "@/src/lib/providerHealth";
-import { getFallbackChatPreset, getPrimaryChatPreset } from "@/src/lib/llmPresets";
-import fs from "node:fs";
+import { getFallbackChatPreset } from "@/src/lib/llmPresets";
 
 /**
  * Skeptic pass cross-scan stats (issue #73).
@@ -87,9 +85,7 @@ export async function GET(req: Request) {
     const snapshots: RepoStatsSnapshot[] = [];
     for (const repo of repos) {
       const repoPath = repo.localPath || repo.path;
-      const statsPath = statsFilePath(repoPath ?? "", repo.id);
-      if (!fs.existsSync(statsPath)) continue;
-      const file = listProviderStats(repoPath ?? "", repo.id);
+      const file = listProviderStats(repoPath ?? null, repo.id);
       const providers: SkepticStatsRow[] = Object.entries(file.providers).map(
         ([key, s]) => toRow(key, s),
       );
@@ -101,17 +97,20 @@ export async function GET(req: Request) {
         providers: providers.sort((a, b) => a.key.localeCompare(b.key)),
       });
     }
+    // Always surface the configured fallback (if any). Don't hide it
+    // when primary == fallback — that case is enforced elsewhere (the
+    // same-model guard disables the pass), and hiding the row here
+    // would mask agreeable-skeptic warnings for previously-tracked
+    // fallbacks after a user reconfigures.
     const fallbackPreset = getFallbackChatPreset();
-    const primaryPreset = getPrimaryChatPreset();
-    const fallback =
-      fallbackPreset && (!primaryPreset || !samePreset(fallbackPreset, primaryPreset))
-        ? {
-            endpoint: fallbackPreset.endpoint ?? "",
-            model: fallbackPreset.chatModel ?? "",
-            key: breakerKeyFor(fallbackPreset.endpoint ?? "", fallbackPreset.chatModel ?? ""),
-            presetName: fallbackPreset.name ?? "Fallback",
-          }
-        : null;
+    const fallback = fallbackPreset
+      ? {
+          endpoint: fallbackPreset.endpoint ?? "",
+          model: fallbackPreset.chatModel ?? "",
+          key: breakerKeyFor(fallbackPreset.endpoint ?? "", fallbackPreset.chatModel ?? ""),
+          presetName: fallbackPreset.name ?? "Fallback",
+        }
+      : null;
     const body: StatsSnapshot = {
       warnRejectRate: WARN_REJECT_RATE,
       warnMinAdjudicated: WARN_MIN_ADJUDICATED,
@@ -175,8 +174,4 @@ function toRow(key: string, s: ProviderSkepticStats): SkepticStatsRow {
     agreeable: isAgreeableSkeptic(s),
     updatedAt: s.updatedAt,
   };
-}
-
-function samePreset(a: { endpoint?: string; chatModel?: string }, b: { endpoint?: string; chatModel?: string }): boolean {
-  return (a.endpoint ?? "") === (b.endpoint ?? "") && (a.chatModel ?? "") === (b.chatModel ?? "");
 }

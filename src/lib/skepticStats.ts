@@ -91,8 +91,12 @@ export function isAgreeableSkeptic(s: ProviderSkepticStats | undefined): boolean
  * Read the stats file. Returns an empty record set on missing file or
  * corrupt JSON — caller cannot recover from a malformed file, and we
  * must not block scans on one. Logged at warn (never thrown).
+ *
+ * Internal — callers go through `listProviderStats` / `recordSkepticOutcomes`
+ * / `resetProviderStats`. The disk layout is an implementation detail.
  */
-export function readStatsFile(repoPath: string, repoId?: string): SkepticStatsFile {
+function readStatsFile(repoPath: string | null, repoId?: string): SkepticStatsFile {
+  if (!repoPath && !repoId) return { providers: {} };
   const filePath = statsFilePath(repoPath, repoId);
   try {
     const raw = fs.readFileSync(filePath, "utf8");
@@ -112,9 +116,10 @@ export function readStatsFile(repoPath: string, repoId?: string): SkepticStatsFi
 /**
  * Atomic write: mkdir -p, write to `<file>.tmp` at mode 0600, rename.
  * Failures are logged and swallowed — a failed stats write must not
- * fail the scan.
+ * fail the scan. Internal — see `readStatsFile`.
  */
-export function writeStatsFile(repoPath: string, file: SkepticStatsFile, repoId?: string): void {
+function writeStatsFile(repoPath: string | null, file: SkepticStatsFile, repoId?: string): void {
+  if (!repoPath && !repoId) return;
   const filePath = statsFilePath(repoPath, repoId);
   const dir = path.dirname(filePath);
   try {
@@ -130,11 +135,16 @@ export function writeStatsFile(repoPath: string, file: SkepticStatsFile, repoId?
 /**
  * Resolve the stats file path. When `repoId` is provided, uses the
  * central scan-state path; otherwise falls back to the legacy path.
+ *
+ * Exported for tests + debugging (the disk location is useful to
+ * surface in operator tooling). Production code paths go through the
+ * higher-level read/write/record/reset helpers.
  */
-export function statsFilePath(repoPath: string, repoId?: string): string {
-  return repoId
-    ? path.join(getScanStatePath(repoId), "skeptic-stats.json")
-    : path.join(getLegacyScanStatePath(repoPath), "skeptic-stats.json");
+export function statsFilePath(repoPath: string | null, repoId?: string): string {
+  const base = repoId
+    ? getScanStatePath(repoId)
+    : getLegacyScanStatePath(repoPath ?? "");
+  return path.join(base, "skeptic-stats.json");
 }
 
 /**
@@ -159,7 +169,7 @@ export function recordSkepticOutcomes(
   }
   if (!providerKey) return;
   const now = Date.now();
-  const file = readStatsFile(repoPath ?? "", repoId);
+  const file = readStatsFile(repoPath ?? null, repoId);
   const prev = file.providers[providerKey] ?? emptyStats();
   const next: ProviderSkepticStats = {
     confirmed: prev.confirmed + (delta.confirmed ?? 0),
@@ -169,33 +179,19 @@ export function recordSkepticOutcomes(
   };
   if (presetName) next.presetName = presetName;
   file.providers[providerKey] = next;
-  writeStatsFile(repoPath ?? "", file, repoId);
-}
-
-/**
- * Return stats for one provider key. undefined when no record exists.
- */
-export function getProviderStats(
-  repoPath: string | null | undefined,
-  providerKey: string,
-  repoId?: string,
-): ProviderSkepticStats | undefined {
-  if (!repoPath && !repoId) return undefined;
-  if (!providerKey) return undefined;
-  const file = readStatsFile(repoPath ?? "", repoId);
-  return file.providers[providerKey];
+  writeStatsFile(repoPath ?? null, file, repoId);
 }
 
 /**
  * Snapshot every provider's stats. Used by the SkepticPanel to render
- * the current fallback's reject rate.
+ * the current fallback's reject rate. Returns `{ providers: {} }` when
+ * no path or no file exists.
  */
 export function listProviderStats(
   repoPath: string | null | undefined,
   repoId?: string,
 ): SkepticStatsFile {
-  if (!repoPath && !repoId) return { providers: {} };
-  return readStatsFile(repoPath ?? "", repoId);
+  return readStatsFile(repoPath ?? null, repoId);
 }
 
 /**
@@ -209,10 +205,10 @@ export function resetProviderStats(
 ): void {
   if (!repoPath && !repoId) return;
   if (!providerKey) {
-    writeStatsFile(repoPath ?? "", { providers: {} }, repoId);
+    writeStatsFile(repoPath ?? null, { providers: {} }, repoId);
     return;
   }
-  const file = readStatsFile(repoPath ?? "", repoId);
+  const file = readStatsFile(repoPath ?? null, repoId);
   delete file.providers[providerKey];
-  writeStatsFile(repoPath ?? "", file, repoId);
+  writeStatsFile(repoPath ?? null, file, repoId);
 }

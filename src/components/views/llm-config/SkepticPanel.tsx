@@ -327,7 +327,7 @@ export default function SkepticPanel() {
         </div>
       </div>
 
-      <SkepticStatsSummary fallbackKey={fallbackChat ? `${fallbackChat.endpoint}|${fallbackChat.chatModel}` : null} />
+      <SkepticStatsSummary />
 
       <div className={`p-4 bg-slate-900/40 rounded-xl border border-white/5 transition-opacity ${skeptic.enabled ? "" : "opacity-60"}`}>
         <h5 className="text-[11px] font-bold font-mono text-slate-300 uppercase tracking-wider mb-1">

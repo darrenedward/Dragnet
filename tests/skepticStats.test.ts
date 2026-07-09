@@ -22,7 +22,6 @@ import {
   emptyStats,
   isAgreeableSkeptic,
   listProviderStats,
-  readStatsFile,
   recordSkepticOutcomes,
   rejectRate,
   resetProviderStats,
@@ -153,7 +152,7 @@ describe("skepticStats — persistence", () => {
   });
 
   it("readStatsFile returns empty providers on missing file", () => {
-    const file = readStatsFile(tmpDir);
+    const file = listProviderStats(tmpDir);
     expect(file.providers).toEqual({});
   });
 
@@ -161,13 +160,13 @@ describe("skepticStats — persistence", () => {
     const statsPath = statsFilePath(tmpDir);
     fs.mkdirSync(path.dirname(statsPath), { recursive: true });
     fs.writeFileSync(statsPath, "{not valid json", { mode: 0o600 });
-    const file = readStatsFile(tmpDir);
+    const file = listProviderStats(tmpDir);
     expect(file.providers).toEqual({});
   });
 
   it("recordSkepticOutcomes creates a new record on first write", () => {
     recordSkepticOutcomes(tmpDir, KEY, { confirmed: 5, downgraded: 2, rejected: 1 });
-    const file = readStatsFile(tmpDir);
+    const file = listProviderStats(tmpDir);
     expect(file.providers[KEY]).toEqual({
       confirmed: 5,
       downgraded: 2,
@@ -180,7 +179,7 @@ describe("skepticStats — persistence", () => {
     recordSkepticOutcomes(tmpDir, KEY, { confirmed: 5, downgraded: 2, rejected: 1 });
     recordSkepticOutcomes(tmpDir, KEY, { confirmed: 3, downgraded: 0, rejected: 4 });
     recordSkepticOutcomes(tmpDir, KEY, { confirmed: 0, downgraded: 1, rejected: 0 });
-    const stats = readStatsFile(tmpDir).providers[KEY];
+    const stats = listProviderStats(tmpDir).providers[KEY];
     expect(stats?.confirmed).toBe(8);
     expect(stats?.downgraded).toBe(3);
     expect(stats?.rejected).toBe(5);
@@ -188,7 +187,7 @@ describe("skepticStats — persistence", () => {
 
   it("recordSkepticOutcomes persists presetName when provided", () => {
     recordSkepticOutcomes(tmpDir, KEY, { confirmed: 1, downgraded: 0, rejected: 0 }, undefined, "Minimax");
-    const stats = readStatsFile(tmpDir).providers[KEY];
+    const stats = listProviderStats(tmpDir).providers[KEY];
     expect(stats?.presetName).toBe("Minimax");
   });
 
@@ -201,7 +200,7 @@ describe("skepticStats — persistence", () => {
 
   it("recordSkepticOutcomes ignores empty providerKey", () => {
     recordSkepticOutcomes(tmpDir, "", { confirmed: 1, downgraded: 0, rejected: 0 });
-    expect(readStatsFile(tmpDir).providers).toEqual({});
+    expect(listProviderStats(tmpDir).providers).toEqual({});
   });
 
   it("listProviderStats returns empty when no repoPath", () => {
@@ -217,7 +216,7 @@ describe("skepticStats — persistence", () => {
       rejected: 0,
     });
     resetProviderStats(tmpDir, KEY);
-    const file = readStatsFile(tmpDir);
+    const file = listProviderStats(tmpDir);
     expect(file.providers[KEY]).toBeUndefined();
     expect(file.providers["other.example.com:model-x"]).toBeDefined();
   });
@@ -230,7 +229,7 @@ describe("skepticStats — persistence", () => {
       rejected: 0,
     });
     resetProviderStats(tmpDir);
-    expect(readStatsFile(tmpDir).providers).toEqual({});
+    expect(listProviderStats(tmpDir).providers).toEqual({});
   });
 });
 

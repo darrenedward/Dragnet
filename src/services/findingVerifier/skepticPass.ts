@@ -233,10 +233,9 @@ export async function runSkepticPass(
       max_tokens: 4096,
     });
 
-    const usage = (completion as any)?.usage ?? null;
-    const promptTokens = typeof usage?.prompt_tokens === "number" ? usage.prompt_tokens : 0;
-    const completionTokens =
-      typeof usage?.completion_tokens === "number" ? usage.completion_tokens : 0;
+    const usage = completion.usage ?? null;
+    const promptTokens = usage?.prompt_tokens ?? 0;
+    const completionTokens = usage?.completion_tokens ?? 0;
     const cost = computeCost(fallbackEntry.model, promptTokens, completionTokens);
     baseTelemetry.promptTokens = promptTokens;
     baseTelemetry.completionTokens = completionTokens;
