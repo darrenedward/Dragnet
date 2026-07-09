@@ -1,7 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { AlertCircle, Save, ShieldCheck } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { AlertCircle, Save, ShieldAlert, ShieldCheck } from "lucide-react";
+import { isSameChatModel } from "@/src/lib/skepticSameModel";
+import { fetchJson } from "@/src/lib/http";
+import { LLM_PRESETS_CHANGED_EVENT } from "./shared";
 
 /**
  * Skeptic pass panel — toggles the adversarial adjudication feature and
@@ -56,12 +59,23 @@ export default function SkepticPanel() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [saveResult, setSaveResult] = useState<{ success: boolean; message: string } | null>(null);
+  // Primary + fallback chat preset refs, fetched alongside skeptic settings
+  // so we can detect the same-model self-review trap (issue #72). null on
+  // load failure or before first fetch — the same-model guard is a no-op
+  // until we have both sides.
+  const [primaryChat, setPrimaryChat] = useState<{ endpoint: string; chatModel: string } | null>(null);
+  const [fallbackChat, setFallbackChat] = useState<{ endpoint: string; chatModel: string } | null>(null);
+
+  const sameModel = useMemo(
+    () => isSameChatModel(primaryChat, fallbackChat),
+    [primaryChat, fallbackChat],
+  );
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch("/api/llm/skeptic");
+        const res = await fetchJson("/api/llm/skeptic");
         if (!res.ok) return;
         const data = await res.json();
         if (cancelled) return;
@@ -87,7 +101,66 @@ export default function SkepticPanel() {
     };
   }, []);
 
+  // Fetch chat presets to detect the same-model self-review trap. Re-runs
+  // whenever the user saves preset changes elsewhere in the LLM config
+  // (parent dispatches LLM_PRESETS_CHANGED_EVENT on save) so the warning
+  // appears immediately if they reconfigure the fallback to match primary.
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const res = await fetchJson("/api/llm/presets");
+        if (!res.ok) return;
+        const data = await res.json();
+        if (cancelled) return;
+        const primaryId = data.primaryChatPresetId ?? data.activeChatPresetId ?? "";
+        const fallbackId = data.fallbackChatPresetId ?? "";
+        const findById = (id: string) =>
+          (data.presets ?? []).find((p: { id: string }) => p.id === id) ?? null;
+        const primary = findById(primaryId);
+        const fallback = findById(fallbackId);
+        setPrimaryChat(
+          primary ? { endpoint: primary.endpoint ?? "", chatModel: primary.chatModel ?? "" } : null,
+        );
+        setFallbackChat(
+          fallback ? { endpoint: fallback.endpoint ?? "", chatModel: fallback.chatModel ?? "" } : null,
+        );
+      } catch (err) {
+        console.error("Failed loading chat presets for skeptic guard:", err);
+      }
+    };
+    load();
+    const onChange = () => {
+      if (!cancelled) load();
+    };
+    if (typeof window !== "undefined") {
+      window.addEventListener(LLM_PRESETS_CHANGED_EVENT, onChange);
+    }
+    return () => {
+      cancelled = true;
+      if (typeof window !== "undefined") {
+        window.removeEventListener(LLM_PRESETS_CHANGED_EVENT, onChange);
+      }
+    };
+  }, []);
+
+  // Same-model auto-disable (issue #72): when the fallback matches the
+  // primary, the skeptic pass is self-review with no signal. Force the
+  // toggle off so a stale `enabled: true` from before the reconfiguration
+  // can't silently ship useless scans. The toggle stays interactive=false
+  // until the user fixes the underlying preset mismatch in the Chat tab.
+  useEffect(() => {
+    if (sameModel && skeptic.enabled) {
+      setSkeptic((prev) => ({ ...prev, enabled: false }));
+      setDirty(true);
+    }
+  }, [sameModel, skeptic.enabled]);
+
   const toggle = () => {
+    // Same-model guard: never let the user flip the toggle on when the
+    // fallback equals the primary. The useEffect above also forces enabled
+    // back to false, but blocking here avoids the flicker.
+    if (sameModel) return;
     setSkeptic((prev) => ({ ...prev, enabled: !prev.enabled }));
     setDirty(true);
   };
@@ -135,18 +208,25 @@ export default function SkepticPanel() {
     setIsSaving(true);
     setSaveResult(null);
     try {
-      const res = await fetch("/api/llm/skeptic", {
+      // Defense in depth: if the UI somehow let enabled=true through while
+      // the fallback matches the primary, strip it before persisting. The
+      // scan engine's own guard would skip the pass anyway, but the file
+      // shouldn't carry a setting that can never produce signal.
+      const payload = sameModel ? { ...skeptic, enabled: false } : skeptic;
+      const res = await fetchJson("/api/llm/skeptic", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(skeptic),
+        body: JSON.stringify(payload),
       });
       const data = await res.json();
       if (res.ok && data.ok) {
         setSaveResult({
           success: true,
-          message: skeptic.enabled
+          message: payload.enabled
             ? "Enabled. Next scan adjudicates gated findings via the fallback model."
-            : "Disabled. Next scan behaves as before.",
+            : sameModel
+              ? "Disabled — fallback chat model matches primary (same-model self-review)."
+              : "Disabled. Next scan behaves as before.",
         });
         setDirty(false);
         window.dispatchEvent(new Event("dragnet:skeptic-changed"));
@@ -196,17 +276,44 @@ export default function SkepticPanel() {
                 <strong className="text-rose-400">Reject</strong> — finding is a false positive; filtered from the active list (still visible in the rejected audit list).
               </li>
             </ul>
-            <label className="flex items-center gap-2.5 cursor-pointer group">
+            <label
+              className={`flex items-center gap-2.5 group ${sameModel ? "cursor-not-allowed opacity-60" : "cursor-pointer"}`}
+              title={
+                sameModel
+                  ? "Fallback chat model matches primary — same-model self-review produces no signal. Change one of them in the PR Reviewer (Chat) tab to enable."
+                  : undefined
+              }
+            >
               <input
                 type="checkbox"
                 checked={skeptic.enabled}
                 onChange={toggle}
-                className="w-4 h-4 accent-fuchsia-500 cursor-pointer"
+                disabled={sameModel}
+                className="w-4 h-4 accent-fuchsia-500 cursor-pointer disabled:cursor-not-allowed"
               />
               <span className="text-xs font-mono text-slate-300 group-hover:text-white transition-colors">
                 Enable skeptic pass
               </span>
             </label>
+            {sameModel && (
+              <div className="mt-3 text-[11px] text-amber-300 bg-amber-500/[0.06] border border-amber-500/25 p-3 rounded-lg flex items-start gap-2">
+                <ShieldAlert size={13} className="shrink-0 mt-0.5 text-amber-400" />
+                <div className="space-y-1.5">
+                  <div className="font-mono uppercase tracking-wider text-[10px] text-amber-400">
+                    Same-model self-review — pass disabled
+                  </div>
+                  <div>
+                    Your fallback chat model points at the same endpoint + model as the primary
+                    (<code className="text-amber-200">{primaryChat?.endpoint || "unknown"}</code>
+                    {" / "}
+                    <code className="text-amber-200">{primaryChat?.chatModel || "unknown"}</code>).
+                    The skeptic pass would be the same model re-grading its own output — same blind
+                    spots, no signal. Change one of them in the{" "}
+                    <strong>PR Reviewer (Chat)</strong> tab to re-enable.
+                  </div>
+                </div>
+              </div>
+            )}
             <div className="mt-3 text-[10px] text-amber-500/85 bg-amber-500/[0.02] border border-amber-500/10 p-2.5 rounded-lg flex items-start gap-2">
               <AlertCircle size={11} className="shrink-0 mt-0.5" />
               <span>

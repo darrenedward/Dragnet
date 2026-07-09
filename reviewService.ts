@@ -7,6 +7,7 @@ import { randomUUID } from "node:crypto";
 import { verifyFindings, isDocumentationFile, type CandidateFinding } from "./src/services/findingVerifier";
 import { runSkepticPass, stepSeverityDown } from "./src/services/findingVerifier/skepticPass";
 import { readSkeptic } from "./src/lib/skepticConfig";
+import { recomputeRatingAfterSkeptic } from "./src/lib/skepticRating";
 import { completeReviewRun, setReviewRunTokens, setReviewRunLastCheckpointAt, setReviewChunkLastCheckpointAt } from "./src/lib/reviewFreshness";
 import { safeReadFileSync, resolveSafePath } from "./src/lib/pathSafety";
 import { runDeterministicChecks, runContainerizedChecks, logReview, type DeterministicFinding } from "./src/services/deterministicChecks";
@@ -2122,13 +2123,46 @@ ${diffPayload}${deterministicPayload}`;
     console.log(`[skeptic] disabled or no fallback — skipping`);
   }
 
-  // If every finding was rejected, the LLM's rating was based on hallucinated
-  // or invalid observations. Null it so the UI shows "re-scan needed" rather
-  // than a misleading score with zero visible findings.
-  if (candidates.length > 0 && rejectedCount === candidates.length) {
-    console.log(`[scan] runPrScan: all ${candidates.length} findings rejected — nulling rating (was ${rating})`);
-    rating = null;
-    systemWarn = `LLM produced ${candidates.length} findings but all were rejected by the verifier (cited files missing, wrong, or documentation). Rating nulled — re-scan recommended.`;
+  // Recompute the rating after verifier + skeptic rejects (issue #72).
+  //   - All rejected (verifier + skeptic combined): null the rating. The
+  //     LLM was hallucinating; its score can't be trusted with zero
+  //     visible findings.
+  //   - Some rejected: bump the rating up by a severity-weighted amount
+  //     per rejected finding. False positives dragged the score down;
+  //     removing them lets the score recover proportionally.
+  //   - No rejects: rating unchanged.
+  if (candidates.length > 0) {
+    const verifierRejectedIds = new Set(
+      withIds
+        .filter(({ id }) => verification.get(id)?.status === "rejected")
+        .map(({ id }) => id),
+    );
+    const recompute = recomputeRatingAfterSkeptic({
+      originalRating: rating,
+      candidates,
+      verifierRejectedIds,
+      skepticMap,
+    });
+    const totalRejected = recompute.skepticRejectedCount + recompute.verifierRejectedCount;
+    if (recompute.allRejected) {
+      console.log(
+        `[scan] runPrScan: all ${candidates.length} findings rejected ` +
+          `(verifier=${recompute.verifierRejectedCount}, skeptic=${recompute.skepticRejectedCount}) ` +
+          `— nulling rating (was ${rating})`,
+      );
+      rating = null;
+      systemWarn = `LLM produced ${candidates.length} findings but all were rejected ` +
+        `(${recompute.verifierRejectedCount} by verifier, ${recompute.skepticRejectedCount} by skeptic). ` +
+        `Rating nulled — re-scan recommended.`;
+    } else if (recompute.adjusted) {
+      console.log(
+        `[scan] runPrScan: skeptic/verifier rejected ${totalRejected}/${candidates.length} findings ` +
+          `— adjusting rating ${rating} → ${recompute.rating}`,
+      );
+      rating = recompute.rating;
+      systemWarn = `Skeptic/verifier rejected ${totalRejected} of ${candidates.length} findings. ` +
+        `Rating adjusted from the LLM's pre-skeptic value to ${recompute.rating}/10 to reflect survivors.`;
+    }
   }
 
   // Batch-resolve symbol IDs for all findings up front so each finding's
