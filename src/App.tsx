@@ -167,6 +167,8 @@ export default function App() {
           <DashboardTitleBar
             activeTab={activeTab}
             setActiveTab={setActiveTab}
+            activeRepo={activeRepo}
+            selectedRepoId={d.selectedRepoId}
           />
 
           {/* Core Content Switching Frame */}

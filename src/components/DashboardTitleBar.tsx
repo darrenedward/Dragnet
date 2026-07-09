@@ -1,11 +1,13 @@
 "use client";
 
 import { Activity, Code2, Cpu, Database, GitBranch, ListTodo, Network, Users } from "lucide-react";
-import type { ActiveTab } from "../lib/types";
+import type { ActiveTab, Repository } from "../lib/types";
 
 interface Props {
   activeTab: ActiveTab;
   setActiveTab: (tab: ActiveTab) => void;
+  activeRepo?: Repository;
+  selectedRepoId: string;
 }
 
 const TAB_TITLES: Record<ActiveTab, string> = {
@@ -19,18 +21,26 @@ const TAB_TITLES: Record<ActiveTab, string> = {
 };
 
 /**
- * Top-of-content-pane header: section title + horizontal tab switcher.
- * The active repo / PR chip used to live here but was redundant with the
- * sidebar's selection state — removed. Extracted from App.tsx to keep
- * the root component under the 500-line cap.
+ * Top-of-content-pane header: active project chip + section title +
+ * horizontal tab switcher. The PR title used to live next to the chip
+ * but was redundant with the sidebar's PR list — removed. Extracted
+ * from App.tsx to keep the root component under the 500-line cap.
  */
 export default function DashboardTitleBar({
   activeTab,
   setActiveTab,
+  activeRepo,
+  selectedRepoId,
 }: Props) {
   return (
     <div className="p-4 sm:p-5 border-b border-white/5 flex flex-col sm:flex-row sm:items-end justify-between gap-4 bg-[#0F1219]/30 shrink-0">
       <div>
+        <div className="flex items-center gap-2 mb-1 min-w-0">
+          <span className="text-[10px] font-mono text-slate-500 uppercase tracking-wider">Active Project:</span>
+          <span className="text-xs font-semibold font-mono text-cyan-400 bg-cyan-400/10 px-1.5 py-0.5 rounded border border-cyan-400/20 shrink-0">
+            {activeRepo?.name || selectedRepoId}
+          </span>
+        </div>
         <h2 className="text-lg sm:text-xl font-bold text-white tracking-tight flex items-center gap-2" id="workspace-main-branch-title">
           <GitBranch size={18} className="text-cyan-500" />
           <span>{TAB_TITLES[activeTab]}</span>
