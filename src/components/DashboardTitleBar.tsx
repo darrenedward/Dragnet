@@ -1,6 +1,6 @@
 "use client";
 
-import { Activity, Code2, Cpu, Database, Folder, GitBranch, ListTodo, Network, Users } from "lucide-react";
+import { Activity, Code2, Cpu, Database, GitBranch, ListTodo, Network, Users } from "lucide-react";
 import type { ActiveTab, PullRequest, Repository } from "../lib/types";
 
 interface Props {
@@ -18,7 +18,6 @@ const TAB_TITLES: Record<ActiveTab, string> = {
   codebase: "Codebase AST Indexer & Call-Graph Tracer",
   llm_config: "LLM Router Configuration",
   team: "Team & Workspace Members",
-  my_repos: "My Repos",
   db_config: "Multi-Database Data Source Settings",
 };
 
@@ -64,7 +63,6 @@ export default function DashboardTitleBar({
         <TabButton active={activeTab === "db_config"} onClick={() => setActiveTab("db_config")} icon={<Database size={13} />} label="Data Source Settings" id="tab-db-config" />
         <TabButton active={activeTab === "llm_config"} onClick={() => setActiveTab("llm_config")} icon={<Cpu size={13} />} label="Settings" id="tab-llm-config" />
         <TabButton active={activeTab === "team"} onClick={() => setActiveTab("team")} icon={<Users size={13} />} label="Team" id="tab-team" />
-        <TabButton active={activeTab === "my_repos"} onClick={() => setActiveTab("my_repos")} icon={<Folder size={13} />} label="My Repos" id="tab-my-repos" />
       </div>
     </div>
   );

@@ -29,12 +29,13 @@ import EditRepoModal from "./components/modals/editRepo";
 import RepoSettingsModal from "./components/modals/repoSettings/RepoSettingsModal";
 import WebhookPrompt from "./components/modals/addRepo/WebhookPrompt";
 import TeamPanel from "./components/views/team/TeamPanel";
-import MyReposView from "./components/views/MyReposView";
+import RepoKeyModal from "./components/modals/repoKey/RepoKeyModal";
 import FirstKeyPrompt from "./components/FirstKeyPrompt";
 import DashboardTitleBar from "./components/DashboardTitleBar";
 import { useDashboardData } from "./hooks/useDashboardData";
 import { useEditRepo } from "./hooks/useEditRepo";
 import { fetchJson } from "./lib/http";
+import { authClient } from "./lib/auth-client";
 import { type ActiveTab, type ConfigHealthReport, type Repository } from "./lib/types";
 
 export default function App() {
@@ -43,6 +44,9 @@ export default function App() {
   const [pendingWebhook, setPendingWebhook] = useState<{ repoId: string; repoName: string; hasPat: boolean } | null>(null);
   const [settingsRepo, setSettingsRepo] = useState<Repository | null>(null);
   const [configHealth, setConfigHealth] = useState<ConfigHealthReport | null>(null);
+  const [keyModalRepo, setKeyModalRepo] = useState<{ id: string; name: string } | null>(null);
+  const { data: sessionData } = authClient.useSession();
+  const currentUserId = (sessionData?.user as { id?: string } | undefined)?.id ?? null;
 
   const d = useDashboardData();
   const ed = useEditRepo({
@@ -146,6 +150,8 @@ export default function App() {
           }}
           onEditRepo={(repo) => ed.openEditor(repo)}
           onRepoSettings={(repo) => setSettingsRepo(repo)}
+          onMintKey={(repo) => setKeyModalRepo(repo)}
+          currentUserId={currentUserId}
           prs={d.prs}
           selectedPrId={d.selectedPrId}
           onSelectPr={(prId) => {
@@ -189,8 +195,6 @@ export default function App() {
               {activeTab === "llm_config" && <LlmConfigView />}
 
                {activeTab === "team" && <TeamPanel />}
-
-               {activeTab === "my_repos" && <MyReposView />}
 
               {activeTab === "codebase" && (
                 <motion.div
@@ -395,6 +399,17 @@ export default function App() {
               }
               setSettingsRepo(null);
             }}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* MODAL: Per-repo API key mint (extracted from MyReposView for #69) */}
+      <AnimatePresence>
+        {keyModalRepo && (
+          <RepoKeyModal
+            repoId={keyModalRepo.id}
+            repoName={keyModalRepo.name}
+            onClose={() => setKeyModalRepo(null)}
           />
         )}
       </AnimatePresence>
