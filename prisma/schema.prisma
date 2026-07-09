@@ -405,13 +405,17 @@ model Member {
 
 model Invitation {
   id             String       @id @default(cuid())
-  organizationId String
+  // Nullable from #69: the new invite flow is per-repo (verified
+  // via `verifyInviterIsOwnerOrAdmin`), not org-scoped. Legacy rows
+  // created before #69 still link to an Organization and continue
+  // to work.
+  organizationId String?
   email          String
   role           String
   status         String       @default("pending")
   expiresAt      DateTime
   inviterId      String?
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
   @@map("invitations")
 }

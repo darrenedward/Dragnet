@@ -14,11 +14,18 @@
 //     leave the row alone — PR 2's create-time capture will fill it
 //     when the next repo is registered, and existing repos with no
 //     admin invite stay null until a human decides what to do.
+//
+// In BOTH modes, after assigning `ownerId`, the script also upserts
+// a `UserRepo` row with `role: "admin"`, `invitedById: ownerId`
+// (self-invite). This mirrors the post-#69 create-time behavior
+// (`captureRepoOwnership`) so migrated owners can mint per-repo API
+// keys from the sidebar without manual backfill of `UserRepo` rows.
 
 export type BackfillReport = {
   examined: number;
   updated: number;
   skipped: number;
+  userRepoUpserted: number;
 };
 
 export type BackfillOptions = {
@@ -30,6 +37,7 @@ export type BackfillOptions = {
     };
     userRepo: {
       findMany: (args: any) => Promise<Array<{ userId: string; repoId: string; role: string; invitedAt: Date }>>;
+      upsert: (args: any) => Promise<unknown>;
     };
     user: {
       findFirst: (args: any) => Promise<{ id: string } | null>;
@@ -41,7 +49,8 @@ export type BackfillOptions = {
  * Pure function — exposed for unit tests. Takes a prisma-shaped client
  * to keep the seam simple (no need to import @prisma/client in tests).
  * Finds every Repository where `ownerId` is null, then assigns an
- * owner based on `pick`.
+ * owner based on `pick` and mirrors the ownership as a UserRepo
+ * admin row (idempotent via upsert).
  */
 export async function backfillRepoOwners(
   options: BackfillOptions,
@@ -51,6 +60,16 @@ export async function backfillRepoOwners(
 
   let updated = 0;
   let skipped = 0;
+  let userRepoUpserted = 0;
+
+  const mirrorOwner = async (repoId: string, ownerId: string) => {
+    await db.userRepo.upsert({
+      where: { userId_repoId: { userId: ownerId, repoId } },
+      create: { userId: ownerId, repoId, role: "admin", invitedById: ownerId },
+      update: {},
+    });
+    userRepoUpserted++;
+  };
 
   if (options.pick === "first-admin") {
     // Multi-user path: per-repo, find the earliest admin UserRepo.
@@ -71,21 +90,23 @@ export async function backfillRepoOwners(
         continue;
       }
       await db.repository.update({ where: { id: repo.id }, data: { ownerId } });
+      await mirrorOwner(repo.id, ownerId);
       updated++;
     }
   } else {
     // Dev-fresh path: assign the first user to every null row.
     const first = await db.user.findFirst({ select: { id: true } });
     if (!first) {
-      return { examined: nullRows.length, updated: 0, skipped: nullRows.length };
+      return { examined: nullRows.length, updated: 0, skipped: nullRows.length, userRepoUpserted: 0 };
     }
     for (const repo of nullRows) {
       await db.repository.update({ where: { id: repo.id }, data: { ownerId: first.id } });
+      await mirrorOwner(repo.id, first.id);
       updated++;
     }
   }
 
-  return { examined: nullRows.length, updated, skipped };
+  return { examined: nullRows.length, updated, skipped, userRepoUpserted };
 }
 
 async function main() {

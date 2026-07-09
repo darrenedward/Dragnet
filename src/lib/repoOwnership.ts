@@ -13,19 +13,26 @@ import { prisma } from "./prisma";
  * Idempotent on the `UserRepo` side via `upsert`. The repo update
  * overwrites `ownerId` blindly — that's the intent (creation-time
  * capture is the only legitimate writer here).
+ *
+ * Both writes are wrapped in a transaction so a retry of
+ * `POST /api/repos` after a transient failure between the create
+ * and this call cannot leave the repo with two different
+ * `ownerId` values winning on retry.
  */
 export async function captureRepoOwnership(
   repoId: string,
   ownerId: string | null,
 ): Promise<void> {
   if (!ownerId) return;
-  await prisma.repository.update({
-    where: { id: repoId },
-    data: { ownerId },
-  });
-  await prisma.userRepo.upsert({
-    where: { userId_repoId: { userId: ownerId, repoId } },
-    create: { userId: ownerId, repoId, role: "admin", invitedById: ownerId },
-    update: {},
-  });
+  await prisma.$transaction([
+    prisma.repository.update({
+      where: { id: repoId },
+      data: { ownerId },
+    }),
+    prisma.userRepo.upsert({
+      where: { userId_repoId: { userId: ownerId, repoId } },
+      create: { userId: ownerId, repoId, role: "admin", invitedById: ownerId },
+      update: {},
+    }),
+  ]);
 }

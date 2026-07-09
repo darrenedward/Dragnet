@@ -62,16 +62,9 @@ export function splitSidebarRepos(
     const repo = repos.find((r) => r.id === ur.repoId);
     if (!repo) continue; // orphan UserRepo — repo was deleted
     if (repo.ownerId === currentUserId) continue; // owner, not shared
-    const existing = sharedMap.get(ur.repoId);
-    if (existing) {
-      // Multiple UserRepo rows for the same (user, repo) shouldn't
-      // happen — the schema enforces @@unique([userId, repoId]) — but
-      // if it does, keep the highest-privileged role.
-      if (ur.role === "admin" && existing.role !== "admin") {
-        existing.role = "admin";
-      }
-      continue;
-    }
+    // Schema enforces @@unique([userId, repoId]) on UserRepo, so
+    // the same repo can appear at most once for a given user. No
+    // dedup / "keep highest role" branching needed.
     sharedMap.set(ur.repoId, {
       id: repo.id,
       name: repo.name,

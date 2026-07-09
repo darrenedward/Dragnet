@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { KeyRound, X } from "lucide-react";
+import { fetchJson } from "../../../lib/http";
 
 /**
  * One-shot modal that mints a per-repo API key for the current user
@@ -31,17 +32,21 @@ export default function RepoKeyModal({
     setGenerating(true);
     setError(null);
     try {
-      const res = await fetch("/api/keys", {
+      const res = await fetchJson("/api/keys", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: `key-${repoName}-${Date.now()}`, repoId }),
       });
-      const data = await res.json().catch(() => ({}));
+      const data = (await res.json().catch(() => ({}))) as { key?: string; prefix?: string; error?: string };
       if (!res.ok) {
         setError(data?.error || "Failed to generate key.");
         return;
       }
-      setGenerated({ key: data.key, prefix: data.prefix });
+      if (data.key && data.prefix) {
+        setGenerated({ key: data.key, prefix: data.prefix });
+      } else {
+        setError("Server returned an unexpected response.");
+      }
     } catch (e: any) {
       setError(e?.message || "Failed to generate key.");
     } finally {

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { backfillRepoOwners, type BackfillOptions } from "../scripts/backfill-repo-owners.mjs";
 
 type RepoRow = { id: string; ownerId: string | null };
-type UserRepoRow = { userId: string; repoId: string; role: string; invitedAt: Date };
+type UserRepoRow = { userId: string; repoId: string; role: string; invitedAt: Date; invitedById?: string | null };
 type UserRow = { id: string; email: string };
 
 function makeDb() {
@@ -40,6 +40,23 @@ function makeDb() {
         }
         return rows;
       },
+      upsert: async (args: any) => {
+        const idx = userRepos.findIndex(
+          (r) => r.userId === args.where.userId_repoId.userId && r.repoId === args.where.userId_repoId.repoId,
+        );
+        if (idx >= 0) {
+          return userRepos[idx];
+        }
+        const created: UserRepoRow = {
+          userId: args.create.userId,
+          repoId: args.create.repoId,
+          role: args.create.role,
+          invitedAt: new Date(),
+          invitedById: args.create.invitedById ?? null,
+        };
+        userRepos.push(created);
+        return created;
+      },
     },
     user: {
       findFirst: async () => {
@@ -63,6 +80,7 @@ describe("backfillRepoOwners", () => {
     expect(report.examined).toBe(0);
     expect(report.updated).toBe(0);
     expect(report.skipped).toBe(0);
+    expect(report.userRepoUpserted).toBe(0);
   });
 
   it("is a no-op when every repo already has an owner (idempotency)", async () => {
@@ -157,5 +175,59 @@ describe("backfillRepoOwners", () => {
     const second = await backfillRepoOwners({ pick: "first-user", prisma: fixture.db });
     expect(second.examined).toBe(0);
     expect(second.updated).toBe(0);
+  });
+
+  it("mirrors the assigned owner as a UserRepo admin row (dev-fresh path)", async () => {
+    fixture.users.set("u1", { id: "u1", email: "first@example.com" });
+    fixture.repos.set("r1", { id: "r1", ownerId: null });
+    fixture.repos.set("r2", { id: "r2", ownerId: null });
+
+    const report = await backfillRepoOwners({ pick: "first-user", prisma: fixture.db });
+    expect(report.userRepoUpserted).toBe(2);
+    const ur1 = fixture.userRepos.find((r) => r.repoId === "r1");
+    const ur2 = fixture.userRepos.find((r) => r.repoId === "r2");
+    expect(ur1).toMatchObject({ userId: "u1", role: "admin", invitedById: "u1" });
+    expect(ur2).toMatchObject({ userId: "u1", role: "admin", invitedById: "u1" });
+  });
+
+  it("mirrors the assigned owner as a UserRepo admin row (multi-user path)", async () => {
+    fixture.users.set("u2", { id: "u2", email: "admin@example.com" });
+    fixture.repos.set("r1", { id: "r1", ownerId: null });
+    // Existing UserRepo admin row (would be the source of the first-admin pick).
+    fixture.userRepos.push(
+      { userId: "u2", repoId: "r1", role: "admin", invitedAt: new Date("2026-01-01T00:00:00Z"), invitedById: "u1" },
+    );
+
+    const report = await backfillRepoOwners({ pick: "first-admin", prisma: fixture.db });
+    expect(report.userRepoUpserted).toBe(1);
+    const ur1 = fixture.userRepos.find((r) => r.repoId === "r1");
+    // The existing row is preserved (upsert with update: {} is a no-op on
+    // the existing row). The invitedById stays as the original inviter.
+    expect(ur1).toMatchObject({ userId: "u2", role: "admin", invitedById: "u1" });
+  });
+
+  it("does not duplicate the UserRepo row when one already exists (idempotent)", async () => {
+    fixture.users.set("u2", { id: "u2", email: "admin@example.com" });
+    fixture.repos.set("r1", { id: "r1", ownerId: null });
+    // Existing UserRepo admin row (would be the source of the first-admin pick).
+    fixture.userRepos.push(
+      { userId: "u2", repoId: "r1", role: "admin", invitedAt: new Date("2026-01-01T00:00:00Z"), invitedById: "u1" },
+    );
+
+    const before = fixture.userRepos.length;
+    const report = await backfillRepoOwners({ pick: "first-admin", prisma: fixture.db });
+    expect(report.userRepoUpserted).toBe(1);
+    expect(fixture.userRepos.length).toBe(before);
+    const ur1 = fixture.userRepos.find((r) => r.repoId === "r1");
+    expect(ur1?.invitedById).toBe("u1");
+  });
+
+  it("skips mirroring when no owner was assigned (multi-user with no admin)", async () => {
+    fixture.users.set("u1", { id: "u1", email: "owner@example.com" });
+    fixture.repos.set("r1", { id: "r1", ownerId: null });
+
+    const report = await backfillRepoOwners({ pick: "first-admin", prisma: fixture.db });
+    expect(report.userRepoUpserted).toBe(0);
+    expect(fixture.userRepos.length).toBe(0);
   });
 });

@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import type { LlmPresetsState, PullRequest, Repository } from "../lib/types";
 import { splitSidebarRepos, type SidebarUserRepo } from "../lib/sidebarFilters";
+import { fetchJson } from "../lib/http";
 import { ProjectsSidebar } from "./sidebar/ProjectsSidebar";
 import { GithubConnectionPane, LlmRouterPane } from "./sidebar/UtilityPanes";
 
@@ -55,10 +56,8 @@ export default function DashboardSidebar({
     let cancelled = false;
     const fetchLlmPresets = async () => {
       try {
-        const res = await fetch("/api/llm/presets");
-        if (!res.ok) return;
-        const data = await res.json();
-        if (!cancelled) setLlmPresets(data);
+        const res = await fetchJson("/api/llm/presets");
+        if (!cancelled && res.ok) setLlmPresets(await res.json());
       } catch {
         // silently leave pane empty — the LLM Settings tab is the source of truth
       }
@@ -86,10 +85,9 @@ export default function DashboardSidebar({
     let cancelled = false;
     const fetchUserRepos = async () => {
       try {
-        const res = await fetch("/api/user/repos");
-        if (!res.ok) return;
-        const data: SidebarUserRepo[] = await res.json();
-        if (!cancelled) {
+        const res = await fetchJson("/api/user/repos");
+        if (!cancelled && res.ok) {
+          const data: SidebarUserRepo[] = await res.json();
           setUserRepos(
             data.map((ur) => ({
               userId: ur.userId,
