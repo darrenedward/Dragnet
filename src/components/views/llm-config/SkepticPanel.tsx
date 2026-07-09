@@ -4,7 +4,8 @@ import { useEffect, useState } from "react";
 import { AlertCircle, Save, ShieldCheck } from "lucide-react";
 
 /**
- * Skeptic pass panel — toggles the adversarial adjudication feature.
+ * Skeptic pass panel — toggles the adversarial adjudication feature and
+ * configures which findings the fallback model adjudicates.
  *
  * When enabled AND a fallback chat model is configured, each PR scan
  * sends a single batched adversarial prompt to the fallback model after
@@ -12,14 +13,42 @@ import { AlertCircle, Save, ShieldCheck } from "lucide-react";
  * contents at each finding's cited lines and returns verdicts that
  * confirm / downgrade / reject each finding.
  *
+ * Gating: the gate fields decide which findings reach the fallback. The
+ * defaults are deliberately narrow — blocker-only, Security + Correctness,
+ * >= 0.7 confidence, deterministic findings skipped — so the fallback's
+ * budget is spent where it matters most. Loosen the gates to adjudicate
+ * more findings.
+ *
  * Persisted to `.dragnet/skeptic-settings.json` (mode 0600) via
  * PUT /api/llm/skeptic. Defaults to off.
  */
+
+type Severity = "blocker" | "warning" | "suggestion";
+
+const ALL_SEVERITIES: Severity[] = ["blocker", "warning", "suggestion"];
+const ALL_CATEGORIES = [
+  "Security",
+  "Correctness",
+  "Performance",
+  "Accessibility",
+  "Style",
+] as const;
+
 interface SkepticSettings {
   enabled: boolean;
+  gateSeverity: Severity[];
+  gateMinConfidence: number;
+  gateCategories: string[];
+  skipDeterministic: boolean;
 }
 
-const DEFAULTS: SkepticSettings = { enabled: false };
+const DEFAULTS: SkepticSettings = {
+  enabled: false,
+  gateSeverity: ["blocker"],
+  gateMinConfidence: 0.7,
+  gateCategories: ["Security", "Correctness"],
+  skipDeterministic: true,
+};
 
 export default function SkepticPanel() {
   const [skeptic, setSkeptic] = useState<SkepticSettings>(DEFAULTS);
@@ -36,7 +65,17 @@ export default function SkepticPanel() {
         if (!res.ok) return;
         const data = await res.json();
         if (cancelled) return;
-        if (data.skeptic) setSkeptic(data.skeptic);
+        const next = data.skeptic ?? DEFAULTS;
+        // Merge against defaults so older files (just {enabled}) load
+        // cleanly without losing the new gate fields in the UI state.
+        setSkeptic({
+          ...DEFAULTS,
+          ...next,
+          gateSeverity: Array.isArray(next.gateSeverity) ? next.gateSeverity : DEFAULTS.gateSeverity,
+          gateCategories: Array.isArray(next.gateCategories)
+            ? next.gateCategories
+            : DEFAULTS.gateCategories,
+        });
       } catch (err) {
         console.error("Failed loading skeptic settings:", err);
       } finally {
@@ -50,6 +89,45 @@ export default function SkepticPanel() {
 
   const toggle = () => {
     setSkeptic((prev) => ({ ...prev, enabled: !prev.enabled }));
+    setDirty(true);
+  };
+
+  const toggleSeverity = (sev: Severity) => {
+    setSkeptic((prev) => {
+      const has = prev.gateSeverity.includes(sev);
+      return {
+        ...prev,
+        gateSeverity: has
+          ? prev.gateSeverity.filter((s) => s !== sev)
+          : [...prev.gateSeverity, sev],
+      };
+    });
+    setDirty(true);
+  };
+
+  const toggleCategory = (cat: string) => {
+    setSkeptic((prev) => {
+      const has = prev.gateCategories.includes(cat);
+      return {
+        ...prev,
+        gateCategories: has
+          ? prev.gateCategories.filter((c) => c !== cat)
+          : [...prev.gateCategories, cat],
+      };
+    });
+    setDirty(true);
+  };
+
+  const setConfidence = (raw: string) => {
+    const num = parseFloat(raw);
+    if (Number.isNaN(num)) return;
+    const clamped = Math.max(0, Math.min(1, num));
+    setSkeptic((prev) => ({ ...prev, gateMinConfidence: clamped }));
+    setDirty(true);
+  };
+
+  const toggleSkipDeterministic = () => {
+    setSkeptic((prev) => ({ ...prev, skipDeterministic: !prev.skipDeterministic }));
     setDirty(true);
   };
 
@@ -67,7 +145,7 @@ export default function SkepticPanel() {
         setSaveResult({
           success: true,
           message: skeptic.enabled
-            ? "Enabled. Next scan adjudicates findings via the fallback model."
+            ? "Enabled. Next scan adjudicates gated findings via the fallback model."
             : "Disabled. Next scan behaves as before.",
         });
         setDirty(false);
@@ -141,6 +219,119 @@ export default function SkepticPanel() {
         </div>
       </div>
 
+      <div className={`p-4 bg-slate-900/40 rounded-xl border border-white/5 transition-opacity ${skeptic.enabled ? "" : "opacity-60"}`}>
+        <h5 className="text-[11px] font-bold font-mono text-slate-300 uppercase tracking-wider mb-1">
+          Adjudication gate
+        </h5>
+        <p className="text-[11px] text-slate-500 leading-relaxed mb-4">
+          Findings that fail the gate stay as the primary model produced them — they're never
+          sent to the fallback. The defaults (blocker only, ≥ 70% confidence, Security +
+          Correctness, deterministic skipped) are tuned to spend the fallback's budget on the
+          findings most likely to be worth challenging.
+        </p>
+
+        <div className="space-y-4">
+          <GateRow label="Severity levels">
+            <div className="flex flex-wrap gap-2">
+              {ALL_SEVERITIES.map((sev) => {
+                const active = skeptic.gateSeverity.includes(sev);
+                return (
+                  <button
+                    key={sev}
+                    type="button"
+                    onClick={() => toggleSeverity(sev)}
+                    disabled={!skeptic.enabled}
+                    className={`px-2.5 py-1 rounded-md text-[11px] font-mono border transition-colors cursor-pointer disabled:cursor-not-allowed ${
+                      active
+                        ? "bg-fuchsia-500/15 text-fuchsia-300 border-fuchsia-500/30"
+                        : "bg-slate-800/50 text-slate-400 border-white/5 hover:border-white/10"
+                    }`}
+                  >
+                    {sev}
+                  </button>
+                );
+              })}
+            </div>
+          </GateRow>
+
+          <GateRow label="Minimum confidence">
+            <div className="flex items-center gap-3 flex-1">
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.05}
+                value={skeptic.gateMinConfidence}
+                onChange={(e) => setConfidence(e.target.value)}
+                disabled={!skeptic.enabled}
+                className="flex-1 accent-fuchsia-500 cursor-pointer disabled:cursor-not-allowed"
+              />
+              <input
+                type="number"
+                min={0}
+                max={1}
+                step={0.05}
+                value={skeptic.gateMinConfidence}
+                onChange={(e) => setConfidence(e.target.value)}
+                disabled={!skeptic.enabled}
+                className="w-20 px-2 py-1 bg-slate-800/60 text-slate-200 text-[11px] font-mono rounded border border-white/5 focus:outline-none focus:border-fuchsia-500/40 disabled:cursor-not-allowed"
+              />
+              <span className="text-[10px] text-slate-500 font-mono whitespace-nowrap">
+                ({(skeptic.gateMinConfidence * 100).toFixed(0)}%)
+              </span>
+            </div>
+            <p className="text-[10px] text-slate-500 mt-1.5">
+              Findings with no confidence value pass the gate — absence isn't evidence of low confidence.
+            </p>
+          </GateRow>
+
+          <GateRow label="Categories">
+            <div className="flex flex-wrap gap-2">
+              {ALL_CATEGORIES.map((cat) => {
+                const active = skeptic.gateCategories.includes(cat);
+                return (
+                  <button
+                    key={cat}
+                    type="button"
+                    onClick={() => toggleCategory(cat)}
+                    disabled={!skeptic.enabled}
+                    className={`px-2.5 py-1 rounded-md text-[11px] font-mono border transition-colors cursor-pointer disabled:cursor-not-allowed ${
+                      active
+                        ? "bg-fuchsia-500/15 text-fuchsia-300 border-fuchsia-500/30"
+                        : "bg-slate-800/50 text-slate-400 border-white/5 hover:border-white/10"
+                    }`}
+                  >
+                    {cat}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="text-[10px] text-slate-500 mt-1.5">
+              Empty list = nothing clears the gate. Pick at least one category or disable the pass.
+            </p>
+          </GateRow>
+
+          <GateRow label="Deterministic findings">
+            <label className="flex items-center gap-2.5 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={skeptic.skipDeterministic}
+                onChange={toggleSkipDeterministic}
+                disabled={!skeptic.enabled}
+                className="w-4 h-4 accent-fuchsia-500 cursor-pointer disabled:cursor-not-allowed"
+              />
+              <span className="text-[11px] font-mono text-slate-300">
+                Skip tsc / eslint / runner findings
+              </span>
+            </label>
+            <p className="text-[10px] text-slate-500 mt-1.5">
+              Deterministic findings come from a tool the user trusts. Skipping them keeps the
+              fallback from second-guessing ground truth.
+            </p>
+          </GateRow>
+        </div>
+      </div>
+
       <div className="flex flex-wrap items-center gap-3 pt-2 border-t border-white/5">
         <button
           type="button"
@@ -168,6 +359,17 @@ export default function SkepticPanel() {
           </span>
         )}
       </div>
+    </div>
+  );
+}
+
+function GateRow({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-[160px_1fr] gap-1 sm:gap-4 items-start">
+      <div className="text-[11px] font-mono text-slate-400 uppercase tracking-wider pt-1">
+        {label}
+      </div>
+      <div>{children}</div>
     </div>
   );
 }

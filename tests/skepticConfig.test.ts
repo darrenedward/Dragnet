@@ -73,12 +73,78 @@ describe("skepticConfig — readSkeptic", () => {
     const { readSkeptic, DEFAULT_SKEPTIC } = await import("../src/lib/skepticConfig");
     expect(readSkeptic()).toEqual(DEFAULT_SKEPTIC);
   });
+
+  it("DEFAULT_SKEPTIC has the issue #71 defaults", async () => {
+    const { DEFAULT_SKEPTIC } = await import("../src/lib/skepticConfig");
+    expect(DEFAULT_SKEPTIC.gateSeverity).toEqual(["blocker"]);
+    expect(DEFAULT_SKEPTIC.gateMinConfidence).toBe(0.7);
+    expect(DEFAULT_SKEPTIC.gateCategories).toEqual(["Security", "Correctness"]);
+    expect(DEFAULT_SKEPTIC.skipDeterministic).toBe(true);
+  });
+
+  it("back-fills gate fields for legacy #70 files (only enabled set)", async () => {
+    fs.mkdirSync(path.join(tmpDir, ".dragnet"));
+    fs.writeFileSync(
+      path.join(tmpDir, ".dragnet", "skeptic-settings.json"),
+      JSON.stringify({ enabled: true }),
+      { mode: 0o600 },
+    );
+    const { readSkeptic, DEFAULT_SKEPTIC } = await import("../src/lib/skepticConfig");
+    const result = readSkeptic();
+    expect(result.enabled).toBe(true);
+    // Missing gate fields inherit defaults so old files keep working
+    // without a migration.
+    expect(result.gateSeverity).toEqual(DEFAULT_SKEPTIC.gateSeverity);
+    expect(result.gateMinConfidence).toBe(DEFAULT_SKEPTIC.gateMinConfidence);
+    expect(result.gateCategories).toEqual(DEFAULT_SKEPTIC.gateCategories);
+    expect(result.skipDeterministic).toBe(DEFAULT_SKEPTIC.skipDeterministic);
+  });
+
+  it("round-trips full gate config through readSkeptic", async () => {
+    fs.mkdirSync(path.join(tmpDir, ".dragnet"));
+    const custom = {
+      enabled: true,
+      gateSeverity: ["blocker", "warning"],
+      gateMinConfidence: 0.5,
+      gateCategories: ["Performance"],
+      skipDeterministic: false,
+    };
+    fs.writeFileSync(
+      path.join(tmpDir, ".dragnet", "skeptic-settings.json"),
+      JSON.stringify(custom),
+      { mode: 0o600 },
+    );
+    const { readSkeptic } = await import("../src/lib/skepticConfig");
+    expect(readSkeptic()).toEqual(custom);
+  });
+
+  it("clamps gateMinConfidence into [0, 1]", async () => {
+    fs.mkdirSync(path.join(tmpDir, ".dragnet"));
+    fs.writeFileSync(
+      path.join(tmpDir, ".dragnet", "skeptic-settings.json"),
+      JSON.stringify({ enabled: true, gateMinConfidence: 5 }),
+      { mode: 0o600 },
+    );
+    const { readSkeptic } = await import("../src/lib/skepticConfig");
+    expect(readSkeptic().gateMinConfidence).toBe(1);
+  });
+
+  it("drops invalid severities from gateSeverity", async () => {
+    fs.mkdirSync(path.join(tmpDir, ".dragnet"));
+    fs.writeFileSync(
+      path.join(tmpDir, ".dragnet", "skeptic-settings.json"),
+      JSON.stringify({ enabled: true, gateSeverity: ["blocker", "bogus", "warning"] }),
+      { mode: 0o600 },
+    );
+    const { readSkeptic } = await import("../src/lib/skepticConfig");
+    expect(readSkeptic().gateSeverity).toEqual(["blocker", "warning"]);
+  });
 });
 
 describe("skepticConfig — saveSkeptic", () => {
   it("writes file with mode 0600 atomically", async () => {
-    const { saveSkeptic, readSkeptic } = await import("../src/lib/skepticConfig");
-    await saveSkeptic({ enabled: true });
+    const { saveSkeptic, readSkeptic, DEFAULT_SKEPTIC } = await import("../src/lib/skepticConfig");
+    await saveSkeptic({ ...DEFAULT_SKEPTIC, enabled: true });
     const filePath = path.join(tmpDir, ".dragnet", "skeptic-settings.json");
     expect(fs.existsSync(filePath)).toBe(true);
     const stat = fs.statSync(filePath);
@@ -88,8 +154,8 @@ describe("skepticConfig — saveSkeptic", () => {
   });
 
   it("round-trips through cache (no second disk read)", async () => {
-    const { saveSkeptic, readSkeptic } = await import("../src/lib/skepticConfig");
-    await saveSkeptic({ enabled: true });
+    const { saveSkeptic, readSkeptic, DEFAULT_SKEPTIC } = await import("../src/lib/skepticConfig");
+    await saveSkeptic({ ...DEFAULT_SKEPTIC, enabled: true });
     // Delete the file — cached value should still be returned.
     fs.unlinkSync(path.join(tmpDir, ".dragnet", "skeptic-settings.json"));
     expect(readSkeptic().enabled).toBe(true);
@@ -98,15 +164,15 @@ describe("skepticConfig — saveSkeptic", () => {
 
 describe("skepticConfig — clearSkepticCache", () => {
   it("forces next read to hit disk", async () => {
-    const { saveSkeptic, readSkeptic, clearSkepticCache } = await import(
+    const { saveSkeptic, readSkeptic, clearSkepticCache, DEFAULT_SKEPTIC } = await import(
       "../src/lib/skepticConfig"
     );
-    await saveSkeptic({ enabled: true });
+    await saveSkeptic({ ...DEFAULT_SKEPTIC, enabled: true });
     expect(readSkeptic().enabled).toBe(true);
     // Mutate file under the cache.
     fs.writeFileSync(
       path.join(tmpDir, ".dragnet", "skeptic-settings.json"),
-      JSON.stringify({ enabled: false }),
+      JSON.stringify({ ...DEFAULT_SKEPTIC, enabled: false }),
       { mode: 0o600 },
     );
     expect(readSkeptic().enabled).toBe(true); // still cached

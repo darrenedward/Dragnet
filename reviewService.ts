@@ -1386,7 +1386,8 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
   // The chain is captured fresh inside the step callback too (to apply
   // breaker filtering at run time); this pre-pipeline entry is what the
   // persistence phase uses to actually run the adjudication.
-  const skepticSettingOn = readSkeptic().enabled;
+  const skepticSettings = readSkeptic();
+  const skepticSettingOn = skepticSettings.enabled;
   const skepticEntryPre = skepticSettingOn
     ? (() => {
         const pre = getChatChain({ repoPath: repo?.localPath || repo?.path || null });
@@ -2088,6 +2089,7 @@ ${diffPayload}${deterministicPayload}`;
     line: finding.line || null,
     explanation: finding.explanation || "",
     source: finding.source ?? "llm",
+    confidence: typeof finding.confidence === "number" ? finding.confidence : null,
   }));
   const repoPathForVerifier = repo?.localPath || repo?.path;
   const verification = repoPathForVerifier
@@ -2108,7 +2110,7 @@ ${diffPayload}${deterministicPayload}`;
   if (skepticEnabled && skepticEntryPre && candidates.length > 0) {
     try {
       console.log(`[skeptic] running pass on ${candidates.length} finding(s) via ${skepticEntryPre.name}/${skepticEntryPre.model}`);
-      skepticMap = await runSkepticPass(candidates, skepticEntryPre, repoPathForVerifier ?? null, prId);
+      skepticMap = await runSkepticPass(candidates, skepticEntryPre, repoPathForVerifier ?? null, prId, skepticSettings);
       const skepticRejects = Array.from(skepticMap.values()).filter(v => v.verdict === "rejected").length;
       const skepticDowngrades = Array.from(skepticMap.values()).filter(v => v.verdict === "downgraded").length;
       const skepticConfirms = Array.from(skepticMap.values()).filter(v => v.verdict === "confirmed").length;

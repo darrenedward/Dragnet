@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import type { CandidateFinding } from "../src/services/findingVerifier";
+import type { SkepticSettings } from "../src/lib/skepticConfig";
 
 /**
  * Skeptic pass tests — adversarial adjudication by the fallback model.
@@ -40,11 +41,11 @@ vi.mock("../src/services/findingVerifier", () => ({
 }));
 
 // Import after mock is registered.
-import { runSkepticPass, stepSeverityDown } from "../src/services/findingVerifier/skepticPass";
+import { runSkepticPass, stepSeverityDown, applyGate } from "../src/services/findingVerifier/skepticPass";
 
 function finding(opts: Partial<CandidateFinding> & { id: string }): CandidateFinding {
   return {
-    category: "Bug",
+    category: "Security",
     severity: "blocker",
     filename: "src/app/page.tsx",
     line: 10,
@@ -52,6 +53,24 @@ function finding(opts: Partial<CandidateFinding> & { id: string }): CandidateFin
     ...opts,
   };
 }
+
+/** Permissive gate — everything passes. Used by the verdict-shape tests. */
+const PERMISSIVE: SkepticSettings = {
+  enabled: true,
+  gateSeverity: ["blocker", "warning", "suggestion"],
+  gateMinConfidence: 0,
+  gateCategories: ["Security", "Correctness", "Performance", "Accessibility", "Style", "Bug"],
+  skipDeterministic: false,
+};
+
+/** Default gate from the issue spec (defaults for the UI). */
+const DEFAULT_GATE: SkepticSettings = {
+  enabled: true,
+  gateSeverity: ["blocker"],
+  gateMinConfidence: 0.7,
+  gateCategories: ["Security", "Correctness"],
+  skipDeterministic: true,
+};
 
 function fakeClient(createFn: ReturnType<typeof vi.fn>) {
   return {
@@ -88,7 +107,7 @@ describe("skepticPass — runSkepticPass", () => {
   it("returns empty Map on empty candidates (no LLM call)", async () => {
     const createFn = vi.fn();
     const entry = fallbackEntry(createFn);
-    const result = await runSkepticPass([], entry, tmpDir, "pr-1");
+    const result = await runSkepticPass([], entry, tmpDir, "pr-1", PERMISSIVE);
     expect(result.size).toBe(0);
     expect(createFn).not.toHaveBeenCalled();
     cleanup();
@@ -121,6 +140,7 @@ describe("skepticPass — runSkepticPass", () => {
       entry,
       tmpDir,
       "pr-1",
+      PERMISSIVE,
     );
     expect(result.size).toBe(3);
     expect(result.get("a")?.verdict).toBe("confirmed");
@@ -140,6 +160,7 @@ describe("skepticPass — runSkepticPass", () => {
       entry,
       tmpDir,
       "pr-1",
+      PERMISSIVE,
     );
     expect(result.size).toBe(0);
     const parseWarnCalled = warnSpy.mock.calls.some((c) =>
@@ -168,6 +189,7 @@ describe("skepticPass — runSkepticPass", () => {
       entry,
       tmpDir,
       "pr-1",
+      PERMISSIVE,
     );
     expect(result.size).toBe(1);
     expect(result.has("a")).toBe(true);
@@ -198,6 +220,7 @@ describe("skepticPass — runSkepticPass", () => {
       entry,
       tmpDir,
       "pr-1",
+      PERMISSIVE,
     );
     expect(result.size).toBe(1);
     expect(result.has("b")).toBe(true);
@@ -221,6 +244,7 @@ describe("skepticPass — runSkepticPass", () => {
       entry,
       tmpDir,
       "pr-1",
+      PERMISSIVE,
     );
     expect(result.size).toBe(1);
     const verdict = result.get("a");
@@ -246,7 +270,7 @@ describe("skepticPass — runSkepticPass", () => {
     const candidates: CandidateFinding[] = Array.from({ length: 35 }, (_, i) =>
       finding({ id: `f${i}` }),
     );
-    const result = await runSkepticPass(candidates, entry, tmpDir, "pr-1");
+    const result = await runSkepticPass(candidates, entry, tmpDir, "pr-1", PERMISSIVE);
     expect(result.size).toBe(30);
     expect(
       warnSpy.mock.calls.some((c) =>
@@ -268,6 +292,7 @@ describe("skepticPass — runSkepticPass", () => {
       entry,
       tmpDir,
       "pr-1",
+      PERMISSIVE,
     );
     expect(result.size).toBe(0);
     expect(
@@ -293,9 +318,157 @@ describe("skepticPass — runSkepticPass", () => {
       entry,
       tmpDir,
       "pr-1",
+      PERMISSIVE,
     );
     expect(result.size).toBe(1);
     expect(result.get("a")?.verdict).toBe("confirmed");
+    cleanup();
+  });
+});
+
+describe("skepticPass — applyGate (issue #71)", () => {
+  it("filters deterministic findings by default (skipDeterministic=true)", () => {
+    const candidates: CandidateFinding[] = [
+      finding({ id: "llm-1", source: "llm" }),
+      finding({ id: "tsc-1", source: "tsc" }),
+      finding({ id: "eslint-1", source: "eslint" }),
+      finding({ id: "runner-1", source: "runner" }),
+    ];
+    const result = applyGate(candidates, DEFAULT_GATE);
+    expect(result.batch.map((f) => f.id)).toEqual(["llm-1"]);
+    expect(result.excludedCount).toBe(3);
+  });
+
+  it("adjudicates deterministic findings when skipDeterministic=false", () => {
+    const candidates: CandidateFinding[] = [
+      finding({ id: "tsc-1", source: "tsc" }),
+    ];
+    const result = applyGate(candidates, {
+      ...DEFAULT_GATE,
+      skipDeterministic: false,
+    });
+    expect(result.batch.map((f) => f.id)).toEqual(["tsc-1"]);
+    expect(result.excludedCount).toBe(0);
+  });
+
+  it("treats missing source as llm (not deterministic)", () => {
+    const candidates: CandidateFinding[] = [
+      finding({ id: "no-source" }),
+    ];
+    const result = applyGate(candidates, DEFAULT_GATE);
+    expect(result.batch.map((f) => f.id)).toEqual(["no-source"]);
+  });
+
+  it("respects gateSeverity (only blocker passes default gate)", () => {
+    const candidates: CandidateFinding[] = [
+      finding({ id: "blk", severity: "blocker" }),
+      finding({ id: "warn", severity: "warning" }),
+      finding({ id: "sug", severity: "suggestion" }),
+    ];
+    const result = applyGate(candidates, DEFAULT_GATE);
+    expect(result.batch.map((f) => f.id)).toEqual(["blk"]);
+    expect(result.excludedCount).toBe(2);
+  });
+
+  it("respects gateMinConfidence (findings below are filtered out)", () => {
+    const candidates: CandidateFinding[] = [
+      finding({ id: "high", confidence: 0.9 }),
+      finding({ id: "low", confidence: 0.4 }),
+      finding({ id: "exact", confidence: 0.7 }),
+    ];
+    const result = applyGate(candidates, DEFAULT_GATE);
+    expect(result.batch.map((f) => f.id).sort()).toEqual(["exact", "high"]);
+    expect(result.excludedCount).toBe(1);
+  });
+
+  it("absent confidence passes the gate (absence != low)", () => {
+    const candidates: CandidateFinding[] = [
+      finding({ id: "no-conf", confidence: null }),
+      finding({ id: "undef", /* confidence undefined */ }),
+    ];
+    const result = applyGate(candidates, DEFAULT_GATE);
+    expect(result.batch.map((f) => f.id).sort()).toEqual(["no-conf", "undef"]);
+  });
+
+  it("respects gateCategories (case-insensitive)", () => {
+    const candidates: CandidateFinding[] = [
+      finding({ id: "sec", category: "Security" }),
+      finding({ id: "cor", category: "correctness" }), // lowercase
+      finding({ id: "perf", category: "Performance" }),
+      finding({ id: "style", category: "Style" }),
+    ];
+    const result = applyGate(candidates, DEFAULT_GATE);
+    expect(result.batch.map((f) => f.id).sort()).toEqual(["cor", "sec"]);
+    expect(result.excludedCount).toBe(2);
+  });
+
+  it("empty gateCategories excludes everything", () => {
+    const candidates: CandidateFinding[] = [finding({ id: "a" })];
+    const result = applyGate(candidates, { ...DEFAULT_GATE, gateCategories: [] });
+    expect(result.batch).toEqual([]);
+    expect(result.excludedCount).toBe(1);
+  });
+
+  it("mixed-severity scan: blocker + high-conf suggestion adjudicated, nit filtered", () => {
+    const candidates: CandidateFinding[] = [
+      finding({ id: "blk-sec", severity: "blocker", category: "Security", confidence: 0.95 }),
+      finding({ id: "sug-perf", severity: "suggestion", category: "Performance", confidence: 0.99 }),
+      finding({ id: "warn-cor", severity: "warning", category: "Correctness", confidence: 0.4 }),
+    ];
+    const result = applyGate(candidates, DEFAULT_GATE);
+    expect(result.batch.map((f) => f.id)).toEqual(["blk-sec"]);
+    expect(result.excludedCount).toBe(2);
+  });
+
+  it("runSkepticPass skips LLM call entirely when gate excludes all", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const createFn = vi.fn();
+    const entry = fallbackEntry(createFn);
+    // All findings are suggestion — default gate is blocker-only.
+    const result = await runSkepticPass(
+      [
+        finding({ id: "a", severity: "suggestion" }),
+        finding({ id: "b", severity: "suggestion" }),
+      ],
+      entry,
+      tmpDir,
+      "pr-1",
+      DEFAULT_GATE,
+    );
+    expect(result.size).toBe(0);
+    expect(createFn).not.toHaveBeenCalled();
+    expect(
+      logSpy.mock.calls.some((c) =>
+        String(c[0] ?? "").includes("gate filtered out all"),
+      ),
+    ).toBe(true);
+    logSpy.mockRestore();
+    cleanup();
+  });
+
+  it("runSkepticPass only adjudicates gated-in findings", async () => {
+    const createFn = vi.fn().mockImplementation(() =>
+      llmResponse(
+        JSON.stringify({
+          verdicts: [{ id: "blk", verdict: "confirmed", note: "real" }],
+        }),
+      ),
+    );
+    const entry = fallbackEntry(createFn);
+    const result = await runSkepticPass(
+      [
+        finding({ id: "blk", severity: "blocker", category: "Security" }),
+        finding({ id: "nit", severity: "suggestion", category: "Style" }),
+      ],
+      entry,
+      tmpDir,
+      "pr-1",
+      DEFAULT_GATE,
+    );
+    // Only the blocker gets a verdict; the suggestion is gated out (absent).
+    expect(result.size).toBe(1);
+    expect(result.has("blk")).toBe(true);
+    expect(result.has("nit")).toBe(false);
     cleanup();
   });
 });

@@ -15,13 +15,47 @@ import { join } from "node:path";
  * `src/services/findingVerifier/skepticPass.ts` for the pass logic and
  * `reviewService.ts` for the wiring.
  *
+ * Gating (issue #71): the gate fields decide which findings the fallback
+ * model adjudicates. Findings that don't clear the gate keep their existing
+ * verification state — they're never sent to the fallback, never receive a
+ * skeptic verdict. Deterministic findings (tsc / eslint / runner) bypass
+ * the gate entirely when `skipDeterministic` is on; they're ground truth,
+ * not candidates for adjudication.
+ *
  * First-run: returns DEFAULT_SKEPTIC in memory; the file appears on disk
  * only when the user saves via the Settings UI.
  */
 
+export type SkepticSeverity = "blocker" | "warning" | "suggestion";
+
 export interface SkepticSettings {
   /** Master switch for the skeptic pass. Defaults to off. */
   enabled: boolean;
+  /**
+   * Severity levels eligible for adjudication. Defaults to blocker-only so
+   * the fallback spends its budget where it matters most. Empty array
+   * disables the pass in effect (nothing clears the gate).
+   */
+  gateSeverity: SkepticSeverity[];
+  /**
+   * Minimum LLM confidence (0..1) for a finding to be adjudicated. Findings
+   * with no confidence value pass the gate — absence isn't evidence of low
+   * confidence, and many findings ship without a numeric score. Defaults
+   * to 0.7.
+   */
+  gateMinConfidence: number;
+  /**
+   * Categories eligible for adjudication. Case-insensitive comparison
+   * against the finding's category. Defaults to Security + Correctness.
+   * Empty array disables the pass in effect.
+   */
+  gateCategories: string[];
+  /**
+   * When true, deterministic findings (source = tsc | eslint | runner)
+   * never reach the fallback model. They're ground truth from a tool the
+   * user trusts, not candidates for LLM adjudication. Defaults to true.
+   */
+  skipDeterministic: boolean;
 }
 
 function skepticDir(): string {
@@ -36,7 +70,17 @@ function skepticTmp(): string {
 
 export const DEFAULT_SKEPTIC: SkepticSettings = {
   enabled: false,
+  gateSeverity: ["blocker"],
+  gateMinConfidence: 0.7,
+  gateCategories: ["Security", "Correctness"],
+  skipDeterministic: true,
 };
+
+export const SKEPTIC_VALID_SEVERITIES: ReadonlySet<string> = new Set([
+  "blocker",
+  "warning",
+  "suggestion",
+]);
 
 const globalForSkeptic = globalThis as unknown & {
   __skepticSettingsCache?: SkepticSettings | null;
@@ -108,15 +152,65 @@ async function writeSkepticToDisk(settings: SkepticSettings): Promise<void> {
 }
 
 /**
- * Coerce unknown parsed JSON into SkepticSettings. Missing or non-boolean
- * `enabled` falls back to the default (false). Never throws.
+ * Coerce unknown parsed JSON into SkepticSettings. Missing or invalid
+ * `enabled` falls back to null (caller uses DEFAULT_SKEPTIC). Missing
+ * gate fields inherit the default for that field — this keeps old #70
+ * files (just `{enabled: true}`) loadable after the #71 upgrade without
+ * a migration. Never throws.
  */
 function coerceSkeptic(input: unknown): SkepticSettings | null {
   if (!input || typeof input !== "object") return null;
   const obj = input as Record<string, unknown>;
-  const enabled = obj.enabled;
-  if (typeof enabled !== "boolean") return null;
-  return { enabled };
+  if (typeof obj.enabled !== "boolean") return null;
+
+  const gateSeverity = coerceSeverityArray(obj.gateSeverity, DEFAULT_SKEPTIC.gateSeverity);
+  const gateMinConfidence = coerceConfidence(obj.gateMinConfidence, DEFAULT_SKEPTIC.gateMinConfidence);
+  const gateCategories = coerceStringArray(obj.gateCategories, DEFAULT_SKEPTIC.gateCategories);
+  const skipDeterministic =
+    typeof obj.skipDeterministic === "boolean"
+      ? obj.skipDeterministic
+      : DEFAULT_SKEPTIC.skipDeterministic;
+
+  return {
+    enabled: obj.enabled,
+    gateSeverity,
+    gateMinConfidence,
+    gateCategories,
+    skipDeterministic,
+  };
+}
+
+function coerceSeverityArray(
+  raw: unknown,
+  fallback: SkepticSeverity[],
+): SkepticSeverity[] {
+  if (!Array.isArray(raw)) return fallback;
+  const out: SkepticSeverity[] = [];
+  for (const item of raw) {
+    if (typeof item === "string" && SKEPTIC_VALID_SEVERITIES.has(item)) {
+      out.push(item as SkepticSeverity);
+    }
+  }
+  // Dedupe while preserving order.
+  return Array.from(new Set(out));
+}
+
+function coerceConfidence(raw: unknown, fallback: number): number {
+  if (typeof raw !== "number" || Number.isNaN(raw)) return fallback;
+  if (raw < 0) return 0;
+  if (raw > 1) return 1;
+  return raw;
+}
+
+function coerceStringArray(raw: unknown, fallback: string[]): string[] {
+  if (!Array.isArray(raw)) return fallback;
+  const out: string[] = [];
+  for (const item of raw) {
+    if (typeof item === "string" && item.trim().length > 0) {
+      out.push(item.trim());
+    }
+  }
+  return out;
 }
 
 export function skepticSettingsPath(): string {
