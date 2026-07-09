@@ -12,6 +12,9 @@ vi.mock("@/src/lib/prisma", () => ({
       create: mocks.mockCreate,
       findMany: mocks.mockFindMany,
     },
+    userRepo: {
+      findUnique: vi.fn().mockResolvedValue({ role: "admin" }),
+    },
   },
 }));
 

@@ -90,6 +90,7 @@ vi.mock("../src/lib/prisma", () => {
             originalContent: "",
           },
         ]),
+        deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
       },
       symbol: { findMany: vi.fn().mockResolvedValue([]) },
       edge: { findMany: vi.fn().mockResolvedValue([]) },

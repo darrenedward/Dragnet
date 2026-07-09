@@ -11,6 +11,9 @@ vi.mock("@/src/lib/prisma", () => ({
       findUnique: mocks.mockFindUnique,
       update: vi.fn().mockResolvedValue({}),
     },
+    apiKeyUsage: {
+      create: vi.fn().mockResolvedValue({}),
+    },
   },
 }));
 
