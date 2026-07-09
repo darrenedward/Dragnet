@@ -120,6 +120,8 @@ export interface LatestReviewResult {
     confidenceReason: string | null;
     verificationStatus: string | null;
     verificationNote: string | null;
+    skepticVerdict: string | null;
+    skepticNote: string | null;
     source: string | null;
     timestamp: string;
   }>;
@@ -141,6 +143,8 @@ export interface LatestReviewResult {
     confidenceReason: string | null;
     verificationStatus: string | null;
     verificationNote: string | null;
+    skepticVerdict: string | null;
+    skepticNote: string | null;
     source: string | null;
     timestamp: string;
     isRegression: boolean;
@@ -154,7 +158,10 @@ export interface LatestReviewResult {
     severity: string;
     category: string;
     explanation: string;
+    verificationStatus: string | null;
     verificationNote: string | null;
+    skepticVerdict: string | null;
+    skepticNote: string | null;
     source: string | null;
   }>;
   stale: boolean;
@@ -654,16 +661,35 @@ export async function getLatestCompletedReview(
           { verificationStatus: null },
           { verificationStatus: { not: "rejected" } },
         ],
+        // Skeptic rejects mirror the verifier pattern: persisted for audit,
+        // excluded from the active findings list.
+        AND: [
+          {
+            OR: [
+              { skepticVerdict: null },
+              { skepticVerdict: { not: "rejected" } },
+            ],
+          },
+        ],
         isRegression: false, // exclude regressions from main findings list
       },
       orderBy: { line: "asc" },
     }),
     prisma.reviewFinding.findMany({
-      where: { reviewRunId: latestRun.id, verificationStatus: "rejected" },
+      where: {
+        reviewRunId: latestRun.id,
+        OR: [
+          { verificationStatus: "rejected" },
+          { skepticVerdict: "rejected" },
+        ],
+      },
       orderBy: { line: "asc" },
       select: {
         id: true, filename: true, line: true, severity: true, category: true,
-        explanation: true, verificationNote: true, source: true,
+        explanation: true,
+        verificationStatus: true, verificationNote: true,
+        skepticVerdict: true, skepticNote: true,
+        source: true,
       },
     }),
     prisma.reviewFinding.findMany({
@@ -731,6 +757,8 @@ export async function getActiveScan(prId: string): Promise<{
     confidence: number | null;
     verificationStatus: string | null;
     verificationNote: string | null;
+    skepticVerdict: string | null;
+    skepticNote: string | null;
     source: string | null;
     timestamp: string;
     reviewChunkId: string | null;
@@ -777,6 +805,16 @@ export async function getActiveScan(prId: string): Promise<{
           { verificationStatus: null },
           { verificationStatus: { not: "rejected" } },
         ],
+        // Skeptic rejects mirror the verifier pattern: persisted for audit,
+        // excluded from the active findings list.
+        AND: [
+          {
+            OR: [
+              { skepticVerdict: null },
+              { skepticVerdict: { not: "rejected" } },
+            ],
+          },
+        ],
       },
       orderBy: { line: "asc" },
       select: {
@@ -797,6 +835,8 @@ export async function getActiveScan(prId: string): Promise<{
         confidence: true,
         verificationStatus: true,
         verificationNote: true,
+        skepticVerdict: true,
+        skepticNote: true,
         source: true,
         timestamp: true,
       },

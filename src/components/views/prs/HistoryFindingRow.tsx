@@ -16,6 +16,8 @@ interface HistoryFinding {
   explanation: string;
   verificationNote?: string | null;
   verificationStatus?: string | null;
+  skepticVerdict?: string | null;
+  skepticNote?: string | null;
   source?: string | null;
   confidence?: number | null;
   confidenceReason?: string | null;
@@ -104,6 +106,30 @@ export default function HistoryFindingRow({ finding, rejected = false }: { findi
             ? unverified
           </span>
         )}
+        {finding.skepticVerdict === "confirmed" && (
+          <span
+            title={finding.skepticNote || "Skeptic (fallback model) confirmed"}
+            className="text-[9px] font-mono uppercase px-1.5 py-0.5 rounded bg-fuchsia-500/10 text-fuchsia-400 border border-fuchsia-500/25 font-bold"
+          >
+            ✓ skeptic
+          </span>
+        )}
+        {finding.skepticVerdict === "downgraded" && (
+          <span
+            title={finding.skepticNote || "Skeptic (fallback model) downgraded severity"}
+            className="text-[9px] font-mono uppercase px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/25 font-bold"
+          >
+            ↓ skeptic
+          </span>
+        )}
+        {finding.skepticVerdict === "rejected" && (
+          <span
+            title={finding.skepticNote || "Skeptic (fallback model) rejected"}
+            className="text-[9px] font-mono uppercase px-1.5 py-0.5 rounded bg-rose-500/10 text-rose-400 border border-rose-500/25 font-bold line-through"
+          >
+            ✗ skeptic
+          </span>
+        )}
         {rejected && (
           <span className="text-[9px] font-mono uppercase px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30 font-bold">
             ✗ rejected
@@ -130,6 +156,11 @@ export default function HistoryFindingRow({ finding, rejected = false }: { findi
       {rejected && finding.verificationNote && (
         <div className="mt-1.5 text-[10px] font-mono text-amber-400/80 italic border-l-2 border-amber-500/30 pl-2">
           {finding.verificationNote}
+        </div>
+      )}
+      {rejected && finding.skepticNote && (
+        <div className="mt-1.5 text-[10px] font-mono text-fuchsia-400/80 italic border-l-2 border-fuchsia-500/30 pl-2">
+          {finding.skepticNote}
         </div>
       )}
     </div>

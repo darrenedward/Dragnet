@@ -5,6 +5,8 @@ import { getChatChain, getChatClient } from "./src/lib/llmClient";
 import { getPrimaryChatPreset } from "./src/lib/llmPresets";
 import { randomUUID } from "node:crypto";
 import { verifyFindings, isDocumentationFile, type CandidateFinding } from "./src/services/findingVerifier";
+import { runSkepticPass, stepSeverityDown } from "./src/services/findingVerifier/skepticPass";
+import { readSkeptic } from "./src/lib/skepticConfig";
 import { completeReviewRun, setReviewRunTokens, setReviewRunLastCheckpointAt, setReviewChunkLastCheckpointAt } from "./src/lib/reviewFreshness";
 import { safeReadFileSync, resolveSafePath } from "./src/lib/pathSafety";
 import { runDeterministicChecks, runContainerizedChecks, logReview, type DeterministicFinding } from "./src/services/deterministicChecks";
@@ -1377,6 +1379,22 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
 
   // 5d-6. LLM review as StepPipeline step (critical, no retries).
   //        Encapsulates Tier 3 gate, provider chain, and refusal check.
+
+  // Skeptic pass: read settings first (cheap). Only capture the fallback
+  // chain when the setting is enabled — avoids an extra getChatChain call
+  // (and any breaker-state reads inside it) on the default skeptic-off path.
+  // The chain is captured fresh inside the step callback too (to apply
+  // breaker filtering at run time); this pre-pipeline entry is what the
+  // persistence phase uses to actually run the adjudication.
+  const skepticSettingOn = readSkeptic().enabled;
+  const skepticEntryPre = skepticSettingOn
+    ? (() => {
+        const pre = getChatChain({ repoPath: repo?.localPath || repo?.path || null });
+        return pre.length >= 2 ? pre[1] : null;
+      })()
+    : null;
+  const skepticEnabled = skepticSettingOn && skepticEntryPre !== null;
+
   interface LlmStepData {
     skipped?: boolean;
     systemWarn?: string | null;
@@ -2080,6 +2098,28 @@ ${diffPayload}${deterministicPayload}`;
     console.log(`[scan] runPrScan: verifier rejected ${rejectedCount}/${candidates.length} finding(s)`);
   }
 
+  // 6b. Skeptic pass — adversarial adjudication by the fallback chat model.
+  // Captured here so it runs after the deterministic verifier (which uses
+  // the primary model) and before persistence. Single batched call against
+  // the fallback ChainEntry; verdicts mutate severity (downgrade) or mark
+  // for query-time filter (reject). Never throws; absent map entries mean
+  // "skeptic didn't reach this finding" and the row is unaffected.
+  let skepticMap = new Map<string, { verdict: "confirmed" | "downgraded" | "rejected"; note: string; newSeverity?: string }>();
+  if (skepticEnabled && skepticEntryPre && candidates.length > 0) {
+    try {
+      console.log(`[skeptic] running pass on ${candidates.length} finding(s) via ${skepticEntryPre.name}/${skepticEntryPre.model}`);
+      skepticMap = await runSkepticPass(candidates, skepticEntryPre, repoPathForVerifier ?? null, prId);
+      const skepticRejects = Array.from(skepticMap.values()).filter(v => v.verdict === "rejected").length;
+      const skepticDowngrades = Array.from(skepticMap.values()).filter(v => v.verdict === "downgraded").length;
+      const skepticConfirms = Array.from(skepticMap.values()).filter(v => v.verdict === "confirmed").length;
+      console.log(`[skeptic] verdicts: ${skepticConfirms} confirmed, ${skepticDowngrades} downgraded, ${skepticRejects} rejected (of ${candidates.length} findings)`);
+    } catch (err) {
+      console.warn(`[skeptic] pass failed:`, (err as Error).message?.slice(0, 200));
+    }
+  } else if (!skepticEnabled) {
+    console.log(`[skeptic] disabled or no fallback — skipping`);
+  }
+
   // If every finding was rejected, the LLM's rating was based on hallucinated
   // or invalid observations. Null it so the UI shows "re-scan needed" rather
   // than a misleading score with zero visible findings.
@@ -2110,6 +2150,7 @@ ${diffPayload}${deterministicPayload}`;
 
   const findingsData = withIdsForPersistence.map(({ finding, id }) => {
     const v = verification.get(id);
+    const s = skepticMap.get(id);
     const filename = finding.filename || "<unattributed>";
     const line = finding.line || null;
     const resolution = symbolMapForFindings.get(`${filename}:${line ?? "?"}`);
@@ -2120,6 +2161,24 @@ ${diffPayload}${deterministicPayload}`;
       filePath: filename,
       category: finding.category || "Style",
     });
+    // Apply skeptic downgrade: mutate severity (original severity is
+    // preserved in the note text — "downgraded blocker→warning: …").
+    // When the LLM omitted/invalid target severity, step down one rung
+    // from the primary model's severity.
+    const primarySeverity = finding.severity || "suggestion";
+    let finalSeverity = primarySeverity;
+    let skepticVerdict: string | null = null;
+    let skepticNote: string | null = null;
+    if (s) {
+      skepticVerdict = s.verdict;
+      if (s.verdict === "downgraded") {
+        const target = s.newSeverity ?? stepSeverityDown(primarySeverity);
+        finalSeverity = target;
+        skepticNote = `downgraded ${primarySeverity}→${target}: ${s.note}`.slice(0, 300);
+      } else {
+        skepticNote = s.note;
+      }
+    }
     return {
       id,
       prId: prId,
@@ -2127,7 +2186,7 @@ ${diffPayload}${deterministicPayload}`;
       reviewChunkId: reviewChunkId ?? null,
       repoId: pr.repoId,
       category: finding.category || "Style",
-      severity: finding.severity || "suggestion",
+      severity: finalSeverity,
       exploitability: finding.exploitability || "moderate",
       impact: finding.impact || "medium",
       filename,
@@ -2139,6 +2198,8 @@ ${diffPayload}${deterministicPayload}`;
       confidenceReason: finding.confidenceReason || null,
       verificationStatus: v?.status ?? null,
       verificationNote: v?.note ?? null,
+      skepticVerdict,
+      skepticNote,
       source: finding.source ?? null,
       timestamp: new Date().toISOString(),
       fingerprint,

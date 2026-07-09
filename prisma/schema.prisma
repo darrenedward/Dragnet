@@ -235,6 +235,8 @@ model ReviewFinding {
   confidenceReason   String? // LLM's justification for the confidence score
   verificationStatus String?
   verificationNote   String?
+  skepticVerdict     String? // "confirmed" | "downgraded" | "rejected" — set by the fallback-model adjudication pass
+  skepticNote        String? // human-readable reason; on downgrade includes "downgraded X→Y: <reason>"
   source             String?
   timestamp          String
   fingerprint        String? // symbol-anchored hash; stable across line shifts

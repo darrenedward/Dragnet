@@ -39,6 +39,8 @@ interface RunFindings {
     confidenceReason?: string | null;
     verificationStatus: string | null;
     verificationNote: string | null;
+    skepticVerdict: string | null;
+    skepticNote: string | null;
     source: string | null;
     exploitability?: string | null;
     impact?: string | null;
@@ -50,7 +52,10 @@ interface RunFindings {
     severity: string;
     category: string;
     explanation: string;
+    verificationStatus: string | null;
     verificationNote: string | null;
+    skepticVerdict: string | null;
+    skepticNote: string | null;
     source: string | null;
   }>;
   rejectedCount: number;

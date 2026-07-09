@@ -59,6 +59,16 @@ export async function aggregateResults(reviewRunId: string): Promise<AggregatedR
         { verificationStatus: null },
         { verificationStatus: { not: "rejected" } },
       ],
+      // Skeptic rejects mirror the verifier pattern: persisted for audit,
+      // excluded from the active findings list.
+      AND: [
+        {
+          OR: [
+            { skepticVerdict: null },
+            { skepticVerdict: { not: "rejected" } },
+          ],
+        },
+      ],
     },
     orderBy: [{ filename: "asc" }, { line: "asc" }],
   });

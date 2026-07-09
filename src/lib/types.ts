@@ -88,6 +88,8 @@ export interface ReviewFinding {
   timestamp: string;
   verificationStatus?: "verified" | "downgraded" | "rejected" | "unverified" | null;
   verificationNote?: string | null;
+  skepticVerdict?: "confirmed" | "downgraded" | "rejected" | null;
+  skepticNote?: string | null;
   source?: string | null;
 }
 

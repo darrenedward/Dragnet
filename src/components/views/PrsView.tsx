@@ -103,7 +103,11 @@ interface Props {
   rejectedFindings?: Array<{
     id: string; filename: string; line: number | null;
     severity: string; category: string; explanation: string;
+    verificationStatus: string | null;
     verificationNote: string | null;
+    skepticVerdict: string | null;
+    skepticNote: string | null;
+    source: string | null;
   }>;
   stale?: boolean;
   onCopySuggestion: (text: string, id: string) => void;

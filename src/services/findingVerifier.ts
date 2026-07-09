@@ -265,7 +265,7 @@ async function validateLineAndFile(
   return null;
 }
 
-async function loadFileContent(
+export async function loadFileContent(
   filename: string,
   repoPath: string,
   prId: string,
