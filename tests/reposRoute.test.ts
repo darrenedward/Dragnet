@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   mockGetProviderFromUrl: vi.fn(() => "github"),
   mockComputeRepoId: vi.fn(() => "repo-id"),
   mockCanonicalizeUrl: vi.fn(() => "https://github.com/owner/repo"),
+  mockCaptureRepoOwnership: vi.fn(() => Promise.resolve()),
 }));
 
 vi.mock("@/src/lib/prisma", () => ({
@@ -62,6 +63,10 @@ vi.mock("@/src/lib/repoIdentity", () => ({
   computeRepoId: mocks.mockComputeRepoId,
   computeLocalRepoId: vi.fn(),
   canonicalizeUrl: mocks.mockCanonicalizeUrl,
+}));
+
+vi.mock("@/src/lib/repoOwnership", () => ({
+  captureRepoOwnership: mocks.mockCaptureRepoOwnership,
 }));
 
 import { POST } from "../src/app/api/repos/route";
@@ -134,6 +139,26 @@ describe("POST /api/repos", () => {
     expect(res.status).toBe(400);
     const data = await res.json();
     expect(data.error).toContain("cloneUrl must be");
+  });
+
+  it("captures ownership with the authenticated user id (SSH path)", async () => {
+    mocks.mockCreate.mockResolvedValue({ id: "r1" });
+    mocks.mockAuthenticateSessionOrKey.mockResolvedValue({ ok: true, userId: "u-owner" });
+    const res = await POST(
+      makeReq({ id: "r1", name: "Test", mode: "ssh", cloneUrl: "git@github.com:o/r.git", deployKey: "key" }),
+    );
+    expect(res.status).toBe(201);
+    expect(mocks.mockCaptureRepoOwnership).toHaveBeenCalledWith("r1", "u-owner");
+  });
+
+  it("skips ownership capture when the auth has no userId (legacy project key)", async () => {
+    mocks.mockCreate.mockResolvedValue({ id: "r1" });
+    mocks.mockAuthenticateSessionOrKey.mockResolvedValue({ ok: true, userId: null });
+    const res = await POST(
+      makeReq({ id: "r1", name: "Test", mode: "ssh", cloneUrl: "git@github.com:o/r.git", deployKey: "key" }),
+    );
+    expect(res.status).toBe(201);
+    expect(mocks.mockCaptureRepoOwnership).toHaveBeenCalledWith("r1", null);
   });
 });
 

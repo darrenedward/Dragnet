@@ -15,6 +15,44 @@ export async function verifyUserCanCreateRepoKey(
   return { ok: true };
 }
 
+/**
+ * Returns `ok` when the given user is allowed to invite teammates to
+ * the given repo. The gate is satisfied by EITHER being the repo's
+ * `ownerId` OR holding a `UserRepo` row with `role = "admin"`.
+ *
+ * This is the new unified access model from #69: there is no separate
+ * "implicit owner" or org-membership check — the `ownerId` on
+ * `Repository` is the source of truth, and a self-inviting `UserRepo`
+ * admin row makes the owner indistinguishable from any other admin at
+ * the query layer.
+ */
+export async function verifyInviterIsOwnerOrAdmin(
+  userId: string,
+  repoId: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const repo = await prisma.repository.findUnique({
+    where: { id: repoId },
+    select: { id: true, ownerId: true },
+  });
+  if (!repo) {
+    return { ok: false, error: "Repository not found." };
+  }
+  if (repo.ownerId === userId) {
+    return { ok: true };
+  }
+  const assignment = await prisma.userRepo.findUnique({
+    where: { userId_repoId: { userId, repoId } },
+    select: { role: true },
+  });
+  if (assignment?.role === "admin") {
+    return { ok: true };
+  }
+  return {
+    ok: false,
+    error: "Only the repo owner or an admin can invite teammates to this repository.",
+  };
+}
+
 const KEY_PREFIX = "dr_";
 
 export function generateApiKey(): { raw: string; prefix: string; hash: string } {

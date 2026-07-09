@@ -40,7 +40,7 @@ export default function TeamPanel() {
   const [keyCounts, setKeyCounts] = useState<Record<string, number>>({});
   const [repos, setRepos] = useState<RepoSummary[]>([]);
   const [inviteEmail, setInviteEmail] = useState("");
-  const [inviteRole, setInviteRole] = useState<"member" | "admin">("member");
+  const [inviteRole, setInviteRole] = useState<"member" | "admin">("admin");
   const [inviteRepoIds, setInviteRepoIds] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);

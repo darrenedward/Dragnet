@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/src/lib/prisma";
 import { requireSession } from "@/src/lib/api-auth";
+import { verifyInviterIsOwnerOrAdmin } from "@/src/lib/apiAuth";
 
 export async function POST(req: Request) {
   let session;
@@ -10,7 +11,11 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   const body = await req.json().catch(() => ({}));
-  const { email, role = "member", repoIds }: { email?: string; role?: string; repoIds?: string[] } = body;
+  const {
+    email,
+    role = "admin",
+    repoIds,
+  }: { email?: string; role?: string; repoIds?: string[] } = body;
 
   if (!email || typeof email !== "string") {
     return NextResponse.json({ error: "Email is required." }, { status: 400 });
@@ -27,19 +32,24 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "One or more selected repos not found." }, { status: 400 });
   }
 
-  const inviterOrg = await prisma.member.findFirst({
-    where: { userId: session.user.id, role: { in: ["owner", "admin"] } },
-    select: { organizationId: true },
-  });
-  if (!inviterOrg) {
-    return NextResponse.json({ error: "Only admins can invite teammates." }, { status: 403 });
+  // Unified access model from #69: the inviter must be the owner or an
+  // admin of EVERY selected repo. Per-repo gate (not org membership)
+  // because the schema is now per-repo, not per-org.
+  for (const repoId of repoIds) {
+    const check = await verifyInviterIsOwnerOrAdmin(session.user.id, repoId);
+    if (!check.ok) {
+      return NextResponse.json(
+        { error: check.error ?? "Not authorized to invite to this repository." },
+        { status: 403 },
+      );
+    }
   }
 
   // Create invitation directly in the database (Better Auth will recognize it)
   const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
   const invitation = await prisma.invitation.create({
     data: {
-      organizationId: inviterOrg.organizationId,
+      organizationId: null,
       email: email.trim().toLowerCase(),
       role,
       expiresAt,

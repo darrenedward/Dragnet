@@ -27,11 +27,21 @@ export async function POST(req: Request, { params }: { params: Promise<{ code: s
   const toCreate = repoIds.filter((r) => !existingRepoIds.has(r));
 
   if (toCreate.length > 0) {
+    // Pull the invitation's role so each UserRepo row reflects the
+    // role the inviter picked (admin vs member). Defaults to "member"
+    // for legacy invitations that don't have a role.
+    const invitation = await prisma.invitation.findUnique({
+      where: { id: code },
+      select: { role: true, inviterId: true },
+    });
+    const role = invitation?.role === "admin" ? "admin" : "member";
+    const inviterId = invitation?.inviterId ?? null;
     await prisma.userRepo.createMany({
       data: toCreate.map((repoId) => ({
         userId: session.user.id,
         repoId,
-        invitedById: null,
+        role,
+        invitedById: inviterId,
       })),
     });
   }

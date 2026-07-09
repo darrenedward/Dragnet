@@ -8,6 +8,7 @@ import { authenticateSessionOrKey, generateApiKey } from "@/src/lib/apiAuth";
 import { requireSession } from "@/src/lib/api-auth";
 import { computeRepoId, canonicalizeUrl } from "@/src/lib/repoIdentity";
 import { getInstallationToken } from "@/src/lib/githubApp";
+import { captureRepoOwnership } from "@/src/lib/repoOwnership";
 
 export async function GET(req: Request) {
   const auth = await authenticateSessionOrKey(req);
@@ -170,6 +171,8 @@ export async function POST(req: Request) {
         },
       });
 
+      await captureRepoOwnership(cleanId, session.user.id);
+
       return NextResponse.json({
         success: true,
         id: cleanId,
@@ -286,6 +289,8 @@ export async function POST(req: Request) {
         repoId: cleanId,
       },
     });
+
+    await captureRepoOwnership(cleanId, auth.userId);
 
     return NextResponse.json({
       success: true,
