@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { AlertCircle, Save, ShieldAlert, ShieldCheck } from "lucide-react";
+import { AlertCircle, Save, ShieldAlert, ShieldCheck, Gauge } from "lucide-react";
 import { isSameChatModel } from "@/src/lib/skepticSameModel";
 import { fetchJson } from "@/src/lib/http";
 import { LLM_PRESETS_CHANGED_EVENT } from "./shared";
+import { SkepticStatsSummary } from "./SkepticStatsSummary";
 
 /**
  * Skeptic pass panel — toggles the adversarial adjudication feature and
@@ -325,6 +326,8 @@ export default function SkepticPanel() {
           </div>
         </div>
       </div>
+
+      <SkepticStatsSummary fallbackKey={fallbackChat ? `${fallbackChat.endpoint}|${fallbackChat.chatModel}` : null} />
 
       <div className={`p-4 bg-slate-900/40 rounded-xl border border-white/5 transition-opacity ${skeptic.enabled ? "" : "opacity-60"}`}>
         <h5 className="text-[11px] font-bold font-mono text-slate-300 uppercase tracking-wider mb-1">

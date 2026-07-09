@@ -26,6 +26,22 @@ import type { CandidateFinding } from "../findingVerifier";
 import { loadFileContent } from "../findingVerifier";
 import type { ChainEntry } from "@/src/lib/llmClient";
 import type { SkepticSettings } from "@/src/lib/skepticConfig";
+import { breakerKeyFor } from "@/src/lib/providerHealth";
+import { computeCost } from "@/src/lib/llmPricing";
+import type {
+  SkepticCallOutcome,
+  SkepticOutcomeCounts,
+  SkepticPassResult,
+  SkepticTelemetry,
+} from "./skepticTelemetry";
+import { pickCallOutcome } from "./skepticTelemetry";
+
+export type {
+  SkepticCallOutcome,
+  SkepticOutcomeCounts,
+  SkepticPassResult,
+  SkepticTelemetry,
+};
 
 export interface SkepticVerdict {
   verdict: "confirmed" | "downgraded" | "rejected";
@@ -144,8 +160,10 @@ Respond with JSON only, no markdown fences, no prose:
  * @param settings Gate configuration. Findings that don't clear the gate
  *   are filtered out before the LLM is called — they receive no verdict
  *   and persist as the primary model produced them.
- * @returns Map keyed by candidate.id. Absent entries = skeptic didn't
- *   reach that finding (no change applied).
+ * @returns `{ verdicts, telemetry }`. verdicts is a Map keyed by
+ *   candidate.id (absent = skeptic didn't reach that finding). telemetry
+ *   captures per-call token usage, per-verdict outcome counts, and the
+ *   aggregated call outcome for the existing per-provider tracking.
  */
 export async function runSkepticPass(
   candidates: CandidateFinding[],
@@ -153,21 +171,45 @@ export async function runSkepticPass(
   repoPath: string | null,
   prId: string,
   settings: SkepticSettings,
-): Promise<Map<string, SkepticVerdict>> {
+): Promise<SkepticPassResult> {
+  const providerKey = breakerKeyFor(fallbackEntry.endpoint, fallbackEntry.model);
+  const outcomes: SkepticOutcomeCounts = {
+    confirmed: 0,
+    downgraded: 0,
+    rejected: 0,
+    skipped: 0,
+    error: 0,
+  };
   const results = new Map<string, SkepticVerdict>();
-  if (candidates.length === 0) return results;
+  const baseTelemetry: SkepticTelemetry = {
+    providerKey,
+    providerName: fallbackEntry.name,
+    endpoint: fallbackEntry.endpoint,
+    model: fallbackEntry.model,
+    promptTokens: 0,
+    completionTokens: 0,
+    costUsd: 0,
+    outcomes,
+    outcome: "skeptic_skipped",
+  };
+
+  if (candidates.length === 0) {
+    return { verdicts: results, telemetry: baseTelemetry };
+  }
 
   const gated = applyGate(candidates, settings);
   if (gated.batch.length === 0) {
     console.log(
       `[skeptic] gate filtered out all ${gated.excludedCount} findings — skipping LLM call`,
     );
-    return results;
+    outcomes.skipped = candidates.length;
+    return { verdicts: results, telemetry: baseTelemetry };
   }
   if (gated.excludedCount > 0) {
     console.log(
       `[skeptic] gate included ${gated.batch.length} of ${candidates.length} findings (${gated.excludedCount} filtered)`,
     );
+    outcomes.skipped = gated.excludedCount;
   }
 
   const batch = gated.batch.slice(0, SKEPTIC_BATCH_CAP);
@@ -176,6 +218,7 @@ export async function runSkepticPass(
     console.warn(
       `[skeptic] truncating batch to ${SKEPTIC_BATCH_CAP} of ${gated.batch.length} findings (cap)`,
     );
+    outcomes.skipped += truncatedCount;
   }
 
   try {
@@ -190,13 +233,24 @@ export async function runSkepticPass(
       max_tokens: 4096,
     });
 
+    const usage = (completion as any)?.usage ?? null;
+    const promptTokens = typeof usage?.prompt_tokens === "number" ? usage.prompt_tokens : 0;
+    const completionTokens =
+      typeof usage?.completion_tokens === "number" ? usage.completion_tokens : 0;
+    const cost = computeCost(fallbackEntry.model, promptTokens, completionTokens);
+    baseTelemetry.promptTokens = promptTokens;
+    baseTelemetry.completionTokens = completionTokens;
+    baseTelemetry.costUsd = cost.costUsd;
+
     const raw = completion.choices?.[0]?.message?.content?.trim() ?? "";
     const parsed = parseVerdicts(raw);
     if (!parsed) {
       console.warn(
         `[skeptic] failed to parse JSON verdicts from fallback model — no findings adjudicated. Raw: ${raw.slice(0, 200)}`,
       );
-      return results;
+      outcomes.error = batch.length;
+      baseTelemetry.outcome = "skeptic_error";
+      return { verdicts: results, telemetry: baseTelemetry };
     }
 
     const candidateIds = new Set(batch.map((c) => c.id));
@@ -214,6 +268,11 @@ export async function runSkepticPass(
       };
       if (validated.verdict === "downgraded") {
         verdict.newSeverity = validated.severity;
+        outcomes.downgraded++;
+      } else if (validated.verdict === "rejected") {
+        outcomes.rejected++;
+      } else {
+        outcomes.confirmed++;
       }
       results.set(validated.id, verdict);
     }
@@ -222,15 +281,26 @@ export async function runSkepticPass(
       console.warn(
         `[skeptic] discarded ${discarded} invalid verdict entries (unknown id, bad enum, or missing severity on downgrade)`,
       );
+      outcomes.error += discarded;
     }
+    // Findings the LLM skipped (no verdict entry at all) count as error
+    // for telemetry purposes — the model failed to adjudicate them.
+    const accountedFor = outcomes.confirmed + outcomes.downgraded + outcomes.rejected + discarded;
+    if (accountedFor < batch.length) {
+      outcomes.error += batch.length - accountedFor;
+    }
+
+    baseTelemetry.outcome = pickCallOutcome(outcomes);
   } catch (err) {
     console.warn(
       `[skeptic] pass failed (${fallbackEntry.name}/${fallbackEntry.model}):`,
       (err as Error).message?.slice(0, 200),
     );
+    outcomes.error = batch.length;
+    baseTelemetry.outcome = "skeptic_error";
   }
 
-  return results;
+  return { verdicts: results, telemetry: baseTelemetry };
 }
 
 interface RawVerdictEntry {

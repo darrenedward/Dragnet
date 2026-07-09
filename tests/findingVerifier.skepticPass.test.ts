@@ -108,7 +108,7 @@ describe("skepticPass — runSkepticPass", () => {
     const createFn = vi.fn();
     const entry = fallbackEntry(createFn);
     const result = await runSkepticPass([], entry, tmpDir, "pr-1", PERMISSIVE);
-    expect(result.size).toBe(0);
+    expect(result.verdicts.size).toBe(0);
     expect(createFn).not.toHaveBeenCalled();
     cleanup();
   });
@@ -142,12 +142,12 @@ describe("skepticPass — runSkepticPass", () => {
       "pr-1",
       PERMISSIVE,
     );
-    expect(result.size).toBe(3);
-    expect(result.get("a")?.verdict).toBe("confirmed");
-    expect(result.get("a")?.note).toBe("real issue");
-    expect(result.get("b")?.verdict).toBe("downgraded");
-    expect(result.get("b")?.newSeverity).toBe("warning");
-    expect(result.get("c")?.verdict).toBe("rejected");
+    expect(result.verdicts.size).toBe(3);
+    expect(result.verdicts.get("a")?.verdict).toBe("confirmed");
+    expect(result.verdicts.get("a")?.note).toBe("real issue");
+    expect(result.verdicts.get("b")?.verdict).toBe("downgraded");
+    expect(result.verdicts.get("b")?.newSeverity).toBe("warning");
+    expect(result.verdicts.get("c")?.verdict).toBe("rejected");
     cleanup();
   });
 
@@ -162,7 +162,7 @@ describe("skepticPass — runSkepticPass", () => {
       "pr-1",
       PERMISSIVE,
     );
-    expect(result.size).toBe(0);
+    expect(result.verdicts.size).toBe(0);
     const parseWarnCalled = warnSpy.mock.calls.some((c) =>
       String(c[0] ?? "").includes("failed to parse JSON verdicts"),
     );
@@ -191,9 +191,9 @@ describe("skepticPass — runSkepticPass", () => {
       "pr-1",
       PERMISSIVE,
     );
-    expect(result.size).toBe(1);
-    expect(result.has("a")).toBe(true);
-    expect(result.has("unknown-id")).toBe(false);
+    expect(result.verdicts.size).toBe(1);
+    expect(result.verdicts.has("a")).toBe(true);
+    expect(result.verdicts.has("unknown-id")).toBe(false);
     expect(
       warnSpy.mock.calls.some((c) =>
         String(c[0] ?? "").includes("discarded 1 invalid verdict"),
@@ -222,9 +222,9 @@ describe("skepticPass — runSkepticPass", () => {
       "pr-1",
       PERMISSIVE,
     );
-    expect(result.size).toBe(1);
-    expect(result.has("b")).toBe(true);
-    expect(result.has("a")).toBe(false);
+    expect(result.verdicts.size).toBe(1);
+    expect(result.verdicts.has("b")).toBe(true);
+    expect(result.verdicts.has("a")).toBe(false);
     cleanup();
   });
 
@@ -246,8 +246,8 @@ describe("skepticPass — runSkepticPass", () => {
       "pr-1",
       PERMISSIVE,
     );
-    expect(result.size).toBe(1);
-    const verdict = result.get("a");
+    expect(result.verdicts.size).toBe(1);
+    const verdict = result.verdicts.get("a");
     expect(verdict?.verdict).toBe("downgraded");
     expect(verdict?.newSeverity).toBeUndefined();
     cleanup();
@@ -271,7 +271,7 @@ describe("skepticPass — runSkepticPass", () => {
       finding({ id: `f${i}` }),
     );
     const result = await runSkepticPass(candidates, entry, tmpDir, "pr-1", PERMISSIVE);
-    expect(result.size).toBe(30);
+    expect(result.verdicts.size).toBe(30);
     expect(
       warnSpy.mock.calls.some((c) =>
         String(c[0] ?? "").includes("truncating batch to 30 of 35"),
@@ -294,7 +294,7 @@ describe("skepticPass — runSkepticPass", () => {
       "pr-1",
       PERMISSIVE,
     );
-    expect(result.size).toBe(0);
+    expect(result.verdicts.size).toBe(0);
     expect(
       warnSpy.mock.calls.some((c) =>
         String(c[0] ?? "").includes("pass failed"),
@@ -320,8 +320,8 @@ describe("skepticPass — runSkepticPass", () => {
       "pr-1",
       PERMISSIVE,
     );
-    expect(result.size).toBe(1);
-    expect(result.get("a")?.verdict).toBe("confirmed");
+    expect(result.verdicts.size).toBe(1);
+    expect(result.verdicts.get("a")?.verdict).toBe("confirmed");
     cleanup();
   });
 });
@@ -435,7 +435,7 @@ describe("skepticPass — applyGate (issue #71)", () => {
       "pr-1",
       DEFAULT_GATE,
     );
-    expect(result.size).toBe(0);
+    expect(result.verdicts.size).toBe(0);
     expect(createFn).not.toHaveBeenCalled();
     expect(
       logSpy.mock.calls.some((c) =>
@@ -466,9 +466,9 @@ describe("skepticPass — applyGate (issue #71)", () => {
       DEFAULT_GATE,
     );
     // Only the blocker gets a verdict; the suggestion is gated out (absent).
-    expect(result.size).toBe(1);
-    expect(result.has("blk")).toBe(true);
-    expect(result.has("nit")).toBe(false);
+    expect(result.verdicts.size).toBe(1);
+    expect(result.verdicts.has("blk")).toBe(true);
+    expect(result.verdicts.has("nit")).toBe(false);
     cleanup();
   });
 });
@@ -485,5 +485,202 @@ describe("skepticPass — stepSeverityDown", () => {
   });
   it("treats unknown severity as already-lowest", () => {
     expect(stepSeverityDown("unknown")).toBe("suggestion");
+  });
+});
+
+describe("skepticPass — telemetry (issue #73)", () => {
+  beforeEach(() => {
+    loadFileContentMock.mockReset();
+    loadFileContentMock.mockResolvedValue("line1\nline2\nline3\nline4\nline5\n");
+  });
+
+  function llmResponseWithUsage(content: string, usage: { prompt_tokens: number; completion_tokens: number }) {
+    return Promise.resolve({
+      choices: [{ message: { content } }],
+      usage,
+    });
+  }
+
+  it("empty candidates -> skeptic_skipped outcome, zero tokens", async () => {
+    const createFn = vi.fn();
+    const entry = fallbackEntry(createFn);
+    const result = await runSkepticPass([], entry, tmpDir, "pr-1", PERMISSIVE);
+    expect(result.telemetry.outcome).toBe("skeptic_skipped");
+    expect(result.telemetry.promptTokens).toBe(0);
+    expect(result.telemetry.completionTokens).toBe(0);
+    expect(result.telemetry.costUsd).toBe(0);
+    expect(result.telemetry.outcomes).toEqual({
+      confirmed: 0,
+      downgraded: 0,
+      rejected: 0,
+      skipped: 0,
+      error: 0,
+    });
+    expect(result.telemetry.providerKey).toBe("minimax.example.com:minimax/MiniMAX-M1");
+    expect(result.telemetry.providerName).toBe("Minimax");
+    cleanup();
+  });
+
+  it("gate excludes all -> skeptic_skipped, all findings counted as skipped", async () => {
+    const createFn = vi.fn();
+    const entry = fallbackEntry(createFn);
+    const result = await runSkepticPass(
+      [
+        finding({ id: "a", severity: "suggestion" }),
+        finding({ id: "b", severity: "suggestion" }),
+      ],
+      entry,
+      tmpDir,
+      "pr-1",
+      DEFAULT_GATE, // blocker-only — both gated out
+    );
+    expect(result.telemetry.outcome).toBe("skeptic_skipped");
+    expect(result.telemetry.outcomes.skipped).toBe(2);
+    expect(createFn).not.toHaveBeenCalled();
+    cleanup();
+  });
+
+  it("LLM error -> skeptic_error outcome, all batched findings counted as error", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const createFn = vi.fn().mockImplementation(() => Promise.reject(new Error("net down")));
+    const entry = fallbackEntry(createFn);
+    const result = await runSkepticPass(
+      [finding({ id: "a" }), finding({ id: "b" })],
+      entry,
+      tmpDir,
+      "pr-1",
+      PERMISSIVE,
+    );
+    expect(result.telemetry.outcome).toBe("skeptic_error");
+    expect(result.telemetry.outcomes.error).toBe(2);
+    expect(result.telemetry.promptTokens).toBe(0);
+    expect(result.telemetry.completionTokens).toBe(0);
+    warnSpy.mockRestore();
+    cleanup();
+  });
+
+  it("malformed JSON -> skeptic_error, all batched findings counted as error", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const createFn = vi.fn().mockImplementation(() => llmResponse("not json"));
+    const entry = fallbackEntry(createFn);
+    const result = await runSkepticPass(
+      [finding({ id: "a" })],
+      entry,
+      tmpDir,
+      "pr-1",
+      PERMISSIVE,
+    );
+    expect(result.telemetry.outcome).toBe("skeptic_error");
+    expect(result.telemetry.outcomes.error).toBe(1);
+    warnSpy.mockRestore();
+    cleanup();
+  });
+
+  it("successful call captures token usage from response.usage", async () => {
+    const createFn = vi.fn().mockImplementation(() =>
+      llmResponseWithUsage(
+        JSON.stringify({
+          verdicts: [{ id: "a", verdict: "confirmed", note: "ok" }],
+        }),
+        { prompt_tokens: 1500, completion_tokens: 80 },
+      ),
+    );
+    const entry = fallbackEntry(createFn);
+    const result = await runSkepticPass(
+      [finding({ id: "a" })],
+      entry,
+      tmpDir,
+      "pr-1",
+      PERMISSIVE,
+    );
+    expect(result.telemetry.promptTokens).toBe(1500);
+    expect(result.telemetry.completionTokens).toBe(80);
+    expect(result.telemetry.costUsd).toBeGreaterThan(0);
+    expect(result.telemetry.outcome).toBe("skeptic_confirm");
+    expect(result.telemetry.outcomes.confirmed).toBe(1);
+    cleanup();
+  });
+
+  it("mixed verdicts: outcome reflects dominant kind (tie -> reject)", async () => {
+    const createFn = vi.fn().mockImplementation(() =>
+      llmResponse(
+        JSON.stringify({
+          verdicts: [
+            { id: "a", verdict: "confirmed", note: "" },
+            { id: "b", verdict: "rejected", note: "" },
+            { id: "c", verdict: "downgraded", severity: "warning", note: "" },
+            { id: "d", verdict: "rejected", note: "" },
+          ],
+        }),
+      ),
+    );
+    const entry = fallbackEntry(createFn);
+    const result = await runSkepticPass(
+      [
+        finding({ id: "a" }),
+        finding({ id: "b" }),
+        finding({ id: "c" }),
+        finding({ id: "d" }),
+      ],
+      entry,
+      tmpDir,
+      "pr-1",
+      PERMISSIVE,
+    );
+    // 2 rejected, 1 confirmed, 1 downgraded -> skeptic_reject dominates.
+    expect(result.telemetry.outcome).toBe("skeptic_reject");
+    expect(result.telemetry.outcomes.rejected).toBe(2);
+    expect(result.telemetry.outcomes.confirmed).toBe(1);
+    expect(result.telemetry.outcomes.downgraded).toBe(1);
+    cleanup();
+  });
+
+  it("findings the LLM skipped count toward error outcome", async () => {
+    // LLM returns only 1 of 3 verdicts — the other 2 are counted as error
+    // because the model failed to adjudicate them.
+    const createFn = vi.fn().mockImplementation(() =>
+      llmResponse(
+        JSON.stringify({
+          verdicts: [{ id: "a", verdict: "confirmed", note: "ok" }],
+        }),
+      ),
+    );
+    const entry = fallbackEntry(createFn);
+    const result = await runSkepticPass(
+      [finding({ id: "a" }), finding({ id: "b" }), finding({ id: "c" })],
+      entry,
+      tmpDir,
+      "pr-1",
+      PERMISSIVE,
+    );
+    expect(result.telemetry.outcomes.confirmed).toBe(1);
+    expect(result.telemetry.outcomes.error).toBe(2);
+    cleanup();
+  });
+
+  it("skipped + truncated findings both counted toward skipped", async () => {
+    // 35 candidates, default permissive gate lets all through, batch
+    // caps at 30 — 5 should be counted as skipped.
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const createFn = vi.fn().mockImplementation(() =>
+      llmResponse(
+        JSON.stringify({
+          verdicts: Array.from({ length: 30 }, (_, i) => ({
+            id: `f${i}`,
+            verdict: "confirmed",
+            note: "ok",
+          })),
+        }),
+      ),
+    );
+    const entry = fallbackEntry(createFn);
+    const candidates: CandidateFinding[] = Array.from({ length: 35 }, (_, i) =>
+      finding({ id: `f${i}` }),
+    );
+    const result = await runSkepticPass(candidates, entry, tmpDir, "pr-1", PERMISSIVE);
+    expect(result.telemetry.outcomes.skipped).toBe(5);
+    expect(result.telemetry.outcomes.confirmed).toBe(30);
+    warnSpy.mockRestore();
+    cleanup();
   });
 });

@@ -7,6 +7,7 @@ import { randomUUID } from "node:crypto";
 import { verifyFindings, isDocumentationFile, type CandidateFinding } from "./src/services/findingVerifier";
 import { runSkepticPass, stepSeverityDown } from "./src/services/findingVerifier/skepticPass";
 import { readSkeptic } from "./src/lib/skepticConfig";
+import { recordSkepticOutcomes } from "./src/lib/skepticStats";
 import { summarizeRejects } from "./src/lib/skepticRating";
 import { rerateWithSurvivors } from "./src/services/findingVerifier/skepticRerate";
 import { reasoningOptions, supportsJsonResponseFormat } from "./src/lib/llmResponseFormat";
@@ -110,6 +111,41 @@ export interface TokensUsed {
     iterationsUsed: number;
     maxIterations: number;
   }>;
+  /**
+   * Skeptic pass telemetry (issue #73). Present when the fallback-model
+   * adjudication pass ran this scan — null when the pass was disabled,
+   * no fallback was configured, or there were no candidate findings.
+   * The skeptic call's tokens are ALSO rolled into the totals above
+   * (totalCostUsd, totalPromptTokens, totalCompletionTokens) and the
+   * skeptic call appears once in `providers[]` so the existing chip
+   * surface renders it. This field carries the per-verdict breakdown.
+   */
+  skeptic?: SkepticTokensUsed | null;
+}
+
+/**
+ * Persisted skeptic telemetry slice. Shape mirrors
+ * `SkepticTelemetry` from `skepticTelemetry.ts` but lives here as a
+ * local interface so the persisted payload doesn't drift if the
+ * runtime type is later refactored. Stored under
+ * `ReviewRun.tokensUsed.skeptic`.
+ */
+export interface SkepticTokensUsed {
+  providerKey: string;
+  providerName: string;
+  endpoint: string;
+  model: string;
+  promptTokens: number;
+  completionTokens: number;
+  costUsd: number;
+  outcomes: {
+    confirmed: number;
+    downgraded: number;
+    rejected: number;
+    skipped: number;
+    error: number;
+  };
+  outcome: OutcomeClass;
 }
 
 /**
@@ -117,8 +153,16 @@ export interface TokensUsed {
  * Sums tokens/cost across providers; carries outcome + iteration counts
  * so the UI can render "NVIDIA ran 4/4 (quality_failure) — $0.003,
  * Minimax ran 2/8 (success) — $0.001" without re-deriving anything.
+ *
+ * The optional `skeptic` telemetry (issue #73) is folded into the
+ * totals AND appended to `providers[]` as a synthetic attempt so the
+ * CostBanner chip surface renders it. Iteration counts are 1/1 — the
+ * skeptic pass is a single batched call, not an agentic loop.
  */
-export function buildTokensUsed(attempts: ProviderAttempt[]): TokensUsed {
+export function buildTokensUsed(
+  attempts: ProviderAttempt[],
+  skeptic?: SkepticTokensUsed | null,
+): TokensUsed {
   let totalPromptTokens = 0;
   let totalCompletionTokens = 0;
   let totalCostUsd = 0;
@@ -127,20 +171,43 @@ export function buildTokensUsed(attempts: ProviderAttempt[]): TokensUsed {
     totalCompletionTokens += a.completionTokens;
     totalCostUsd += a.costUsd;
   }
+  if (skeptic) {
+    totalPromptTokens += skeptic.promptTokens;
+    totalCompletionTokens += skeptic.completionTokens;
+    totalCostUsd += skeptic.costUsd;
+  }
   return {
     totalCostUsd: Math.round(totalCostUsd * 1e6) / 1e6,
     totalPromptTokens,
     totalCompletionTokens,
-    providers: attempts.map((a) => ({
-      name: a.provider,
-      model: a.model,
-      promptTokens: a.promptTokens,
-      completionTokens: a.completionTokens,
-      costUsd: a.costUsd,
-      outcome: a.outcome,
-      iterationsUsed: a.iterationsUsed,
-      maxIterations: a.maxIterations,
-    })),
+    providers: [
+      ...attempts.map((a) => ({
+        name: a.provider,
+        model: a.model,
+        promptTokens: a.promptTokens,
+        completionTokens: a.completionTokens,
+        costUsd: a.costUsd,
+        outcome: a.outcome,
+        iterationsUsed: a.iterationsUsed,
+        maxIterations: a.maxIterations,
+      })),
+      // Skeptic call renders as a pseudo-provider row so the existing
+      // chip + tooltip surface picks it up. outcomeLabel/outcomeColor
+      // in CostBanner know about the skeptic_* outcomes.
+      ...(skeptic
+        ? [{
+            name: `${skeptic.providerName} (skeptic)`,
+            model: skeptic.model,
+            promptTokens: skeptic.promptTokens,
+            completionTokens: skeptic.completionTokens,
+            costUsd: skeptic.costUsd,
+            outcome: skeptic.outcome,
+            iterationsUsed: 1,
+            maxIterations: 1,
+          }]
+        : []),
+    ],
+    skeptic: skeptic ?? null,
   };
 }
 
@@ -1025,6 +1092,11 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
   // a scan that burns 50k tokens then throws would report "cost not
   // tracked" — violating the honest-accounting rule (Phase 2).
   const providerAttempts: ProviderAttempt[] = [];
+  // Skeptic telemetry is declared here (alongside providerAttempts) so
+  // the catch handler below can fold it into the partial-telemetry
+  // write. Without this hoist, the let would be block-scoped to the
+  // try body and the catch couldn't see it.
+  let skepticTelemetry: SkepticTokensUsed | null = null;
 
   try {
   let findings: any[] = [];
@@ -1805,7 +1877,7 @@ ${diffPayload}${deterministicPayload}`;
 
       // Phase 2 cost telemetry
       if (reviewRunId && !reviewChunkId) {
-        await setReviewRunTokens(reviewRunId, buildTokensUsed(providerAttempts));
+        await setReviewRunTokens(reviewRunId, buildTokensUsed(providerAttempts, skepticTelemetry));
       }
 
       if (finalReview) {
@@ -2023,15 +2095,48 @@ ${diffPayload}${deterministicPayload}`;
   // the fallback ChainEntry; verdicts mutate severity (downgrade) or mark
   // for query-time filter (reject). Never throws; absent map entries mean
   // "skeptic didn't reach this finding" and the row is unaffected.
+  //
+  // Telemetry (issue #73): the result includes per-call token usage and
+  // per-verdict outcome counts. We persist these into
+  // `tokensUsed.skeptic` AND feed the cross-scan reject-rate accumulator
+  // (`skepticStats.ts`) so the SkepticPanel can surface an agreeable-
+  // skeptic warning when the fallback rubber-stamps findings.
   let skepticMap = new Map<string, { verdict: "confirmed" | "downgraded" | "rejected"; note: string; newSeverity?: string }>();
   if (skepticEnabled && skepticEntryPre && candidates.length > 0) {
     try {
       console.log(`[skeptic] running pass on ${candidates.length} finding(s) via ${skepticEntryPre.name}/${skepticEntryPre.model}`);
-      skepticMap = await runSkepticPass(candidates, skepticEntryPre, repoPathForVerifier ?? null, prId, skepticSettings);
-      const skepticRejects = Array.from(skepticMap.values()).filter(v => v.verdict === "rejected").length;
-      const skepticDowngrades = Array.from(skepticMap.values()).filter(v => v.verdict === "downgraded").length;
-      const skepticConfirms = Array.from(skepticMap.values()).filter(v => v.verdict === "confirmed").length;
-      console.log(`[skeptic] verdicts: ${skepticConfirms} confirmed, ${skepticDowngrades} downgraded, ${skepticRejects} rejected (of ${candidates.length} findings)`);
+      const skepticResult = await runSkepticPass(candidates, skepticEntryPre, repoPathForVerifier ?? null, prId, skepticSettings);
+      skepticMap = skepticResult.verdicts;
+      const t = skepticResult.telemetry;
+      skepticTelemetry = {
+        providerKey: t.providerKey,
+        providerName: t.providerName,
+        endpoint: t.endpoint,
+        model: t.model,
+        promptTokens: t.promptTokens,
+        completionTokens: t.completionTokens,
+        costUsd: t.costUsd,
+        outcomes: t.outcomes,
+        outcome: t.outcome,
+      };
+      const o = t.outcomes;
+      console.log(
+        `[skeptic] verdicts: ${o.confirmed} confirmed, ${o.downgraded} downgraded, ${o.rejected} rejected ` +
+          `(of ${candidates.length} findings; ${o.skipped} skipped, ${o.error} error) — ${t.promptTokens}+${t.completionTokens} tokens, $${t.costUsd.toFixed(6)}`,
+      );
+      // Cross-scan reject-rate accumulator. Adjudicated = findings the
+      // fallback actually graded (confirmed + downgraded + rejected).
+      // Failures (skipped + error) don't count toward the denominator —
+      // a model can't rubber-stamp what it never saw.
+      const adjudicated = o.confirmed + o.downgraded + o.rejected;
+      if (adjudicated > 0) {
+        recordSkepticOutcomes(
+          repo?.localPath || repo?.path || null,
+          t.providerKey,
+          { confirmed: o.confirmed, downgraded: o.downgraded, rejected: o.rejected },
+          pr.repoId,
+        );
+      }
     } catch (err) {
       console.warn(`[skeptic] pass failed:`, (err as Error).message?.slice(0, 200));
     }
@@ -2121,7 +2226,7 @@ ${diffPayload}${deterministicPayload}`;
       if (reviewRunId && !reviewChunkId && rerate.attempts.length > 0) {
         (providerAttempts as any[]).push(...rerate.attempts);
         try {
-          await setReviewRunTokens(reviewRunId, buildTokensUsed(providerAttempts));
+          await setReviewRunTokens(reviewRunId, buildTokensUsed(providerAttempts, skepticTelemetry));
         } catch (err) {
           console.warn(`[scan] failed to persist re-rate tokensUsed:`, err);
         }
@@ -2303,7 +2408,7 @@ ${diffPayload}${deterministicPayload}`;
       console.log(`[scan] runPrScan: aborted — returning typed interrupted result`);
       if (reviewRunId && !reviewChunkId) {
         try {
-          await setReviewRunTokens(reviewRunId, buildTokensUsed(providerAttempts));
+          await setReviewRunTokens(reviewRunId, buildTokensUsed(providerAttempts, skepticTelemetry));
         } catch (telemetryErr) {
           console.warn(`[scan] failed to persist tokensUsed on interrupted run:`, telemetryErr);
         }
@@ -2321,7 +2426,7 @@ ${diffPayload}${deterministicPayload}`;
       // the "honest accounting" rule: a failed scan with 50k tokens of
       // partial work shouldn't show as cost-not-tracked.
       try {
-        await setReviewRunTokens(reviewRunId, buildTokensUsed(providerAttempts));
+        await setReviewRunTokens(reviewRunId, buildTokensUsed(providerAttempts, skepticTelemetry));
       } catch (telemetryErr) {
         console.warn(`[scan] failed to persist tokensUsed on failed run:`, telemetryErr);
       }

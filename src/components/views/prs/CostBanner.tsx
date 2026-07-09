@@ -38,6 +38,11 @@ export function outcomeLabel(outcome: string): string {
     transport_failure: "Transport fail",
     interrupted: "Interrupted",
     unknown_failure: "Unknown fail",
+    skeptic_confirm: "Skeptic confirm",
+    skeptic_downgrade: "Skeptic downgrade",
+    skeptic_reject: "Skeptic reject",
+    skeptic_skipped: "Skeptic skipped",
+    skeptic_error: "Skeptic error",
   };
   return labels[outcome] ?? outcome;
 }
@@ -49,6 +54,11 @@ export function outcomeColor(outcome: string): string {
     transport_failure: "text-rose-400",
     interrupted: "text-slate-400",
     unknown_failure: "text-rose-400",
+    skeptic_confirm: "text-fuchsia-400",
+    skeptic_downgrade: "text-amber-400",
+    skeptic_reject: "text-rose-400",
+    skeptic_skipped: "text-slate-400",
+    skeptic_error: "text-rose-400",
   };
   return colors[outcome] ?? "text-slate-400";
 }
