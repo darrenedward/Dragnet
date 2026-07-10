@@ -118,11 +118,39 @@ export interface LatestReviewResult {
     diffSuggestion: string | null;
     evidenceChain: string | null;
     confidence: number | null;
+    confidenceReason: string | null;
     verificationStatus: string | null;
     verificationNote: string | null;
+    skepticVerdict: string | null;
+    skepticNote: string | null;
     source: string | null;
     timestamp: string;
     isRegression: boolean | null;
+    regressedFromRunId: string | null;
+  }>;
+  regressions: Array<{
+    id: string;
+    prId: string;
+    reviewRunId: string | null;
+    repoId: string;
+    category: string;
+    severity: string;
+    exploitability: string | null;
+    impact: string | null;
+    filename: string;
+    line: number | null;
+    explanation: string;
+    diffSuggestion: string | null;
+    evidenceChain: string | null;
+    confidence: number | null;
+    confidenceReason: string | null;
+    verificationStatus: string | null;
+    verificationNote: string | null;
+    skepticVerdict: string | null;
+    skepticNote: string | null;
+    source: string | null;
+    timestamp: string;
+    isRegression: boolean;
     regressedFromRunId: string | null;
   }>;
   rejectedCount: number;
@@ -133,18 +161,11 @@ export interface LatestReviewResult {
     severity: string;
     category: string;
     explanation: string;
+    verificationStatus: string | null;
     verificationNote: string | null;
+    skepticVerdict: string | null;
+    skepticNote: string | null;
     source: string | null;
-  }>;
-  regressions: Array<{
-    id: string;
-    filename: string;
-    line: number | null;
-    category: string;
-    severity: string;
-    explanation: string;
-    isRegression: boolean;
-    regressedFromRunId: string | null;
   }>;
   stale: boolean;
 }
@@ -310,6 +331,7 @@ export async function createReviewRun(opts: {
   model?: string | null;
   triggerReason?: string;
   forced?: boolean;
+  createdByUserId?: string | null;
 }): Promise<string> {
   const id = `run-${randomUUID()}`;
   await prisma.reviewRun.create({
@@ -327,6 +349,7 @@ export async function createReviewRun(opts: {
       rating: null,
       triggerReason: opts.triggerReason ?? "manual",
       forced: opts.forced ?? false,
+      createdByUserId: opts.createdByUserId ?? null,
     },
   });
   return id;
@@ -619,9 +642,9 @@ export async function getLatestCompletedReview(
     return {
       reviewRun: null,
       findings: [],
+      regressions: [],
       rejectedFindings: [],
       rejectedCount: 0,
-      regressions: [],
       stale: false,
     };
   }
@@ -637,12 +660,13 @@ export async function getLatestCompletedReview(
     id: true, prId: true, reviewRunId: true, repoId: true,
     category: true, severity: true, exploitability: true, impact: true,
     filename: true, line: true, explanation: true, diffSuggestion: true,
-    evidenceChain: true, confidence: true, verificationStatus: true,
-    verificationNote: true, source: true, timestamp: true,
+    evidenceChain: true, confidence: true, confidenceReason: true,
+    verificationStatus: true, verificationNote: true, source: true, timestamp: true,
     isRegression: true, regressedFromRunId: true,
+    skepticVerdict: true, skepticNote: true,
   } as const;
 
-  const [findings, rejectedFindings] = await Promise.all([
+  const [findings, rejectedFindings, regressionRows] = await Promise.all([
     prisma.reviewFinding.findMany({
       where: {
         reviewRunId: latestRun.id,
@@ -650,39 +674,54 @@ export async function getLatestCompletedReview(
           { verificationStatus: null },
           { verificationStatus: { not: "rejected" } },
         ],
+        // Skeptic rejects mirror the verifier pattern: persisted for audit,
+        // excluded from the active findings list.
+        AND: [
+          {
+            OR: [
+              { skepticVerdict: null },
+              { skepticVerdict: { not: "rejected" } },
+            ],
+          },
+        ],
+        isRegression: false, // exclude regressions from main findings list
       },
       orderBy: { line: "asc" },
       select: reviewFindingSelect,
     }),
     prisma.reviewFinding.findMany({
-      where: { reviewRunId: latestRun.id, verificationStatus: "rejected" },
+      where: {
+        reviewRunId: latestRun.id,
+        OR: [
+          { verificationStatus: "rejected" },
+          { skepticVerdict: "rejected" },
+        ],
+      },
       orderBy: { line: "asc" },
       select: {
         id: true, filename: true, line: true, severity: true, category: true,
-        explanation: true, verificationNote: true, source: true,
+        explanation: true,
+        verificationStatus: true, verificationNote: true,
+        skepticVerdict: true, skepticNote: true,
+        source: true,
       },
     }),
+    prisma.reviewFinding.findMany({
+      where: {
+        reviewRunId: latestRun.id,
+        isRegression: true,
+      },
+      orderBy: { line: "asc" },
+      select: reviewFindingSelect,
+    }),
   ]);
-
-  const regressions = findings
-    .filter((f) => f.isRegression)
-    .map((f) => ({
-      id: f.id,
-      filename: f.filename,
-      line: f.line,
-      category: f.category,
-      severity: f.severity,
-      explanation: f.explanation,
-      isRegression: f.isRegression,
-      regressedFromRunId: f.regressedFromRunId,
-    }));
 
   return {
     reviewRun: latestRun,
     findings,
+    regressions: regressionRows,
     rejectedFindings,
     rejectedCount: rejectedFindings.length,
-    regressions,
     stale,
   };
 }
@@ -733,6 +772,8 @@ export async function getActiveScan(prId: string): Promise<{
     confidence: number | null;
     verificationStatus: string | null;
     verificationNote: string | null;
+    skepticVerdict: string | null;
+    skepticNote: string | null;
     source: string | null;
     timestamp: string;
     reviewChunkId: string | null;
@@ -779,6 +820,16 @@ export async function getActiveScan(prId: string): Promise<{
           { verificationStatus: null },
           { verificationStatus: { not: "rejected" } },
         ],
+        // Skeptic rejects mirror the verifier pattern: persisted for audit,
+        // excluded from the active findings list.
+        AND: [
+          {
+            OR: [
+              { skepticVerdict: null },
+              { skepticVerdict: { not: "rejected" } },
+            ],
+          },
+        ],
       },
       orderBy: { line: "asc" },
       select: {
@@ -799,6 +850,8 @@ export async function getActiveScan(prId: string): Promise<{
         confidence: true,
         verificationStatus: true,
         verificationNote: true,
+        skepticVerdict: true,
+        skepticNote: true,
         source: true,
         timestamp: true,
       },
@@ -848,6 +901,9 @@ export function parseIterationLogs(
   }
   return out;
 }
+
+export type { RatingTrendEntry } from "./stabilityScore";
+
 
 /**
  * Recent completed runs for a PR, ascending order (oldest first, current last).

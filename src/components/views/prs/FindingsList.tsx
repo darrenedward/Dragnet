@@ -154,10 +154,37 @@ export default function FindingsList({ findings, onCopySuggestion, copyFeedback,
                             ? Unverified
                           </span>
                         )}
+                        {finding.skepticVerdict === "confirmed" && (
+                          <span
+                            title={finding.skepticNote || "Skeptic (fallback model) confirmed this finding"}
+                            className="text-[9px] font-mono uppercase px-1.5 py-0.5 rounded bg-fuchsia-500/10 text-fuchsia-400 border border-fuchsia-500/25 font-bold"
+                          >
+                            ✓ Skeptic
+                          </span>
+                        )}
+                        {finding.skepticVerdict === "downgraded" && (
+                          <span
+                            title={finding.skepticNote || "Skeptic (fallback model) downgraded severity"}
+                            className="text-[9px] font-mono uppercase px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/25 font-bold"
+                          >
+                            ↓ Skeptic
+                          </span>
+                        )}
+                        {finding.skepticVerdict === "rejected" && (
+                          <span
+                            title={finding.skepticNote || "Skeptic (fallback model) rejected this finding"}
+                            className="text-[9px] font-mono uppercase px-1.5 py-0.5 rounded bg-rose-500/10 text-rose-400 border border-rose-500/25 font-bold line-through"
+                          >
+                            ✗ Skeptic
+                          </span>
+                        )}
                       </div>
                       <div className="flex items-center gap-2">
                         {finding.confidence !== undefined && finding.confidence !== null && (
-                          <span className="text-[9px] font-mono text-slate-500 bg-slate-950 px-1.5 py-0.5 rounded border border-white/5">
+                          <span
+                            className="text-[9px] font-mono text-slate-500 bg-slate-950 px-1.5 py-0.5 rounded border border-white/5"
+                            title={finding.confidenceReason ?? undefined}
+                          >
                             {(finding.confidence * 100).toFixed(0)}%
                           </span>
                         )}

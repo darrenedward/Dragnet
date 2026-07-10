@@ -11,6 +11,7 @@ import {
   Code2,
   ListTodo,
   Cpu,
+  Users,
 } from "lucide-react";
 import PRDTracker from "./components/PRDTracker";
 import ErrorBoundary from "./components/ErrorBoundary";
@@ -21,20 +22,31 @@ import CodebaseGraph from "./components/CodebaseGraph";
 import DbConfigView from "./components/views/DbConfigView";
 import LlmConfigView from "./components/views/LlmConfigView";
 import DashboardSidebar from "./components/DashboardSidebar";
+import SystemSetupBanner from "./components/SystemSetupBanner";
 import PrsView from "./components/views/PrsView";
 import AddRepoModal from "./components/modals/addRepo";
 import EditRepoModal from "./components/modals/editRepo";
 import RepoSettingsModal from "./components/modals/repoSettings/RepoSettingsModal";
 import WebhookPrompt from "./components/modals/addRepo/WebhookPrompt";
+import TeamPanel from "./components/views/team/TeamPanel";
+import RepoKeyModal from "./components/modals/repoKey/RepoKeyModal";
+import FirstKeyPrompt from "./components/FirstKeyPrompt";
+import DashboardTitleBar from "./components/DashboardTitleBar";
 import { useDashboardData } from "./hooks/useDashboardData";
 import { useEditRepo } from "./hooks/useEditRepo";
-import { type ActiveTab, type Repository } from "./lib/types";
+import { fetchJson } from "./lib/http";
+import { authClient } from "./lib/auth-client";
+import { type ActiveTab, type ConfigHealthReport, type Repository } from "./lib/types";
 
 export default function App() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [activeTab, setActiveTab] = useState<ActiveTab>("prs");
   const [pendingWebhook, setPendingWebhook] = useState<{ repoId: string; repoName: string; hasPat: boolean } | null>(null);
   const [settingsRepo, setSettingsRepo] = useState<Repository | null>(null);
+  const [configHealth, setConfigHealth] = useState<ConfigHealthReport | null>(null);
+  const [keyModalRepo, setKeyModalRepo] = useState<{ id: string; name: string } | null>(null);
+  const { data: sessionData } = authClient.useSession();
+  const currentUserId = (sessionData?.user as { id?: string } | undefined)?.id ?? null;
 
   const d = useDashboardData();
   const ed = useEditRepo({
@@ -52,6 +64,19 @@ export default function App() {
       d.setLastRegisteredRepo(null);
     }
   }, [d.lastRegisteredRepo]);
+
+  const fetchConfigHealth = async () => {
+    try {
+      const res = await fetchJson("/api/config/health");
+      if (res.ok) setConfigHealth(await res.json());
+    } catch (err) {
+      console.error("Failed loading configuration health:", err);
+    }
+  };
+
+  useEffect(() => {
+    fetchConfigHealth();
+  }, []);
 
   const activeRepo = d.repos.find((r) => r.id === d.selectedRepoId);
   const activeAPR = d.prs.find((p) => p.id === d.selectedPrId && p.repoId === d.selectedRepoId);
@@ -104,6 +129,13 @@ export default function App() {
         </div>
       </header>
 
+      <SystemSetupBanner
+        health={configHealth}
+        onOpenDbSettings={() => setActiveTab("db_config")}
+        onOpenSettings={() => setActiveTab("llm_config")}
+        onRefresh={fetchConfigHealth}
+      />
+
       {/* 2. Main Workspace Layout */}
       <main className="flex flex-1 overflow-hidden relative">
         {/* Sidebar Panel */}
@@ -118,6 +150,8 @@ export default function App() {
           }}
           onEditRepo={(repo) => ed.openEditor(repo)}
           onRepoSettings={(repo) => setSettingsRepo(repo)}
+          onMintKey={(repo) => setKeyModalRepo(repo)}
+          currentUserId={currentUserId}
           prs={d.prs}
           selectedPrId={d.selectedPrId}
           onSelectPr={(prId) => {
@@ -130,101 +164,16 @@ export default function App() {
 
         {/* Content Body Viewport */}
         <section className="flex-1 flex flex-col bg-[#0B0E14] overflow-hidden min-h-0">
-          {/* Main Title Metadata Row */}
-          <div className="p-4 sm:p-5 border-b border-white/5 flex flex-col sm:flex-row sm:items-end justify-between gap-4 bg-[#0F1219]/30 shrink-0">
-            <div>
-              <div className="flex items-center gap-2 mb-1">
-                <span className="text-[10px] font-mono text-slate-500 uppercase tracking-wider">Active Workspace Target:</span>
-                <span className="text-xs font-semibold font-mono text-cyan-400 bg-cyan-400/10 px-1.5 py-0.5 rounded border border-cyan-400/20">
-                  {activeRepo?.name || d.selectedRepoId}
-                </span>
-                <span className="text-slate-600 font-mono text-xs">•</span>
-                <span className="text-xs font-mono text-slate-400">
-                  {activeAPR ? activeAPR.sourceBranch : "No branch checked"}
-                </span>
-              </div>
-              <h2 className="text-lg sm:text-xl font-bold text-white tracking-tight flex items-center gap-2" id="workspace-main-branch-title">
-                <GitBranch size={18} className="text-cyan-500" />
-                <span>
-                  {activeTab === "prs"
-                    ? `Manual PR Code Review Scanners`
-                    : activeTab === "watcher"
-                    ? `Git Watcher Daemon: Configured Workspace`
-                    : activeTab === "roadmap"
-                    ? `Dragnet Tracker: PRD Progress Roadmap`
-                    : activeTab === "codebase"
-                    ? `Codebase AST Indexer & Call-Graph Tracer`
-                    : activeTab === "llm_config"
-                    ? `LLM Router Configuration`
-                    : `Multi-Database Data Source Settings`}
-                </span>
-              </h2>
-            </div>
-
-            {/* Action view switch buttons */}
-            <div className="flex bg-slate-900 border border-white/10 p-1 rounded-lg self-start flex-wrap gap-1">
-              <button
-                onClick={() => setActiveTab("prs")}
-                className={`px-2.5 py-1.5 rounded-md text-xs font-semibold font-mono tracking-tight transition-all flex items-center gap-1.5 ${
-                  activeTab === "prs" ? "bg-cyan-500 text-black" : "text-slate-400 hover:text-white"
-                }`}
-              >
-                <Code2 size={13} />
-                <span>Interactive PR / Diff Scanner</span>
-              </button>
-              <button
-                onClick={() => setActiveTab("watcher")}
-                className={`px-2.5 py-1.5 rounded-md text-xs font-semibold font-mono tracking-tight transition-all flex items-center gap-1.5 ${
-                  activeTab === "watcher" ? "bg-cyan-500 text-black" : "text-slate-400 hover:text-white"
-                }`}
-              >
-                <Activity size={13} />
-                <span>Git Watcher Daemon</span>
-              </button>
-              <button
-                onClick={() => setActiveTab("codebase")}
-                className={`px-2.5 py-1.5 rounded-md text-xs font-semibold font-mono tracking-tight transition-all flex items-center gap-1.5 ${
-                  activeTab === "codebase" ? "bg-cyan-500 text-black" : "text-slate-400 hover:text-white"
-                }`}
-                id="tab-codebase-graph"
-              >
-                <Network size={13} />
-                <span>Codebase AST graph</span>
-              </button>
-              <button
-                onClick={() => setActiveTab("roadmap")}
-                className={`px-2.5 py-1.5 rounded-md text-xs font-semibold font-mono tracking-tight transition-all flex items-center gap-1.5 ${
-                  activeTab === "roadmap" ? "bg-cyan-500 text-black" : "text-slate-400 hover:text-white"
-                }`}
-              >
-                <ListTodo size={13} />
-                <span>PRD Task Roadmap</span>
-              </button>
-              <button
-                onClick={() => setActiveTab("db_config")}
-                className={`px-2.5 py-1.5 rounded-md text-xs font-semibold font-mono tracking-tight transition-all flex items-center gap-1.5 ${
-                  activeTab === "db_config" ? "bg-cyan-500 text-black" : "text-slate-400 hover:text-white"
-                }`}
-                id="tab-db-config"
-              >
-                <Database size={13} />
-                <span>Data Source Settings</span>
-              </button>
-              <button
-                onClick={() => setActiveTab("llm_config")}
-                className={`px-2.5 py-1.5 rounded-md text-xs font-semibold font-mono tracking-tight transition-all flex items-center gap-1.5 ${
-                  activeTab === "llm_config" ? "bg-cyan-500 text-black" : "text-slate-400 hover:text-white"
-                }`}
-                id="tab-llm-config"
-              >
-                <Cpu size={13} />
-                <span>Settings</span>
-              </button>
-            </div>
-          </div>
+          <DashboardTitleBar
+            activeTab={activeTab}
+            setActiveTab={setActiveTab}
+            activeRepo={activeRepo}
+            selectedRepoId={d.selectedRepoId}
+          />
 
           {/* Core Content Switching Frame */}
           <div className="flex-1 overflow-hidden p-4 sm:p-5 flex flex-col space-y-4 min-h-0">
+            <FirstKeyPrompt onOpenKeys={() => setActiveTab("llm_config")} />
             <AnimatePresence mode="wait">
               {activeTab === "db_config" && (
                 <DbConfigView
@@ -243,6 +192,8 @@ export default function App() {
               )}
 
               {activeTab === "llm_config" && <LlmConfigView />}
+
+               {activeTab === "team" && <TeamPanel />}
 
               {activeTab === "codebase" && (
                 <motion.div
@@ -296,6 +247,7 @@ export default function App() {
                   activePR={activeAPR}
                   isScanning={d.isScanning}
                   onTriggerScan={d.handleTriggerPrScan}
+                  onStopScan={d.handleStopScan}
                   onExportMarkdown={d.handleExportMarkdown}
                   exportStatus={d.exportStatus}
                   scanResult={d.scanResult}
@@ -368,14 +320,14 @@ export default function App() {
           <AddRepoModal
             onClose={() => {
               d.setShowAddRepoModal(false);
+              d.setCreatedApiKey(null);
               d.setErrorFeedback(null);
             }}
             onSubmit={d.handleAddRepo}
             errorFeedback={d.errorFeedback}
+            createdApiKey={d.createdApiKey}
             newRepoName={d.newRepoName}
             setNewRepoName={d.setNewRepoName}
-            newRepoPath={d.newRepoPath}
-            setNewRepoPath={d.setNewRepoPath}
             newBaseBranch={d.newBaseBranch}
             setNewBaseBranch={d.setNewBaseBranch}
             newBranchPattern={d.newBranchPattern}
@@ -394,6 +346,8 @@ export default function App() {
             setNewDeployKey={d.setNewDeployKey}
             newPat={d.newPat}
             setNewPat={d.setNewPat}
+            newGithubRepoId={d.newGithubRepoId}
+            setNewGithubRepoId={d.setNewGithubRepoId}
           />
         )}
       </AnimatePresence>
@@ -408,8 +362,6 @@ export default function App() {
             errorFeedback={ed.editErrorFeedback}
             newRepoMode={ed.editMode}
             setNewRepoMode={ed.setEditMode}
-            newRepoPath={ed.editPath}
-            setNewRepoPath={ed.setEditPath}
             newCloneUrl={ed.editCloneUrl}
             setNewCloneUrl={ed.setEditCloneUrl}
             newCloneUrlHttps={ed.editCloneUrlHttps}
@@ -420,6 +372,10 @@ export default function App() {
             setNewPat={ed.setEditPat}
             webhookEnabled={ed.editWebhookEnabled}
             onWebhookEnabledChange={ed.setEditWebhookEnabled}
+            editSkipTier2={ed.editSkipTier2}
+            setEditSkipTier2={ed.setEditSkipTier2}
+            editHostedMode={ed.editHostedMode}
+            setEditHostedMode={ed.setEditHostedMode}
           />
         )}
       </AnimatePresence>
@@ -436,18 +392,6 @@ export default function App() {
                 const data = await res.json().catch(() => ({}));
                 throw new Error(data?.message || `Reset failed (${res.status})`);
               }
-              // Poll for completion
-              const deadline = Date.now() + 15 * 60 * 1000;
-              while (Date.now() < deadline) {
-                await new Promise((r) => setTimeout(r, 5000));
-                const poll = await fetch(`/api/repos/${repoId}`);
-                if (poll.ok) {
-                  const repo = await poll.json();
-                  if (repo?.indexedAt) {
-                    return;
-                  }
-                }
-              }
             }}
             onRefresh={async () => {
               d.handleTriggerReviewPass();
@@ -456,6 +400,17 @@ export default function App() {
               }
               setSettingsRepo(null);
             }}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* MODAL: Per-repo API key mint (extracted from MyReposView for #69) */}
+      <AnimatePresence>
+        {keyModalRepo && (
+          <RepoKeyModal
+            repoId={keyModalRepo.id}
+            repoName={keyModalRepo.name}
+            onClose={() => setKeyModalRepo(null)}
           />
         )}
       </AnimatePresence>

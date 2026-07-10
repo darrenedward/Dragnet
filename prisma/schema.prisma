@@ -21,9 +21,9 @@ datasource db {
 // org, UI for org switcher, etc.). Adding just the column now would
 // suggest a tenant boundary that the rest of the stack does not enforce.
 model Repository {
-  id              String          @id
-  name            String
-  path            String?         @unique
+  id   String  @id
+  name String
+  path String? @unique
 
   provider        String? // "local" | "github" | "gitlab"
   cloneUrl        String? // git@github.com:... or https://...
@@ -34,46 +34,57 @@ model Repository {
   patCipher       String?
   patIv           String?
   patTag          String?
-  webhookSecret       String?   // HMAC secret (plaintext — needed to verify inbound webhooks)
-  webhookId           String?
-  webhookEnabled      Boolean   @default(false)
-  lastWebhookEventAt  DateTime?
-  lastFetchAt         DateTime?
+  webhookSecret   String? // HMAC secret (plaintext — needed to verify inbound webhooks)
+  webhookId       String?
+  webhookEnabled  Boolean @default(false)
+  lastWebhookEventAt DateTime?
+  githubRepoId    Int? // GitHub numeric repo ID (for API calls)
+  installationId  String? // GitHub App installation ID for this repo
+  lastFetchAt     DateTime?
   localPath       String? // server-managed clone directory
 
-  baseBranch         String
-  activeBranch       String
-  triggerMode        String
-  quietPeriodSeconds Int
-  branchPattern      String
-  status             String
-  lastCommitHash     String
-  lastCommitMessage  String
-  lastActivityTime   String
-  stabilizationTimer Int
-  reviewsCount       Int
-  indexedAt          String?
-  securitySensitivePaths String[] @default([])
-  runnerImage        String   @default("node:20-alpine")
-  installCommand     String   @default("npm install")
-  testCommand        String   @default("npm test && npm run lint")
-  isPollingEnabled   Boolean  @default(false)
-  reviewHistory      ReviewHistory[]
-  pullRequests       PullRequest[]
-  symbols            Symbol[]
-  edges              Edge[]
-  files              File[]
+  baseBranch             String
+  activeBranch           String
+  triggerMode            String
+  quietPeriodSeconds     Int
+  branchPattern          String
+  status                 String
+  lastCommitHash         String
+  lastCommitMessage      String
+  lastActivityTime       String
+  stabilizationTimer     Int
+  reviewsCount           Int
+  indexedAt              String?
+  securitySensitivePaths String[]        @default([])
+  runnerImage            String          @default("node:20-alpine")
+  installCommand         String          @default("npm install")
+  testCommand            String          @default("npm test && npm run lint")
+  isPollingEnabled       Boolean         @default(false)
+  skipTier2              Boolean         @default(false)
+  repoId                 String?         @unique
+  canonicalRemote        String?
+  hostedMode             Boolean         @default(false)
+  ownerId                String?
+  owner                  User?           @relation("RepositoryOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+  reviewHistory          ReviewHistory[]
+  pullRequests           PullRequest[]
+  symbols                Symbol[]
+  edges                  Edge[]
+  files                  File[]
+  scanTokens             ScanToken[]
+  userRepos              UserRepo[]
 
+  @@index([ownerId])
   @@map("repositories")
 }
 
 model ReviewLog {
   id            String   @id
   prId          String
-  reviewRunId   String?  // nullable for backward compat — legacy rows have null
+  reviewRunId   String? // nullable for backward compat — legacy rows have null
   reviewChunkId String?
   message       String
-  level         String   // "info" | "warn" | "error" | "tool_call"
+  level         String // "info" | "warn" | "error" | "tool_call"
   createdAt     DateTime @default(now())
 
   @@index([prId, createdAt])
@@ -96,35 +107,57 @@ model ReviewHistory {
   @@map("review_history")
 }
 
+model OAuthConnection {
+  id                  String   @id @default(cuid())
+  userId              String
+  provider            String // "github"
+  installationId      String // GitHub App installation ID
+  appPrivateKeyCipher String? // AES-256-GCM encrypted GitHub App .pem
+  appPrivateKeyIv     String?
+  appPrivateKeyTag    String?
+  accessTokenCipher   String? // encrypted OAuth access token (short-lived user token)
+  accessTokenIv       String?
+  accessTokenTag      String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+  user                User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, provider])
+  @@map("oauth_connections")
+}
+
 model ReviewRun {
-  id               String         @id
+  id               String          @id
   prId             String
   repoId           String
   commitHash       String
   diffHash         String
   reviewConfigHash String
-  status           String         // "in_progress" | "completed" | "failed"
+  status           String // "in_progress" | "completed" | "failed"
   startedAt        DateTime
   completedAt      DateTime?
   model            String?
   rating           Int?
-  reliability      String?        // "complete" | "partial" | "incomplete_security_review"
-  refused          Boolean        @default(false)  // reviewer flagged it declined/skipped part of the PR
-  refusalNote      String?        // topics the reviewer skipped, for the UI banner
-  chunksTotal      Int            @default(0)
-  chunksCompleted  Int            @default(0)
-  chunksFailed     Int            @default(0)
-  chunksSkipped    Int            @default(0)
-  triggerReason    String?        // "manual" | "prepush" | "prcheck" | "webhook" | "legacy"
-  forced           Boolean        @default(false)
-  tokensUsed       Json?          // Phase 2 cost telemetry: { totalCostUsd, totalPromptTokens, totalCompletionTokens, providers[] }
-  lastCheckpointAt DateTime?      // Phase 5 resume: last successful checkpoint write for an in-progress run
-  pullRequest      PullRequest    @relation(fields: [prId], references: [id], onDelete: Cascade)
+  reliability      String? // "complete" | "partial" | "incomplete_security_review"
+  refused          Boolean         @default(false) // reviewer flagged it declined/skipped part of the PR
+  refusalNote      String? // topics the reviewer skipped, for the UI banner
+  chunksTotal      Int             @default(0)
+  chunksCompleted  Int             @default(0)
+  chunksFailed     Int             @default(0)
+  chunksSkipped    Int             @default(0)
+  triggerReason    String? // "manual" | "prepush" | "prcheck" | "webhook" | "legacy"
+  forced           Boolean         @default(false)
+  tokensUsed       Json? // Phase 2 cost telemetry: { totalCostUsd, totalPromptTokens, totalCompletionTokens, providers[] }
+  lastCheckpointAt DateTime? // Phase 5 resume: last successful checkpoint write for an in-progress run
+  createdByUserId  String?
+  createdByUser    User?           @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
+  pullRequest      PullRequest     @relation(fields: [prId], references: [id], onDelete: Cascade)
   reviewFindings   ReviewFinding[]
   reviewChunks     ReviewChunk[]
 
   @@index([prId, status, completedAt])
   @@index([repoId, status, completedAt])
+  @@index([createdByUserId])
   @@map("review_runs")
 }
 
@@ -133,7 +166,7 @@ model ReviewChunk {
   reviewRunId              String
   label                    String
   filePaths                String[]
-  status                   String    // "pending" | "running" | "completed" | "failed" | "skipped" | "interrupted"
+  status                   String // "pending" | "running" | "completed" | "failed" | "skipped" | "interrupted"
   skipReason               String?
   rating                   Int?
   summary                  String?
@@ -142,7 +175,7 @@ model ReviewChunk {
   touchesSecuritySensitive Boolean   @default(false)
   startedAt                DateTime?
   completedAt              DateTime?
-  lastCheckpointAt         DateTime?    // Phase 5 resume: last checkpoint write for this chunk
+  lastCheckpointAt         DateTime? // Phase 5 resume: last checkpoint write for this chunk
   reviewRun                ReviewRun @relation(fields: [reviewRunId], references: [id], onDelete: Cascade)
 
   @@index([reviewRunId, status])
@@ -150,7 +183,7 @@ model ReviewChunk {
 }
 
 model PullRequest {
-  id             String           @id
+  id             String          @id
   repoId         String
   title          String
   sourceBranch   String
@@ -161,7 +194,7 @@ model PullRequest {
   createdAt      String
   description    String?
   rating         Int?
-  repository     Repository       @relation(fields: [repoId], references: [id], onDelete: Cascade)
+  repository     Repository      @relation(fields: [repoId], references: [id], onDelete: Cascade)
   prFiles        PrFile[]
   reviewFindings ReviewFinding[]
   reviewRuns     ReviewRun[]
@@ -193,26 +226,29 @@ model ReviewFinding {
   repoId             String
   category           String
   severity           String
-  exploitability     String?     // "trivial" | "moderate" | "difficult" — how easy to exploit
-  impact             String?     // "critical" | "high" | "medium" | "low" — blast radius if exploited
+  exploitability     String? // "trivial" | "moderate" | "difficult" — how easy to exploit
+  impact             String? // "critical" | "high" | "medium" | "low" — blast radius if exploited
   filename           String
   line               Int?
   explanation        String
   diffSuggestion     String?
   evidenceChain      String?
   confidence         Float?
+  confidenceReason   String? // LLM's justification for the confidence score
   verificationStatus String?
   verificationNote   String?
+  skepticVerdict     String? // "confirmed" | "downgraded" | "rejected" — set by the fallback-model adjudication pass
+  skepticNote        String? // human-readable reason; on downgrade includes "downgraded X→Y: <reason>"
   source             String?
   timestamp          String
-  fingerprint        String?     // symbol-anchored hash; stable across line shifts
-  firstSeenRunId     String?     // run that first detected this issue (plain ID, no FK to avoid cascade surprises)
-  lastSeenRunId      String?     // most recent run that still detected it
-  resolvedAtRunId    String?     // run where it stopped appearing AND code at anchor had changed
-  status             String?     // "open" | "resolved" | "wontfix"
-  isRegression       Boolean   @default(false)  // true when a resolved finding reappeared with changed code
-  regressedFromRunId String?     // the run that previously resolved it (resolvedAtRunId at the time)
-  sourceHashAtInsert String?     // snapshot of Symbol.sourceHash when this finding was last detected
+  fingerprint        String? // symbol-anchored hash; stable across line shifts
+  firstSeenRunId     String? // run that first detected this issue (plain ID, no FK to avoid cascade surprises)
+  lastSeenRunId      String? // most recent run that still detected it
+  resolvedAtRunId    String? // run where it stopped appearing AND code at anchor had changed
+  status             String? // "open" | "resolved" | "wontfix"
+  sourceHashAtInsert String? // snapshot of Symbol.sourceHash when this finding was last detected
+  isRegression       Boolean  @default(false) // true if this is a reappearance of a previously resolved finding
+  regressedFromRunId String?  // the run where this finding was previously resolved before regressing
   pullRequest        PullRequest @relation(fields: [prId], references: [id], onDelete: Cascade)
   reviewRun          ReviewRun?  @relation(fields: [reviewRunId], references: [id], onDelete: Cascade)
 
@@ -226,7 +262,7 @@ model ReviewFinding {
 }
 
 model Symbol {
-  id         String  @id
+  id         String                       @id
   repoId     String
   filePath   String
   name       String
@@ -239,7 +275,7 @@ model Symbol {
   summary    String?
   summaryAt  BigInt?
   embedding  Unsupported("vector(1024)")?
-  repository Repository @relation(fields: [repoId], references: [id], onDelete: Cascade)
+  repository Repository                   @relation(fields: [repoId], references: [id], onDelete: Cascade)
 
   @@index([repoId, filePath])
   @@index([repoId, name])
@@ -248,14 +284,14 @@ model Symbol {
 }
 
 model Edge {
-  id       String  @id
-  repoId   String
-  fromId   String
-  toId     String?
-  toRaw    String?
-  kind     String
-  filePath String
-  line     Int
+  id         String     @id
+  repoId     String
+  fromId     String
+  toId       String?
+  toRaw      String?
+  kind       String
+  filePath   String
+  line       Int
   repository Repository @relation(fields: [repoId], references: [id], onDelete: Cascade)
 
   @@index([repoId, toId, kind])
@@ -267,10 +303,10 @@ model Edge {
 }
 
 model File {
-  repoId   String
-  filePath String
-  fileHash String
-  parsedAt BigInt
+  repoId     String
+  filePath   String
+  fileHash   String
+  parsedAt   BigInt
   repository Repository @relation(fields: [repoId], references: [id], onDelete: Cascade)
 
   @@id([repoId, filePath])
@@ -278,52 +314,57 @@ model File {
 }
 
 model User {
-  id            String    @id @default(cuid())
-  email         String    @unique
-  emailVerified Boolean   @default(false)
-  name          String?
-  image         String?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-  banned        Boolean   @default(false)
-  role          String    @default("user")
-  sessions      Session[]
-  accounts      Account[]
-  members       Member[]
-  organizations Organization[]
+  id               String            @id @default(cuid())
+  email            String            @unique
+  emailVerified    Boolean           @default(false)
+  name             String?
+  image            String?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  banned           Boolean           @default(false)
+  role             String            @default("user")
+  sessions         Session[]
+  accounts         Account[]
+  members          Member[]
+  organizations    Organization[]
+  oauthConnections OAuthConnection[]
+  apiKeys          ApiKey[]
+  reviewRuns       ReviewRun[]
+  userRepos        UserRepo[]
+  ownedRepositories Repository[] @relation("RepositoryOwner")
 
   @@map("users")
 }
 
 model Session {
-  id           String   @id @default(cuid())
-  userId       String
-  expiresAt    DateTime
-  token        String   @unique
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-  ipAddress    String?
-  userAgent    String?
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id        String   @id @default(cuid())
+  userId    String
+  expiresAt DateTime
+  token     String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("sessions")
 }
 
 model Account {
-  id                      String    @id @default(cuid())
-  userId                  String
-  accountId               String
-  providerId              String
-  accessToken             String?
-  refreshToken            String?
-  idToken                 String?
-  accessTokenExpiresAt    DateTime?
-  refreshTokenExpiresAt   DateTime?
-  scope                   String?
-  password                String?
-  createdAt               DateTime  @default(now())
-  updatedAt               DateTime  @updatedAt
-  user                    User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id                    String    @id @default(cuid())
+  userId                String
+  accountId             String
+  providerId            String
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("accounts")
 }
@@ -340,14 +381,14 @@ model Verification {
 }
 
 model Organization {
-  id          String   @id @default(cuid())
+  id          String       @id @default(cuid())
   name        String
-  slug        String   @unique
+  slug        String       @unique
   logo        String?
-  createdAt   DateTime @default(now())
-  modifiedAt  DateTime @updatedAt
+  createdAt   DateTime     @default(now())
+  modifiedAt  DateTime     @updatedAt
   ownerId     String?
-  owner       User?    @relation(fields: [ownerId], references: [id], onDelete: SetNull)
+  owner       User?        @relation(fields: [ownerId], references: [id], onDelete: SetNull)
   members     Member[]
   invitations Invitation[]
 
@@ -368,25 +409,133 @@ model Member {
 
 model Invitation {
   id             String       @id @default(cuid())
-  organizationId String
+  // Nullable from #69: the new invite flow is per-repo (verified
+  // via `verifyInviterIsOwnerOrAdmin`), not org-scoped. Legacy rows
+  // created before #69 still link to an Organization and continue
+  // to work.
+  organizationId String?
   email          String
   role           String
   status         String       @default("pending")
   expiresAt      DateTime
   inviterId      String?
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
   @@map("invitations")
 }
 
 model ApiKey {
-  id        String   @id @default(cuid())
-  name      String
-  prefix    String
-  hash      String   @unique
-  createdAt DateTime @default(now())
+  id         String    @id @default(cuid())
+  name       String
+  prefix     String
+  hash       String    @unique
+  repoId     String? // optional: scoped to a specific repo (dragnet-init flow)
+  userId     String?
+  user       User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+  createdAt  DateTime  @default(now())
   lastUsedAt DateTime?
-  revoked   Boolean  @default(false)
+  revoked    Boolean   @default(false)
 
+  @@index([userId])
   @@map("api_keys")
+}
+
+model ScanToken {
+  id         String     @id @default(cuid())
+  repoId     String
+  label      String
+  prefix     String
+  hash       String     @unique
+  createdAt  DateTime   @default(now())
+  lastUsedAt DateTime?
+  revoked    Boolean    @default(false)
+  repository Repository @relation(fields: [repoId], references: [id], onDelete: Cascade)
+
+  @@index([repoId])
+  @@map("scan_tokens")
+}
+
+model WebhookDelivery {
+  id           String    @id
+  repoId       String
+  provider     String    // "github" | "gitlab"
+  eventType    String    // e.g. "pull_request", "push", "Merge Request Hook"
+  deliveryGuid String
+  status       String    // "received" | "completed" | "failed" | "ignored"
+  hostedMode   Boolean   @default(false)
+  prNumber     Int?
+  error        String?
+  createdAt    DateTime  @default(now())
+  completedAt  DateTime?
+
+  @@index([repoId, createdAt])
+  @@index([deliveryGuid])
+  @@index([status])
+  @@map("webhook_deliveries")
+}
+
+/// Join table linking a teammate to a repo they've been invited to.
+/// Created after the teammate accepts an org-level invitation.
+model UserRepo {
+  id          String     @id @default(cuid())
+  userId      String
+  repoId      String
+  role        String     @default("member") // "member" | "admin"
+  invitedById String?
+  invitedAt   DateTime   @default(now())
+  user        User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  repository  Repository @relation(fields: [repoId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, repoId])
+  @@index([userId])
+  @@index([repoId])
+  @@map("user_repos")
+}
+
+/// Links a pending invitation to the repos the inviter selected.
+/// Cleaned up after acceptance or when invitation expires.
+model PendingRepoAssignment {
+  id           String   @id @default(cuid())
+  invitationId String
+  repoId       String
+  createdAt    DateTime @default(now())
+
+  @@unique([invitationId, repoId])
+  @@index([invitationId])
+  @@map("pending_repo_assignments")
+}
+
+/// Audit trail for API key usage — one row per authenticated action.
+model ApiKeyUsage {
+  id        String   @id @default(cuid())
+  keyId     String
+  userId    String?
+  repoId    String?
+  action    String   // e.g. "scan", "prcheck", "command", "prcomments"
+  ip        String?
+  timestamp DateTime @default(now())
+
+  @@index([keyId, timestamp])
+  @@index([repoId, timestamp])
+  @@map("api_key_usage")
+}
+
+model LLMPreset {
+  id                 String   @id @default(cuid())
+  name               String
+  endpoint           String
+  apiKeyCipher       String?
+  apiKeyIv           String?
+  apiKeyTag          String?
+  chatModel          String
+  embeddingModel     String
+  maxIterations      Int      @default(16)
+  isChatPrimary      Boolean  @default(false)
+  isEmbeddingPrimary Boolean  @default(false)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([isChatPrimary])
+  @@index([isEmbeddingPrimary])
+  @@map("llm_presets")
 }

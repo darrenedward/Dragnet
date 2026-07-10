@@ -6,14 +6,22 @@ import {
   AlertCircle,
   AlertTriangle,
   BarChart3,
+  Check,
+  Copy,
   Database,
   FileCode2,
+  Globe,
   Hash,
+  Key,
   Layers,
+  Plus,
   RefreshCw,
+  Shield,
+  Trash2,
   X,
 } from "lucide-react";
 import type { Repository } from "../../../lib/types";
+import ScanTokensSection from "./ScanTokensSection";
 
 interface RepoStats {
   indexedAt: string | null;
@@ -39,16 +47,33 @@ export default function RepoSettingsModal({ repo, onClose, onResetIndex, onRefre
   const [statsError, setStatsError] = useState<string | null>(null);
   const [showConfirm, setShowConfirm] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
+  const [resetDone, setResetDone] = useState(false);
+  const [deletingWebhook, setDeletingWebhook] = useState(false);
+  const [deletedWebhook, setDeletedWebhook] = useState(false);
+  const [settingUpWebhook, setSettingUpWebhook] = useState(false);
+  const [setupWebhookSuccess, setSetupWebhookSuccess] = useState(false);
+  const [webhookError, setWebhookError] = useState<string | null>(null);
+  const [apiKeyPrefix, setApiKeyPrefix] = useState<string | null>(null);
+  const [regeneratingKey, setRegeneratingKey] = useState(false);
+  const [regeneratedKey, setRegeneratedKey] = useState<string | null>(null);
+  const [copiedKey, setCopiedKey] = useState(false);
 
   useEffect(() => {
     const fetchStats = async () => {
       try {
-        const res = await fetch(`/api/repos/${repo.id}/stats`);
-        if (!res.ok) {
-          const data = await res.json().catch(() => ({}));
-          throw new Error(data?.error || `Failed to fetch stats (${res.status})`);
+        const [statsRes, repoRes] = await Promise.all([
+          fetch(`/api/repos/${repo.id}/stats`),
+          fetch(`/api/repos/${repo.id}`),
+        ]);
+        if (!statsRes.ok) {
+          const data = await statsRes.json().catch(() => ({}));
+          throw new Error(data?.error || `Failed to fetch stats (${statsRes.status})`);
         }
-        setStats(await res.json());
+        setStats(await statsRes.json());
+        if (repoRes.ok) {
+          const repoData = await repoRes.json();
+          setApiKeyPrefix(repoData.apiKeyPrefix || null);
+        }
       } catch (err: any) {
         setStatsError(err.message);
       }
@@ -56,14 +81,58 @@ export default function RepoSettingsModal({ repo, onClose, onResetIndex, onRefre
     fetchStats();
   }, [repo.id]);
 
+  const handleSetupWebhook = async () => {
+    setSettingUpWebhook(true);
+    setWebhookError(null);
+    try {
+      const res = await fetch(`/api/repos/${repo.id}/webhook`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.error || `Failed to setup webhook (${res.status})`);
+      }
+      setSetupWebhookSuccess(true);
+      onRefresh();
+    } catch (err: any) {
+      setWebhookError(err.message);
+    } finally {
+      setSettingUpWebhook(false);
+    }
+  };
+
+  const handleDeleteWebhook = async () => {
+    setDeletingWebhook(true);
+    setWebhookError(null);
+    try {
+      const res = await fetch(`/api/repos/${repo.id}/webhook`, { method: "DELETE" });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.error || `Failed to delete webhook (${res.status})`);
+      }
+      setDeletedWebhook(true);
+    } catch (err: any) {
+      setWebhookError(err.message);
+    } finally {
+      setDeletingWebhook(false);
+    }
+  };
+
   const handleResetIndex = async () => {
     setIsResetting(true);
     try {
       await onResetIndex(repo.id);
       setShowConfirm(false);
-      onRefresh();
+      setResetDone(true);
+      setTimeout(() => {
+        setResetDone(false);
+        onRefresh();
+      }, 3000);
     } catch {
       // error handled upstream
+      setIsResetting(false);
     } finally {
       setIsResetting(false);
     }
@@ -160,8 +229,153 @@ export default function RepoSettingsModal({ repo, onClose, onResetIndex, onRefre
             <div className="text-slate-500 text-center py-6 animate-pulse">Loading stats…</div>
           )}
 
+          <div className="border-t border-white/10 pt-4 mt-2 space-y-3">
+              <div className="flex items-center justify-between bg-slate-900/40 border border-white/10 rounded-lg p-3">
+              <div className="flex items-center gap-2">
+                <Globe size={14} className={repo.webhookId && !deletedWebhook && !setupWebhookSuccess ? "text-emerald-400" : "text-slate-500"} />
+                <span className="text-xs text-slate-300">
+                  {repo.webhookId && !deletedWebhook ? "Webhook active" : "Webhook not configured"}
+                </span>
+                {repo.webhookId && !deletedWebhook && (
+                  <code className="text-[10px] text-slate-500 bg-slate-950 px-1.5 py-0.5 rounded">
+                    {repo.webhookId}
+                  </code>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                {!repo.webhookId || deletedWebhook ? (
+                  <button
+                    onClick={handleSetupWebhook}
+                    disabled={settingUpWebhook}
+                    className="flex items-center gap-1 px-2 py-1 bg-emerald-600/20 border border-emerald-500/30 text-emerald-300 hover:bg-emerald-600/30 text-[10px] font-bold rounded transition-all cursor-pointer disabled:opacity-50"
+                  >
+                    {settingUpWebhook ? (
+                      <RefreshCw size={11} className="animate-spin" />
+                    ) : (
+                      <Plus size={11} />
+                    )}
+                    <span>{settingUpWebhook ? "Setting up…" : "Setup"}</span>
+                  </button>
+                ) : null}
+                {repo.webhookId && !deletedWebhook && (
+                  <button
+                    onClick={handleDeleteWebhook}
+                    disabled={deletingWebhook}
+                    className="flex items-center gap-1 px-2 py-1 bg-rose-600/20 border border-rose-500/30 text-rose-300 hover:bg-rose-600/30 text-[10px] font-bold rounded transition-all cursor-pointer disabled:opacity-50"
+                  >
+                    {deletingWebhook ? (
+                      <RefreshCw size={11} className="animate-spin" />
+                    ) : (
+                      <Trash2 size={11} />
+                    )}
+                    <span>{deletingWebhook ? "Deleting…" : "Delete"}</span>
+                  </button>
+                )}
+              </div>
+            </div>
+            {webhookError && (
+              <div className="p-2 bg-rose-950/30 border border-rose-800/20 text-rose-400 rounded text-xs">
+                {webhookError}
+              </div>
+            )}
+            {deletedWebhook && (
+              <div className="p-2 bg-emerald-950/30 border border-emerald-800/20 text-emerald-400 rounded text-xs">
+                Webhook deleted. It will no longer receive events.
+              </div>
+            )}
+            {setupWebhookSuccess && (
+              <div className="p-2 bg-emerald-950/30 border border-emerald-800/20 text-emerald-400 rounded text-xs">
+                Webhook setup complete.
+              </div>
+            )}
+          </div>
+
+          <div className="border-t border-white/10 pt-4 mt-2 space-y-3">
+            <div className="flex items-center justify-between bg-slate-900/40 border border-white/10 rounded-lg p-3">
+              <div className="flex items-center gap-2">
+                <Key size={14} className="text-amber-400" />
+                <span className="text-xs text-slate-300">API Key</span>
+                {apiKeyPrefix && (
+                  <code className="text-[10px] text-slate-500 bg-slate-950 px-1.5 py-0.5 rounded">
+                    {apiKeyPrefix}
+                  </code>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={async () => {
+                    setRegeneratingKey(true);
+                    setRegeneratedKey(null);
+                    try {
+                      // Revoke existing keys for this repo first
+                      const existingRes = await fetch("/api/keys");
+                      if (existingRes.ok) {
+                        const existingKeys: { id: string; repoId: string | null }[] = await existingRes.json();
+                        const repoKeys = existingKeys.filter((k) => k.repoId === repo.id);
+                        await Promise.all(
+                          repoKeys.map((k) => fetch(`/api/keys/${k.id}`, { method: "DELETE" })),
+                        );
+                      }
+                      const res = await fetch("/api/keys", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ name: `project:${repo.name}`, repoId: repo.id }),
+                      });
+                      const data = await res.json();
+                      if (res.ok) {
+                        setRegeneratedKey(data.key);
+                        setApiKeyPrefix(data.prefix);
+                        onRefresh();
+                      }
+                    } catch { /* ignore */ }
+                    setRegeneratingKey(false);
+                  }}
+                  disabled={regeneratingKey}
+                  className="flex items-center gap-1 px-2 py-1 bg-amber-600/20 border border-amber-500/30 text-amber-300 hover:bg-amber-600/30 text-[10px] font-bold rounded transition-all cursor-pointer disabled:opacity-50"
+                >
+                  <RefreshCw size={11} className={regeneratingKey ? "animate-spin" : ""} />
+                  <span>{regeneratingKey ? "Regenerating..." : "Regenerate"}</span>
+                </button>
+              </div>
+            </div>
+            {regeneratedKey && (
+              <div className="p-2.5 bg-amber-950/30 border border-amber-500/30 text-amber-300 rounded text-xs space-y-1.5">
+                <div className="flex items-center gap-1.5">
+                  <div className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+                  <span className="font-bold">New API key — save it now</span>
+                  <button
+                    onClick={() => {
+                      try { navigator.clipboard.writeText(regeneratedKey); } catch { /* ignore */ }
+                      setCopiedKey(true);
+                      setTimeout(() => setCopiedKey(false), 2000);
+                    }}
+                    className="ml-auto p-1 hover:bg-amber-500/10 rounded text-amber-400 hover:text-amber-300 transition-colors"
+                  >
+                    {copiedKey ? <Check size={12} /> : <Copy size={12} />}
+                  </button>
+                </div>
+                <code className="block bg-black/60 p-2 rounded text-[11px] break-all select-all">{regeneratedKey}</code>
+              </div>
+            )}
+          </div>
+
+          {repo.hostedMode && (
+            <ScanTokensSection repoId={repo.id} />
+          )}
+
           <div className="border-t border-white/10 pt-4 mt-2">
-            {!showConfirm ? (
+            {resetDone ? (
+              <div className="p-3 bg-emerald-950/30 border border-emerald-500/30 text-emerald-300 rounded-lg text-xs leading-snug space-y-2">
+                <div className="flex items-center gap-2">
+                  <Check size={16} className="shrink-0" />
+                  <strong className="uppercase tracking-wider text-[10px]">Index cleared</strong>
+                </div>
+                <p className="text-emerald-400/80">
+                  All indexed symbols, edges, and embeddings have been deleted.
+                  Click <strong>&quot;Index Now&quot;</strong> on the PR view to rebuild the index before running a review.
+                </p>
+              </div>
+            ) : !showConfirm ? (
               <button
                 onClick={() => setShowConfirm(true)}
                 className="w-full px-3 py-2.5 bg-rose-600/20 border border-rose-500/30 text-rose-300 hover:bg-rose-600/30 hover:text-rose-200 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-2 cursor-pointer"
@@ -175,7 +389,7 @@ export default function RepoSettingsModal({ repo, onClose, onResetIndex, onRefre
                   <strong className="uppercase tracking-wider text-[10px]">Destructive action</strong>
                   <p className="mt-1 text-rose-400/80">
                     This will delete all indexed symbols, edges, and embeddings for this repo.
-                    A full re-index will be triggered. Ensure <code className="bg-rose-950/60 px-1 rounded">.env</code>
+                    You will need to click <strong>&quot;Index Now&quot;</strong> on the PR view to rebuild. Ensure <code className="bg-rose-950/60 px-1 rounded">.env</code>
                     {" "}files are in <code className="bg-rose-950/60 px-1 rounded">.gitignore</code> before proceeding.
                   </p>
                 </div>

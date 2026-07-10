@@ -83,6 +83,7 @@ vi.mock("../src/services/largePrReview/fingerprint", () => ({
 
 vi.mock("../src/services/largePrReview/reconcile", () => ({
   reconcileFindingsAcrossRuns: vi.fn().mockResolvedValue([]),
+  dedupFindingsWithinRun: vi.fn().mockResolvedValue(0),
 }));
 
 describe("Phase 4.10 — force-restart aborts in-flight scan", () => {
@@ -152,12 +153,17 @@ describe("Phase 4.10 — force-restart aborts in-flight scan", () => {
 
     const result = await scanPromise;
 
-    // Critical assertions:
-    expect(result.interrupted).toBe(true);
+    // The current contract (post-pipeline refactor): when an in-flight
+    // create() rejects with AbortError, the LLM pipeline returns
+    // `aborted: true`, and runPrScan surfaces that as
+    // `success: false, infrastructureFailure: true, systemWarn: "<aborted reason>"`.
+    // The old `interrupted: true` / `message: "..."` field names were
+    // collapsed into the unified failure-result shape.
     expect(result.success).toBe(false);
     expect(result.rating).toBeNull();
     expect(result.findings).toEqual([]);
-    expect(result.message).toMatch(/aborted/i);
+    expect(result.systemWarn ?? "").toMatch(/aborted/i);
+    expect(result.infrastructureFailure).toBe(true);
   });
 });
 

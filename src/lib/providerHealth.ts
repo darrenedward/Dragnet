@@ -20,11 +20,12 @@
  * Transport failures, interruptions, and unknown failures never count.
  * This is critical: a flaky network must not pause a working model.
  *
- * **Persistence:** `<repo.path>/.dragnet/provider-health.json` with
- * atomic write (temp + rename) at mode 0600. Lives under `repo.path`
- * (NOT `process.cwd()`) because the Dragnet server's cwd is its install
- * dir, not the scanned repo — writing there would silently corrupt an
- * unrelated repo's health state and break `/dragnet` skill lookups.
+ * **Persistence (centralised):** `<scanStateRoot>/<repoId>/provider-health.json`
+ * **Persistence (legacy):** `<repo.path>/.dragnet/provider-health.json`
+ *
+ * Slice 2: all persistence functions accept an optional `repoId`
+ * parameter. When provided, the central scan-state path is used. When
+ * omitted, the legacy per-repo `.dragnet/` path is used for back-compat.
  *
  * **Concurrency:** read-modify-write is approximate. Concurrent scans
  * can race an increment and lose one. This is acceptable: the app
@@ -35,6 +36,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { getScanStatePath, getLegacyScanStatePath } from "@/src/lib/scanStatePath";
 
 export type CircuitState = "closed" | "open" | "half-open";
 
@@ -191,9 +193,14 @@ export function recordSuccess(health: Health | undefined, now: number): Health {
   return next;
 }
 
-/** File path: `<repoPath>/.dragnet/provider-health.json`. */
-export function healthFilePath(repoPath: string): string {
-  return path.join(repoPath, ".dragnet", "provider-health.json");
+/**
+ * Resolve the health file path. When `repoId` is provided, uses the
+ * central scan-state path; otherwise falls back to the legacy path.
+ */
+export function healthFilePath(repoPath: string, repoId?: string): string {
+  return repoId
+    ? path.join(getScanStatePath(repoId), "provider-health.json")
+    : path.join(getLegacyScanStatePath(repoPath), "provider-health.json");
 }
 
 /**
@@ -202,8 +209,8 @@ export function healthFilePath(repoPath: string): string {
  * (logged at warn; never thrown — caller cannot recover from this
  * failure and we must not block scans on a malformed health file).
  */
-export function readHealthFile(repoPath: string): ProviderHealthFile {
-  const filePath = healthFilePath(repoPath);
+export function readHealthFile(repoPath: string, repoId?: string): ProviderHealthFile {
+  const filePath = healthFilePath(repoPath, repoId);
   try {
     const raw = fs.readFileSync(filePath, "utf8");
     const parsed = JSON.parse(raw);
@@ -226,8 +233,8 @@ export function readHealthFile(repoPath: string): ProviderHealthFile {
  * appears as the canonical file (concurrent readers see either the
  * old or the new file, never a truncated mix).
  */
-export function writeHealthFile(repoPath: string, file: ProviderHealthFile): void {
-  const filePath = healthFilePath(repoPath);
+export function writeHealthFile(repoPath: string, file: ProviderHealthFile, repoId?: string): void {
+  const filePath = healthFilePath(repoPath, repoId);
   const dir = path.dirname(filePath);
   try {
     fs.mkdirSync(dir, { recursive: true });
@@ -254,18 +261,19 @@ export function recordProviderQualityFailure(
   endpoint: string,
   model: string,
   presetName?: string,
+  repoId?: string,
 ): void {
-  if (!repoPath) {
-    console.warn("[providerHealth] recordQualityFailure skipped: no repoPath");
+  if (!repoPath && !repoId) {
+    console.warn("[providerHealth] recordQualityFailure skipped: no repoPath or repoId");
     return;
   }
   const key = breakerKeyFor(endpoint, model);
   const now = Date.now();
-  const file = readHealthFile(repoPath);
+  const file = readHealthFile(repoPath ?? "", repoId);
   const prev = file.providers[key];
   file.providers[key] = recordQualityFailure(prev, now, getBreakerThreshold(), getBreakerCooldownMs());
   if (presetName) file.providers[key].presetName = presetName;
-  writeHealthFile(repoPath, file);
+  writeHealthFile(repoPath ?? "", file, repoId);
 }
 
 /**
@@ -277,18 +285,19 @@ export function recordProviderSuccess(
   endpoint: string,
   model: string,
   presetName?: string,
+  repoId?: string,
 ): void {
-  if (!repoPath) {
-    console.warn("[providerHealth] recordSuccess skipped: no repoPath");
+  if (!repoPath && !repoId) {
+    console.warn("[providerHealth] recordSuccess skipped: no repoPath or repoId");
     return;
   }
   const key = breakerKeyFor(endpoint, model);
   const now = Date.now();
-  const file = readHealthFile(repoPath);
+  const file = readHealthFile(repoPath ?? "", repoId);
   const prev = file.providers[key];
   file.providers[key] = recordSuccess(prev, now);
   if (presetName) file.providers[key].presetName = presetName;
-  writeHealthFile(repoPath, file);
+  writeHealthFile(repoPath ?? "", file, repoId);
 }
 
 /**
@@ -300,10 +309,11 @@ export function getProviderHealth(
   repoPath: string | null | undefined,
   endpoint: string,
   model: string,
+  repoId?: string,
 ): { state: CircuitState; health: Health | null } {
-  if (!repoPath) return { state: "closed", health: null };
+  if (!repoPath && !repoId) return { state: "closed", health: null };
   const key = breakerKeyFor(endpoint, model);
-  const file = readHealthFile(repoPath);
+  const file = readHealthFile(repoPath ?? "", repoId);
   const health = file.providers[key] ?? null;
   return { state: decideState(health ?? undefined, Date.now()), health };
 }
@@ -315,9 +325,10 @@ export function getProviderHealth(
  */
 export function listProviderHealth(
   repoPath: string | null | undefined,
+  repoId?: string,
 ): ProviderHealthFile {
-  if (!repoPath) return { providers: {} };
-  return readHealthFile(repoPath);
+  if (!repoPath && !repoId) return { providers: {} };
+  return readHealthFile(repoPath ?? "", repoId);
 }
 
 /**
@@ -329,14 +340,15 @@ export function resetProviderHealth(
   repoPath: string | null | undefined,
   endpoint?: string,
   model?: string,
+  repoId?: string,
 ): void {
-  if (!repoPath) return;
+  if (!repoPath && !repoId) return;
   if (!endpoint || !model) {
-    writeHealthFile(repoPath, { providers: {} });
+    writeHealthFile(repoPath ?? "", { providers: {} }, repoId);
     return;
   }
   const key = breakerKeyFor(endpoint, model);
-  const file = readHealthFile(repoPath);
+  const file = readHealthFile(repoPath ?? "", repoId);
   delete file.providers[key];
-  writeHealthFile(repoPath, file);
+  writeHealthFile(repoPath ?? "", file, repoId);
 }

@@ -1,8 +1,7 @@
 "use client";
 
 import { motion } from "motion/react";
-import { AlertCircle, Database, Globe, X } from "lucide-react";
-import LocalTab from "./LocalTab";
+import { AlertCircle, Globe, X } from "lucide-react";
 import RemoteTab from "./RemoteTab";
 import type { Repository } from "../../../lib/types";
 
@@ -11,10 +10,8 @@ interface Props {
   onClose: () => void;
   onSubmit: (e: React.FormEvent) => void;
   errorFeedback: string | null;
-  newRepoMode: "local" | "ssh" | "pat";
-  setNewRepoMode: (v: "local" | "ssh" | "pat") => void;
-  newRepoPath: string;
-  setNewRepoPath: (v: string) => void;
+  newRepoMode: "ssh" | "pat";
+  setNewRepoMode: (v: "ssh" | "pat") => void;
   newCloneUrl: string;
   setNewCloneUrl: (v: string) => void;
   newCloneUrlHttps: string;
@@ -25,6 +22,10 @@ interface Props {
   setNewPat: (v: string) => void;
   webhookEnabled: boolean;
   onWebhookEnabledChange: (v: boolean) => void;
+  editSkipTier2: boolean;
+  setEditSkipTier2: (v: boolean) => void;
+  editHostedMode: boolean;
+  setEditHostedMode: (v: boolean) => void;
 }
 
 export default function EditRepoModal(props: Props) {
@@ -36,13 +37,6 @@ export default function EditRepoModal(props: Props) {
     ...rest
   } = props;
 
-  const tab: "local" | "remote" = newRepoMode === "local" ? "local" : "remote";
-
-  const handleTabSwitch = (next: "local" | "remote") => {
-    if (next === "local") setNewRepoMode("local");
-    else if (newRepoMode === "local") setNewRepoMode("ssh");
-  };
-
   return (
     <div className="fixed inset-0 bg-black/80 backdrop-blur-xs flex items-center justify-center z-50 p-4 select-none">
       <motion.div
@@ -53,11 +47,7 @@ export default function EditRepoModal(props: Props) {
       >
         <div className="px-5 py-4 bg-slate-950/70 border-b border-white/10 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            {tab === "local" ? (
-              <Database size={16} className="text-cyan-400 animate-pulse" />
-            ) : (
-              <Globe size={16} className="text-cyan-400 animate-pulse" />
-            )}
+            <Globe size={16} className="text-cyan-400 animate-pulse" />
             <span className="text-sm font-bold text-white tracking-tight uppercase font-mono">
               Edit {repo.name}
             </span>
@@ -70,31 +60,6 @@ export default function EditRepoModal(props: Props) {
           </button>
         </div>
 
-        <div className="flex border-b border-white/10">
-          <button
-            type="button"
-            onClick={() => handleTabSwitch("local")}
-            className={`flex-1 py-2.5 text-xs font-bold uppercase tracking-wider transition-all cursor-pointer ${
-              tab === "local"
-                ? "text-cyan-400 border-b-2 border-cyan-400 bg-cyan-400/5"
-                : "text-slate-500 hover:text-slate-300"
-            }`}
-          >
-            Local Directory
-          </button>
-          <button
-            type="button"
-            onClick={() => handleTabSwitch("remote")}
-            className={`flex-1 py-2.5 text-xs font-bold uppercase tracking-wider transition-all cursor-pointer ${
-              tab === "remote"
-                ? "text-cyan-400 border-b-2 border-cyan-400 bg-cyan-400/5"
-                : "text-slate-500 hover:text-slate-300"
-            }`}
-          >
-            Remote Repository
-          </button>
-        </div>
-
         <form onSubmit={onSubmit} className="p-5 flex flex-col gap-4 text-xs font-mono">
           {errorFeedback && (
             <div className="p-2 bg-rose-950/30 border border-rose-800/20 text-rose-400 rounded text-xs flex items-center gap-1.5 leading-snug">
@@ -103,18 +68,51 @@ export default function EditRepoModal(props: Props) {
             </div>
           )}
 
-          {tab === "local" ? (
-            <LocalTab {...rest} />
-          ) : (
-            <RemoteTab
-              {...rest}
-              newRepoMode={newRepoMode === "local" ? "ssh" : newRepoMode}
-              setNewRepoMode={(v) => setNewRepoMode(v)}
-              webhookEnabled={webhookEnabled}
-              onWebhookEnabledChange={onWebhookEnabledChange}
-              lastWebhookEventAt={repo.lastWebhookEventAt ?? null}
-            />
-          )}
+          <RemoteTab
+            {...rest}
+            newRepoMode={newRepoMode}
+            setNewRepoMode={setNewRepoMode}
+            webhookEnabled={webhookEnabled}
+            onWebhookEnabledChange={onWebhookEnabledChange}
+            lastWebhookEventAt={repo.lastWebhookEventAt ?? null}
+          />
+
+          <div className="flex flex-col gap-2 p-3 bg-slate-900/40 border border-white/10 rounded">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={props.editSkipTier2}
+                onChange={(e) => props.setEditSkipTier2(e.target.checked)}
+                className="w-3.5 h-3.5 accent-cyan-500 rounded"
+              />
+              <span className="text-slate-300 text-xs font-mono">
+                Skip Tier 2 (containerized build/test)
+              </span>
+            </label>
+            <p className="text-[10px] text-slate-500 ml-5 leading-snug">
+              When enabled, the containerized build and test pipeline is skipped for this repo.
+              Typecheck/lint (Tier 1) and LLM review (Tier 3) still run normally.
+            </p>
+          </div>
+
+          <div className="flex flex-col gap-2 p-3 bg-slate-900/40 border border-white/10 rounded">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={props.editHostedMode}
+                onChange={(e) => props.setEditHostedMode(e.target.checked)}
+                className="w-3.5 h-3.5 accent-cyan-500 rounded"
+              />
+              <span className="text-slate-300 text-xs font-mono">
+                Hosted Mode
+              </span>
+            </label>
+            <p className="text-[10px] text-slate-500 ml-5 leading-snug">
+              When enabled, external repos can trigger scans via the hosted scan API
+              with scan tokens. The scan endpoint accepts POST /api/hosted-scan/scan
+              with an <code className="text-cyan-400">hs_</code> token.
+            </p>
+          </div>
 
           <div className="flex gap-2.5 mt-2.5 pt-4 border-t border-white/10">
             <button

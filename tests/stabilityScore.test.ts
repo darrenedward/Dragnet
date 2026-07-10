@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { computeStability, computeWeightedStability, STABILITY_RATING_THRESHOLD, STABILITY_MIN_ROUNDS, STABILITY_WEIGHT_THRESHOLD } from "../src/lib/stabilityScore";
 
-function run(runId: string, rating: number | null, newFindingsCount: number, model?: string | null): import("../src/lib/stabilityScore").RatingTrendEntry {
-  return { runId, rating, completedAt: new Date(), commitHash: "h", newFindingsCount, model: model ?? null };
+function run(runId: string, rating: number | null, newFindingsCount: number, model: string | null = "claude-opus"): import("../src/lib/stabilityScore").RatingTrendEntry {
+  return { runId, rating, completedAt: new Date(), commitHash: "h", newFindingsCount, model };
 }
 
 function fakeWeight(model: string | null | undefined): number {

@@ -5,7 +5,7 @@ import { runPrScan, SYSTEM_INSTRUCTION } from "@/reviewService";
 import { authenticateApiRequest } from "@/src/lib/apiAuth";
 import { IndexingService } from "@/src/services/indexingService";
 import { assertIndexFresh } from "@/src/lib/indexFreshness";
-import { refreshPrFiles, isBranchMerged } from "@/src/lib/getRealLocalPrs";
+import { refreshPrFiles, isBranchMerged } from "@/src/lib/getRealPrs";
 import { getChatChain } from "@/src/lib/llmClient";
 import { acquireReviewLock, endReview } from "@/src/lib/reviewLocks";
 import { computePrSizeProfile } from "@/src/lib/prSizeProfile";
@@ -50,7 +50,22 @@ export async function GET(req: Request, { params }: { params: Promise<{ prIdOrNu
 
     const repo = await prisma.repository.findUnique({
       where: { id: pr.repoId },
-      select: { id: true, name: true, indexedAt: true, lastCommitHash: true, path: true, baseBranch: true },
+      select: {
+        id: true,
+        name: true,
+        indexedAt: true,
+        lastCommitHash: true,
+        path: true,
+        baseBranch: true,
+        cloneUrl: true,
+        cloneUrlHttps: true,
+        deployKeyCipher: true,
+        deployKeyIv: true,
+        deployKeyTag: true,
+        patCipher: true,
+        patIv: true,
+        patTag: true,
+      },
     });
     if (!repo) {
       return NextResponse.json({
@@ -59,7 +74,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ prIdOrNu
       }, { status: 404 });
     }
 
-    const freshness = assertIndexFresh(repo);
+    const freshness = await assertIndexFresh(repo);
     if (freshness.ok === false) {
       if (freshness.kind === "INDEX_REQUIRED") {
         return NextResponse.json({ status: "Error", message: freshness.message }, { status: 409 });
@@ -75,9 +90,9 @@ export async function GET(req: Request, { params }: { params: Promise<{ prIdOrNu
     // short-circuit), unlike the dashboard route.
     const chatChain = getChatChain();
     let files: any[] = [];
-    if (repo.path && pr.sourceBranch) {
+    if ((repo.path || repo.cloneUrl) && pr.sourceBranch) {
       try {
-        files = await refreshPrFiles(repo.path, repo.baseBranch || "main", pr.sourceBranch, pr.id);
+        files = await refreshPrFiles(repo, pr.sourceBranch, pr.id);
       } catch (e) {
         console.warn("[prcheck] refreshPrFiles failed, using cached:", e);
       }
@@ -85,7 +100,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ prIdOrNu
     const baseBranch = pr.targetBranch || repo.baseBranch || "main";
     const sizeProfile = computePrSizeProfile(
       files,
-      readPrCommitCount(repo.path, baseBranch, pr.sourceBranch),
+      await readPrCommitCount(repo, baseBranch, pr.sourceBranch),
     );
     const limits = readLimits();
     const manifest = buildDiffManifest(files, sizeProfile.commitCount, {
@@ -97,7 +112,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ prIdOrNu
     const tier = assertTier(manifest);
 
     // Merged-branch short-circuit — same rationale as scan/route.ts.
-    if (repo.path && pr.sourceBranch && files.length === 0 && await isBranchMerged(repo.path, baseBranch, pr.sourceBranch)) {
+    if ((repo.path || repo.cloneUrl) && pr.sourceBranch && files.length === 0 && await isBranchMerged(repo, baseBranch, pr.sourceBranch)) {
       await prisma.pullRequest.update({
         where: { id: pr.id },
         data: { status: "Merged" },
@@ -143,6 +158,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ prIdOrNu
       reviewConfigHash: configHash,
       model: chatChain[0]?.model ?? null,
       triggerReason: "prcheck",
+      createdByUserId: auth.userId,
     });
 
     const scanResult = tier.tier === "normal"

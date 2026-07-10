@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/src/lib/prisma";
-import { authenticateSessionOrKey } from "@/src/lib/apiAuth";
+import { authenticateSessionOrKey, enforceRepoScope } from "@/src/lib/apiAuth";
 import { currentHeadCommit } from "@/src/lib/indexFreshness";
 
 export const runtime = "nodejs";
@@ -10,9 +10,25 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: 401 });
   try {
     const { id } = await params;
+    const scopeErr = enforceRepoScope(auth, id);
+    if (scopeErr) return NextResponse.json(scopeErr, { status: 403 });
     const repo = await prisma.repository.findUnique({
       where: { id },
-      select: { id: true, name: true, path: true, indexedAt: true, lastCommitHash: true },
+      select: {
+        id: true,
+        name: true,
+        path: true,
+        indexedAt: true,
+        lastCommitHash: true,
+        cloneUrl: true,
+        cloneUrlHttps: true,
+        deployKeyCipher: true,
+        deployKeyIv: true,
+        deployKeyTag: true,
+        patCipher: true,
+        patIv: true,
+        patTag: true,
+      },
     });
     if (!repo) {
       return NextResponse.json({ error: "Repository not found" }, { status: 404 });
@@ -24,7 +40,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
       prisma.edge.count({ where: { repoId: id } }),
     ]);
 
-    const headCommit = repo.path ? currentHeadCommit(repo.path) : null;
+    const headCommit = repo.path || repo.cloneUrl ? await currentHeadCommit(repo) : null;
 
     const { embeddingCoveragePct, fileCountWithEmbeddings } = await getEmbeddingStats(id);
 

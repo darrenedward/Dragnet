@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getActiveScan, getLatestCompletedReview, getRecentRuns } from "@/src/lib/reviewFreshness";
 import { computeStability, computeWeightedStability } from "@/src/lib/stabilityScore";
 import { lookupTrustWeight } from "@/src/lib/modelTrustWeights";
-import { authenticateSessionOrKey } from "@/src/lib/apiAuth";
+import { authenticateSessionOrKey, enforcePrRepoScope } from "@/src/lib/apiAuth";
 import { prisma } from "@/src/lib/prisma";
 import { computePrSizeProfile } from "@/src/lib/prSizeProfile";
 import { readPrCommitCount } from "@/src/lib/prSizeProfile.server";
@@ -48,6 +48,8 @@ export async function GET(req: Request, { params }: { params: Promise<{ prId: st
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: 401 });
   try {
     const { prId } = await params;
+    const prScopeErr = await enforcePrRepoScope(auth, prId);
+    if (prScopeErr) return NextResponse.json(prScopeErr, { status: 403 });
 
     const [latest, pr, files, activeScan] = await Promise.all([
       getLatestCompletedReview(prId),
@@ -56,7 +58,21 @@ export async function GET(req: Request, { params }: { params: Promise<{ prId: st
         select: {
           sourceBranch: true,
           targetBranch: true,
-          repository: { select: { path: true, baseBranch: true } },
+          repository: {
+            select: {
+              id: true,
+              path: true,
+              baseBranch: true,
+              cloneUrl: true,
+              cloneUrlHttps: true,
+              deployKeyCipher: true,
+              deployKeyIv: true,
+              deployKeyTag: true,
+              patCipher: true,
+              patIv: true,
+              patTag: true,
+            },
+          },
         },
       }),
       prisma.prFile.findMany({
@@ -66,8 +82,8 @@ export async function GET(req: Request, { params }: { params: Promise<{ prId: st
       getActiveScan(prId),
     ]);
     const commitCount = pr
-      ? readPrCommitCount(
-          pr.repository.path,
+      ? await readPrCommitCount(
+          pr.repository,
           pr.targetBranch || pr.repository.baseBranch || "main",
           pr.sourceBranch,
         )

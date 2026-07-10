@@ -2,156 +2,21 @@
 
 import { useEffect, useState } from "react";
 import { motion } from "motion/react";
-import { Check, Copy, Eye, EyeOff, Key, Plus, Trash2, X, Code, Terminal, Sparkles, Cpu } from "lucide-react";
-
-interface RepoView {
-  id: string;
-  name: string;
-}
+import { Check, Copy, Eye, EyeOff, Key, Plus, Trash2 } from "lucide-react";
 
 interface ApiKeyView {
   id: string;
   name: string;
   prefix: string;
+  repoId: string | null;
+  user: { id: string; name: string | null; email: string } | null;
   createdAt: string;
   lastUsedAt: string | null;
   revoked: boolean;
 }
 
-type ToolId = "claude" | "cursor" | "opencode" | "codex";
-
-interface ToolConfig {
-  id: ToolId;
-  label: string;
-  icon: typeof Code;
-}
-
-const tools: ToolConfig[] = [
-  { id: "claude", label: "Claude Code", icon: Sparkles },
-  { id: "cursor", label: "Cursor", icon: Cpu },
-  { id: "opencode", label: "OpenCode", icon: Terminal },
-  { id: "codex", label: "Codex", icon: Code },
-];
-
-function InstallModal({ tool, origin, apiKey, repoId, onClose }: { tool: ToolId; origin: string; apiKey: string; repoId?: string; onClose: () => void }) {
-  const [copiedSection, setCopiedSection] = useState<string | null>(null);
-
-  const copy = (text: string, section: string) => {
-    try {
-      navigator.clipboard.writeText(text);
-    } catch {
-      const ta = document.createElement("textarea");
-      ta.value = text;
-      ta.style.position = "fixed";
-      ta.style.opacity = "0";
-      document.body.appendChild(ta);
-      ta.select();
-      document.execCommand("copy");
-      document.body.removeChild(ta);
-    }
-    setCopiedSection(section);
-    setTimeout(() => setCopiedSection(null), 2000);
-  };
-
-  const key = apiKey;
-  const baseUrl = repoId ? `${origin}/api/command/${repoId}` : `${origin}/api/command`;
-
-  interface CmdSection { label: string; command: string; }
-  const sections: Record<ToolId, { title: string; steps: CmdSection[] }> = {
-    claude: {
-      title: "Claude Code",
-      steps: [
-        {
-          label: "Install the Dragnet /dragnet skill (run from the Dragnet repo root)",
-          command: `cp -r skills/dragnet ~/.claude/skills/`,
-        },
-        {
-          label: "Set your API key (used by the skill, CLI, and pre-push hook)",
-          command: `export DRAGNET_API_KEY='${key}'`,
-        },
-      ],
-    },
-    cursor: {
-      title: "Cursor",
-      steps: [
-        {
-          label: "Cursor has no agent-skill system \u2014 call the Dragnet API directly",
-          command: `curl -s ${baseUrl} -H "Authorization: Bearer ${key}" -H "Content-Type: application/json" -d '{"command":"prlist"}'`,
-        },
-      ],
-    },
-    opencode: {
-      title: "OpenCode",
-      steps: [
-        {
-          label: "Install the Dragnet /dragnet skill (OpenCode reads ~/.claude/skills)",
-          command: `cp -r skills/dragnet ~/.claude/skills/`,
-        },
-        {
-          label: "Set your API key (used by the skill, CLI, and pre-push hook)",
-          command: `export DRAGNET_API_KEY='${key}'`,
-        },
-      ],
-    },
-    codex: {
-      title: "Codex",
-      steps: [
-        {
-          label: "Codex has no agent-skill system — call the Dragnet API directly",
-          command: `curl -s ${baseUrl} -H "Authorization: Bearer ${key}" -H "Content-Type: application/json" -d '{"command":"prlist"}'`,
-        },
-      ],
-    },
-  };
-
-  const t = sections[tool];
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm" onClick={onClose}>
-      <motion.div
-        initial={{ opacity: 0, scale: 0.95 }}
-        animate={{ opacity: 1, scale: 1 }}
-        className="bg-[#0F1219] border border-white/10 rounded-2xl shadow-2xl w-full max-w-lg mx-4"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between p-5 border-b border-white/10">
-          <h3 className="text-sm font-bold text-white uppercase tracking-wider font-mono">{t.title}</h3>
-          <button onClick={onClose} className="p-1 hover:bg-white/10 rounded-lg text-slate-400 hover:text-white transition-colors cursor-pointer">
-            <X size={16} />
-          </button>
-        </div>
-        <div className="p-5 space-y-5">
-          {!apiKey && (
-            <div className="space-y-3">
-              <p className="text-xs text-slate-400 font-mono">No API key available. Generate one above first.</p>
-            </div>
-          )}
-          {t.steps.map((step, i) => (
-            <div key={i} className="space-y-2">
-              <p className="text-xs text-slate-400 font-mono">{step.label}</p>
-              <div className="relative group">
-                <pre className="bg-black/80 rounded-lg p-3 text-[12px] font-mono text-cyan-300 overflow-x-auto whitespace-pre-wrap break-all leading-relaxed border border-white/5 select-all">
-                  {step.command}
-                </pre>
-                <button
-                  onClick={() => copy(step.command, `${tool}-${i}`)}
-                  className="absolute top-2 right-2 p-1.5 bg-slate-800/80 hover:bg-slate-700 rounded-lg text-slate-400 hover:text-cyan-400 transition-colors opacity-0 group-hover:opacity-100 cursor-pointer"
-                  title="Copy"
-                >
-                  {copiedSection === `${tool}-${i}` ? <Check size={13} /> : <Copy size={13} />}
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-      </motion.div>
-    </div>
-  );
-}
-
 export default function ApiKeysPanel() {
   const [keys, setKeys] = useState<ApiKeyView[]>([]);
-  const [repos, setRepos] = useState<RepoView[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [newKeyName, setNewKeyName] = useState("");
   const [creating, setCreating] = useState(false);
@@ -159,30 +24,22 @@ export default function ApiKeysPanel() {
   const [showKey, setShowKey] = useState(false);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [activeTool, setActiveTool] = useState<ToolId | null>(null);
-  const [selectedRepo, setSelectedRepo] = useState<string>("");
-  const [origin, setOrigin] = useState("http://localhost:3300");
-
-  useEffect(() => {
-    setOrigin(window.location.origin);
-  }, []);
 
   const fetchKeys = async () => {
     try {
       const res = await fetch("/api/keys");
-      if (res.ok) setKeys(await res.json());
-    } catch { /* ignore */ }
-  };
-
-  const fetchRepos = async () => {
-    try {
-      const res = await fetch("/api/repos");
-      if (res.ok) setRepos(await res.json());
+      if (res.ok) {
+        const all = (await res.json()) as ApiKeyView[];
+        // Project-scoped keys (repoId !== null) are managed per-project via
+        // RepoSettingsModal → API Key section. This panel is for global /
+        // standalone keys only (CI, admin automation, multi-project tooling).
+        setKeys(all.filter((k) => k.repoId === null));
+      }
     } catch { /* ignore */ }
   };
 
   useEffect(() => {
-    Promise.all([fetchKeys(), fetchRepos()]).finally(() => setIsLoading(false));
+    fetchKeys().finally(() => setIsLoading(false));
   }, []);
 
   const handleCreate = async () => {
@@ -190,12 +47,6 @@ export default function ApiKeysPanel() {
     setError(null);
     setNewKeyValue(null);
     try {
-      const existing = await (await fetch("/api/keys")).json();
-      await Promise.all(
-        (existing as { id: string }[]).map((k) =>
-          fetch(`/api/keys/${k.id}`, { method: "DELETE" })
-        )
-      );
       const res = await fetch("/api/keys", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -252,7 +103,7 @@ export default function ApiKeysPanel() {
               API Keys
             </h3>
             <p className="text-xs text-slate-400">
-              API keys for remote clients (Claude Code, Cursor, etc.). Set the <code className="text-cyan-400">Authorization: Bearer</code> header when calling Dragnet's endpoints.
+              Global keys for CI, automation, and multi-project tooling. Set <code className="text-cyan-400">Authorization: Bearer</code> on requests. Per-project keys live in each project&apos;s Settings → API Key.
             </p>
           </div>
         </div>
@@ -269,6 +120,16 @@ export default function ApiKeysPanel() {
                       <span className="text-[9px] text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20 font-mono uppercase">Active</span>
                     </div>
                     <div className="text-[10px] text-slate-500 font-mono mt-0.5">{k.prefix}</div>
+                    {k.user && (
+                      <div className="text-[10px] text-slate-400 font-mono mt-0.5">
+                        Owner: <span className="text-slate-300">{k.user.name || k.user.email}</span>
+                      </div>
+                    )}
+                    {!k.user && (
+                      <div className="text-[9px] text-amber-400/80 font-mono mt-0.5">
+                        Legacy key — no owner assigned
+                      </div>
+                    )}
                     <div className="text-[9px] text-slate-600 font-mono">
                       Created {new Date(k.createdAt).toLocaleDateString()}
                       {k.lastUsedAt ? ` · Last used ${new Date(k.lastUsedAt).toLocaleDateString()}` : " · Never used"}
@@ -314,6 +175,11 @@ export default function ApiKeysPanel() {
                 </button>
               </div>
             </div>
+            <div className="bg-black/40 rounded-lg p-2.5 text-[10px] font-mono text-slate-400 leading-relaxed">
+              <div className="text-slate-500 mb-1 uppercase tracking-wider text-[9px]">Use in your shell:</div>
+              <div className="text-cyan-400">export DRAGNET_API_KEY={showKey ? newKeyValue : "dr_…"}</div>
+              <div className="text-cyan-400">export DRAGNET_URL=http://localhost:3300</div>
+            </div>
           </div>
         ) : (
           <div className="space-y-3">
@@ -339,87 +205,6 @@ export default function ApiKeysPanel() {
           </div>
         )}
       </div>
-
-      <div className="p-5 bg-[#0F1219] border border-white/10 rounded-xl">
-        <h4 className="text-[10px] uppercase tracking-[0.2em] text-slate-500 font-mono font-bold mb-3">Connect Your Tools</h4>
-
-        {repos.length > 0 && (
-          <div className="mb-4">
-            <label className="text-[10px] uppercase tracking-[0.2em] text-slate-500 font-mono font-bold block mb-1.5">
-              Target Repository
-            </label>
-            <select
-              value={selectedRepo}
-              onChange={(e) => setSelectedRepo(e.target.value)}
-              className="w-full bg-slate-900 border border-white/10 rounded-lg px-3 py-2 text-xs font-mono text-slate-300 focus:outline-none focus:border-cyan-500/40"
-            >
-              <option value="">All repos (pass repoId manually)</option>
-              {repos.map((r) => (
-                <option key={r.id} value={r.id}>{r.name}</option>
-              ))}
-            </select>
-            {selectedRepo && (
-              <p className="text-[9px] text-slate-500 font-mono mt-1">
-                Install commands will be scoped to this repo. <code className="text-cyan-400">/dragnet 5</code> will use this repo automatically.
-              </p>
-            )}
-          </div>
-        )}
-
-        <div className="flex flex-wrap gap-2">
-          {tools.map((t) => {
-            const Icon = t.icon;
-            const hasKey = newKeyValue !== null;
-            return (
-              <button
-                key={t.id}
-                onClick={async () => {
-                  if (hasKey) { setActiveTool(t.id); return; }
-                  setCreating(true);
-                  try {
-                    const existing = await (await fetch("/api/keys")).json();
-                    await Promise.all(
-                      (existing as { id: string }[]).map((k) =>
-                        fetch(`/api/keys/${k.id}`, { method: "DELETE" })
-                      )
-                    );
-                    const res = await fetch("/api/keys", {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ name: "Dragnet API Key" }),
-                    });
-                    const data = await res.json();
-                    if (res.ok) setNewKeyValue(data.key);
-                    await fetchKeys();
-                  } catch { /* ignore */ }
-                  setCreating(false);
-                  setActiveTool(t.id);
-                }}
-                className={`flex items-center gap-2 px-3 py-2 border rounded-lg text-xs font-mono transition-all ${
-                  hasKey
-                    ? "bg-slate-900/60 hover:bg-slate-800 border-white/10 hover:border-cyan-500/30 text-slate-400 hover:text-cyan-300 cursor-pointer"
-                    : "bg-slate-900/30 border-white/5 text-slate-600 cursor-pointer hover:border-amber-500/30 hover:text-amber-400"
-                }`}
-                title={hasKey ? `Configure ${t.label}` : "Click to auto-generate an API key"}
-              >
-                <Icon size={14} />
-                {t.label}
-                {!hasKey && <Plus size={10} className="text-amber-500" />}
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      {activeTool && (
-        <InstallModal
-          tool={activeTool}
-          origin={origin}
-          apiKey={newKeyValue!}
-          repoId={selectedRepo || undefined}
-          onClose={() => setActiveTool(null)}
-        />
-      )}
     </motion.div>
   );
 }

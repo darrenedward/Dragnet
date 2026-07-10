@@ -1,0 +1,13 @@
+{
+  "name": "dragnet-init",
+  "version": "0.1.0",
+  "description": "Resolve a Dragnet project API key + URL and print export commands for your shell",
+  "type": "module",
+  "bin": {
+    "dragnet-init": "bin/dragnet-init.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT"
+}

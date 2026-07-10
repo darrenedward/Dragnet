@@ -9,6 +9,7 @@ import RolePanel from "./RolePanel";
 import ApiKeysPanel from "./ApiKeysPanel";
 import ReviewLimitsPanel from "./ReviewLimitsPanel";
 import ProviderHealthPanel from "./ProviderHealthPanel";
+import SkepticPanel from "./SkepticPanel";
 import {
   LLM_PRESETS_CHANGED_EVENT,
   EMPTY_SLOT_STATE,
@@ -22,7 +23,7 @@ import {
   type WorkingPreset,
 } from "./shared";
 
-type Tab = "chat" | "embedding" | "api" | "limits" | "health";
+type Tab = "chat" | "embedding" | "api" | "limits" | "health" | "skeptic";
 type RoleTab = "chat" | "embedding";
 
 /**
@@ -253,6 +254,7 @@ export default function LlmConfigTabs() {
           <TabButton active={tab === "api"} onClick={() => setTab("api")} accent="amber" label="API Keys" />
           <TabButton active={tab === "limits"} onClick={() => setTab("limits")} accent="emerald" label="Review Limits" />
           <TabButton active={tab === "health"} onClick={() => setTab("health")} accent="rose" label="Provider Health" />
+          <TabButton active={tab === "skeptic"} onClick={() => setTab("skeptic")} accent="fuchsia" label="Skeptic" />
         </div>
 
         {tab === "api" ? (
@@ -261,6 +263,8 @@ export default function LlmConfigTabs() {
           <ReviewLimitsPanel />
         ) : tab === "health" ? (
           <ProviderHealthPanel />
+        ) : tab === "skeptic" ? (
+          <SkepticPanel />
         ) : (
           <>
             <RolePanel
@@ -325,7 +329,7 @@ function TabButton({
 }: {
   active: boolean;
   onClick: () => void;
-  accent: "cyan" | "indigo" | "amber" | "emerald" | "rose";
+  accent: "cyan" | "indigo" | "amber" | "emerald" | "rose" | "fuchsia";
   label: string;
 }) {
   const accentColors: Record<string, { text: string; border: string }> = {
@@ -334,6 +338,7 @@ function TabButton({
     amber: { text: "text-amber-400", border: "border-amber-500" },
     emerald: { text: "text-emerald-400", border: "border-emerald-500" },
     rose: { text: "text-rose-400", border: "border-rose-500" },
+    fuchsia: { text: "text-fuchsia-400", border: "border-fuchsia-500" },
   };
   const { text: accentText, border: accentBorder } = accentColors[accent];
   return (

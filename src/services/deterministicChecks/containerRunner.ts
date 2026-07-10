@@ -23,7 +23,7 @@ function volumeName(repoId: string): string {
   return `dragnet-repo-${repoId}`;
 }
 
-function parseGenericErrors(stderr: string): DeterministicFinding[] {
+export function parseGenericErrors(stderr: string): DeterministicFinding[] {
   const diagnostics: DeterministicFinding[] = [];
   const lines = stderr.split("\n");
   for (const line of lines) {
@@ -50,6 +50,14 @@ export async function runContainerizedChecks(
   const findings: DeterministicFinding[] = [];
   const logs: string[] = [];
 
+  void logReview(
+    opts.prId,
+    `Containerized checks: syncing repository to commit ${opts.commitHash.slice(0, 12)}...`,
+    "info",
+    opts.reviewRunId,
+    opts.reviewChunkId,
+  );
+
   try {
     await gitService.syncToCommit({
       repoId: opts.repoId,
@@ -75,6 +83,13 @@ export async function runContainerizedChecks(
   const runInstall = async (): Promise<boolean> => {
     const cmd = opts.installCommand.trim();
     if (!cmd) return true;
+    void logReview(
+      opts.prId,
+      `Containerized checks: installing dependencies (${opts.installCommand})...`,
+      "info",
+      opts.reviewRunId,
+      opts.reviewChunkId,
+    );
     const result = await orchestrator.runRunner({
       volumeName: vn,
       image: opts.runnerImage,
@@ -93,12 +108,19 @@ export async function runContainerizedChecks(
         opts.reviewChunkId,
       );
     }
-    return result.exitCode === 0 || result.timedOut;
+    return result.exitCode === 0;
   };
 
   const runTest = async (): Promise<DeterministicFinding[]> => {
     const cmd = opts.testCommand.trim();
     if (!cmd) return [];
+    void logReview(
+      opts.prId,
+      `Containerized checks: running tests (${opts.testCommand})...`,
+      "info",
+      opts.reviewRunId,
+      opts.reviewChunkId,
+    );
     const result = await orchestrator.runRunner({
       volumeName: vn,
       image: opts.runnerImage,
@@ -133,7 +155,7 @@ export async function runContainerizedChecks(
         severity: "info",
         category: "Skipped",
         explanation: `Test command exited with code ${result.exitCode} but output could not be parsed. Check runner logs for details.`,
-        source: "tsc",
+        source: "runner",
       },
     ];
   };

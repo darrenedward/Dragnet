@@ -34,7 +34,41 @@ export type OutcomeClass =
   | "quality_failure"
   | "transport_failure"
   | "interrupted"
-  | "unknown_failure";
+  | "unknown_failure"
+  /**
+   * Skeptic pass outcomes (issue #73). These appear on
+   * `ProviderAttempt.outcome` for the fallback-model adjudication call
+   * so the existing per-provider tracking (CostBanner chip, tooltip)
+   * renders them. The classifier below never returns these — they're
+   * set explicitly by the skeptic pass wiring in `reviewService.ts`.
+   * The Phase 3 circuit breaker counts only `quality_failure`, so
+   * skeptic_* outcomes never affect provider health.
+   */
+  | "skeptic_confirm"
+  | "skeptic_downgrade"
+  | "skeptic_reject"
+  | "skeptic_skipped"
+  | "skeptic_error";
+
+/**
+ * Per-provider attempt record for cost telemetry. Lives here (rather than
+ * in `reviewService.ts`) so one-shot LLM callers like `skepticRerate.ts`
+ * can construct attempts without importing the 2300-line reviewService
+ * (circular-dep risk). `reviewService.ts` re-exports this for back-compat.
+ */
+export interface ProviderAttempt {
+  provider: string;
+  model: string;
+  iterationsUsed: number;
+  maxIterations: number;
+  submitReviewCalled: boolean;
+  rating: number | null;
+  error: unknown;
+  outcome: OutcomeClass;
+  promptTokens: number;
+  completionTokens: number;
+  costUsd: number;
+}
 
 export interface ClassifyInput {
   /** Thrown error or null when no exception occurred. */

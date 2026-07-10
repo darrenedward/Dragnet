@@ -1,20 +1,20 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/src/lib/prisma";
-import { getRealLocalPrs } from "@/src/lib/getRealLocalPrs";
-import { authenticateSessionOrKey } from "@/src/lib/apiAuth";
+import { getRealPrs } from "@/src/lib/getRealPrs";
+import { authenticateSessionOrKey, enforceRepoScope } from "@/src/lib/apiAuth";
 import { computePrSizeProfile } from "@/src/lib/prSizeProfile";
 import { readPrCommitCount } from "@/src/lib/prSizeProfile.server";
 
 /**
  * Map of in-flight refresh promises keyed by repo ID. Prevents the
- * stale-delete / upsert gap in getRealLocalPrs() from being observed
+ * stale-delete / upsert gap in getRealPrs() from being observed
  * by concurrent readers: every GET that arrives while a refresh is
  * in progress waits for the same promise, then reads a consistent
  * snapshot. Lives only in this dev server process.
  */
 const refreshPromises = new Map<string, Promise<any>>();
 
-async function attachSizeProfiles(prs: any[], repo: { path: string | null; baseBranch: string | null }) {
+async function attachSizeProfiles(prs: any[], repo: import("@/src/lib/repoAccess").RepoLike & { baseBranch: string }) {
   if (prs.length === 0) return prs;
   const prIds = prs.map((p) => p.id);
   const files = await prisma.prFile.findMany({
@@ -28,21 +28,21 @@ async function attachSizeProfiles(prs: any[], repo: { path: string | null; baseB
     filesByPr.set(file.prId, current);
   }
 
-  return prs.map((pr) => {
+  return await Promise.all(prs.map(async (pr) => {
     const baseBranch = pr.targetBranch || repo.baseBranch || "main";
-    const commitCount = readPrCommitCount(repo.path, baseBranch, pr.sourceBranch);
+    const commitCount = await readPrCommitCount(repo, baseBranch, pr.sourceBranch);
     return {
       ...pr,
       sizeProfile: computePrSizeProfile(filesByPr.get(pr.id) || [], commitCount),
     };
-  });
+  }));
 }
 
 /**
  * Returns the current PR list for a repo. Ensures the git-based PR
  * scan runs at most once concurrently per repo — all callers during
  * the scan wait for the same result, so no one observes the partial
- * state inside getRealLocalPrs()'s delete-then-upsert update.
+ * state inside getRealPrs()'s delete-then-upsert update.
  *
  * Merged PRs are excluded by default — they cluttered the active
  * review queue with already-shipped work. Pass ?include_merged=true
@@ -55,15 +55,17 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: 401 });
   try {
     const { id } = await params;
+    const scopeErr = enforceRepoScope(auth, id);
+    if (scopeErr) return NextResponse.json(scopeErr, { status: 403 });
     const repo = await prisma.repository.findUnique({ where: { id } });
     if (!repo) {
       return NextResponse.json({ error: "Repository not found" }, { status: 404 });
     }
 
     // Fire-and-forget: return current DB state immediately, refresh in background.
-    if (repo.path && !refreshPromises.has(id)) {
+    if ((repo.path || repo.cloneUrl) && !refreshPromises.has(id)) {
       refreshPromises.set(id,
-        getRealLocalPrs(repo.path, id)
+        getRealPrs(repo)
           .catch((err) => console.warn(`Background PR refresh failed for ${id}:`, err))
           .finally(() => refreshPromises.delete(id))
       );
@@ -94,12 +96,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: 401 });
   try {
     const { id } = await params;
+    const scopeErr = enforceRepoScope(auth, id);
+    if (scopeErr) return NextResponse.json(scopeErr, { status: 403 });
     const repo = await prisma.repository.findUnique({ where: { id } });
     if (!repo) {
       return NextResponse.json({ error: "Repository not found" }, { status: 404 });
     }
 
-    if (repo.path) await getRealLocalPrs(repo.path, id);
+    if (repo.path || repo.cloneUrl) await getRealPrs(repo);
 
     const includeMerged = new URL(req.url).searchParams.get("include_merged") === "true";
     const prs = await prisma.pullRequest.findMany({

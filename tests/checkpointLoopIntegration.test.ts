@@ -18,6 +18,7 @@ import path from "node:path";
 
 const create = vi.fn();
 let tmpRepo: string;
+let tmpScanRoot: string;
 
 function fakeClient() {
   return { chat: { completions: { create } } } as any;
@@ -102,19 +103,24 @@ vi.mock("../src/services/largePrReview/fingerprint", () => ({
 
 vi.mock("../src/services/largePrReview/reconcile", () => ({
   reconcileFindingsAcrossRuns: vi.fn().mockResolvedValue([]),
+  dedupFindingsWithinRun: vi.fn().mockResolvedValue(0),
 }));
 
 beforeEach(() => {
   tmpRepo = fs.mkdtempSync(path.join(os.tmpdir(), "dragnet-cploop-"));
+  tmpScanRoot = fs.mkdtempSync(path.join(os.tmpdir(), "dragnet-scanroot-"));
+  process.env.DRAGNET_SCAN_STATE_ROOT = tmpScanRoot;
   create.mockClear();
 });
 
 afterEach(() => {
+  delete process.env.DRAGNET_SCAN_STATE_ROOT;
   fs.rmSync(tmpRepo, { recursive: true, force: true });
+  fs.rmSync(tmpScanRoot, { recursive: true, force: true });
 });
 
 function checkpointPath(): string {
-  return path.join(tmpRepo, ".dragnet", "checkpoints", "run-cp", "__run.json");
+  return path.join(tmpScanRoot, "repo-cp", "checkpoints", "run-cp", "__run.json");
 }
 
 describe("Phase 6 — loop writes and clears checkpoints", () => {
@@ -267,7 +273,12 @@ describe("Phase 6 — loop writes and clears checkpoints", () => {
 
     const result = await scanPromise;
 
-    expect(result.interrupted).toBe(true);
+    // The current contract (post-pipeline refactor): when an in-flight
+    // create() rejects with AbortError, runPrScan returns
+    // `success: false, infrastructureFailure: true` — the old
+    // `interrupted: true` field is gone.
+    expect(result.success).toBe(false);
+    expect(result.infrastructureFailure).toBe(true);
     // The checkpoint from iteration 1 MUST persist so Phase 7 resume
     // can pick it up.
     expect(fs.existsSync(checkpointPath())).toBe(true);
@@ -333,7 +344,7 @@ describe("Phase 6 — loop writes and clears checkpoints", () => {
 
     expect(fs.existsSync(checkpointPath())).toBe(false);
     // The checkpoints directory itself shouldn't exist either.
-    expect(fs.existsSync(path.join(tmpRepo, ".dragnet", "checkpoints"))).toBe(false);
+    expect(fs.existsSync(path.join(tmpScanRoot, "repo-cp", "checkpoints"))).toBe(false);
   });
 
   it("accepts wrapped submitReview arguments with string rating and stringified findings", async () => {

@@ -172,13 +172,12 @@ function toPlan(
   repoConfiguredSecurityPaths: string[],
 ): ChunkPlan {
   const filePaths = files.map((file) => file.filename).sort();
-  // Label: if the chunk is a single file, use its path; otherwise derive
-  // a label from the dominant package + type. The previous implementation
-  // labeled by bucket which was unique per chunk; with greedy fill,
-  // chunks can span packages, so we pick the mode.
+  // Label: single-file chunks show the filename; multi-file chunks show
+  // the dominant package/type plus the first filename and file count so
+  // the label is always unique across chunks in the same plan.
   const suffix = files.length === 1
     ? filePaths[0]
-    : dominantKey(files);
+    : `${dominantKey(files)} (${files.length}): ${filePaths[0]} +${files.length - 1}`;
   return {
     id: `chunk-${String(index).padStart(3, "0")}`,
     label: suffix,

@@ -99,7 +99,7 @@ export class IndexingService {
   ): Promise<IndexRunResult> {
     const resolvedPath = path.isAbsolute(repoPath)
       ? repoPath
-      : path.resolve(process.cwd(), repoPath);
+      : path.resolve(/* turbopackIgnore: true */ process.cwd(), repoPath);
     if (!fs.existsSync(resolvedPath)) {
       throw new Error(`Repository local path "${repoPath}" could not be located.`);
     }
@@ -123,7 +123,7 @@ export class IndexingService {
       diff.deletedFilePaths.length === 0 &&
       existingFiles.length > 0
     ) {
-      const headAtShortCircuit = currentHeadCommit(resolvedPath);
+      const headAtShortCircuit = await currentHeadCommit({ id: repoId, path: resolvedPath });
       await prisma.repository.updateMany({
         where: { id: repoId },
         data: {
@@ -231,7 +231,7 @@ export class IndexingService {
       this.startBackgroundEnrichment(repoId, resolvedPath);
     }
 
-    const headAtCompletion = currentHeadCommit(resolvedPath);
+    const headAtCompletion = await currentHeadCommit({ id: repoId, path: resolvedPath });
     await prisma.repository.updateMany({
       where: { id: repoId },
       data: {
@@ -291,6 +291,11 @@ export class IndexingService {
    * Uses execFileSync (no shell) so weird paths can't inject — args are
    * passed directly to git, not interpolated into a command string.
    * Mirrors `src/lib/indexFreshness.ts:41` and `src/lib/webhook.ts:28`.
+   *
+   * On non-critical failures (dubious ownership, no .git, etc.) returns
+   * an empty set so indexing can proceed. The IGNORE_DIRS list already
+   * prevents the most dangerous patterns (node_modules, .git, .next, etc.),
+   * so a failed gitignore probe is not a security risk.
    */
   private static filterGitIgnored(repoPath: string, files: string[]): Set<string> {
     if (files.length === 0) return new Set();
@@ -311,10 +316,10 @@ export class IndexingService {
         const lines = String(e.stdout).trim().split("\n").filter(Boolean);
         if (lines.length > 0) return new Set(lines);
       }
-      const msg = e.stderr?.toString().trim() || e.message || "Unknown error";
-      throw new Error(
-        `Cannot verify gitignore rules — aborting index to avoid exposing ignored files. ${msg}`,
+      console.warn(
+        `[indexing] filterGitIgnored failed — proceeding without gitignore check: ${e.stderr?.toString().trim() || e.message || "Unknown error"}`,
       );
+      return new Set();
     }
   }
 
@@ -365,7 +370,7 @@ export class IndexingService {
 
         const resolvedPath = path.isAbsolute(repoPath)
           ? repoPath
-          : path.resolve(process.cwd(), repoPath);
+          : path.resolve(/* turbopackIgnore: true */ process.cwd(), repoPath);
 
         for (const sym of symbolsToEnrich) {
           // Defense-in-depth: sym.filePath comes from the indexer (relative

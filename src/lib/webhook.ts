@@ -1,6 +1,7 @@
 import { execFileSync } from "child_process";
 import { createHmac, timingSafeEqual } from "crypto";
 import { prisma } from "./prisma";
+import { runGitInRepo, type RepoLike } from "./repoAccess";
 
 const recentDeliveries = new Map<string, number>();
 const REPLAY_WINDOW_MS = 5 * 60 * 1000; // 5 minutes
@@ -61,7 +62,27 @@ export function verifyGitlabToken(token: string, secret: string): boolean {
   }
 }
 
-export async function findRepoByCloneUrl(cloneUrl: string): Promise<{ id: string; localPath: string | null; webhookSecret: string | null; webhookEnabled: boolean } | null> {
+/**
+ * Find a repo by its clone URL. Returns the full row (not a summary)
+ * so callers can dispatch git operations through `runGitInRepo` for
+ * either local-path or remote-volume mode.
+ */
+export async function findRepoByCloneUrl(cloneUrl: string): Promise<{
+  id: string;
+  path: string | null;
+  localPath: string | null;
+  cloneUrl: string | null;
+  cloneUrlHttps: string | null;
+  webhookSecret: string | null;
+  webhookEnabled: boolean;
+  hostedMode: boolean;
+  deployKeyCipher: string | null;
+  deployKeyIv: string | null;
+  deployKeyTag: string | null;
+  patCipher: string | null;
+  patIv: string | null;
+  patTag: string | null;
+} | null> {
   // DB-side match. Two prior DoS amplification bugs lived here:
   //   1. (removed) git subprocess per repo without a stored cloneUrl, paid
   //      BEFORE the signature check.
@@ -74,47 +95,69 @@ export async function findRepoByCloneUrl(cloneUrl: string): Promise<{ id: string
   // .git-stripped form (some send git@...:foo/bar.git, others git@...:foo/bar).
   const normalizedClone = cloneUrl.replace(/\.git$/, "");
 
-  const select = { id: true, path: true, localPath: true, cloneUrl: true, webhookSecret: true, webhookEnabled: true } as const;
+  const select = {
+    id: true,
+    path: true,
+    localPath: true,
+    cloneUrl: true,
+    cloneUrlHttps: true,
+    webhookSecret: true,
+    webhookEnabled: true,
+    hostedMode: true,
+    deployKeyCipher: true,
+    deployKeyIv: true,
+    deployKeyTag: true,
+    patCipher: true,
+    patIv: true,
+    patTag: true,
+  } as const;
 
   const exact = await prisma.repository.findFirst({
     select,
     where: { cloneUrl },
   });
-  if (exact) {
-    return { id: exact.id, localPath: exact.localPath || exact.path, webhookSecret: exact.webhookSecret, webhookEnabled: exact.webhookEnabled };
-  }
+  if (exact) return exact;
 
   if (normalizedClone !== cloneUrl) {
     const stripped = await prisma.repository.findFirst({
       select,
       where: { cloneUrl: normalizedClone },
     });
-    if (stripped) {
-      return { id: stripped.id, localPath: stripped.localPath || stripped.path, webhookSecret: stripped.webhookSecret, webhookEnabled: stripped.webhookEnabled };
-    }
+    if (stripped) return stripped;
   }
 
   return null;
 }
 
-export function gitFetch(repoPath: string): boolean {
-  try {
-    execFileSync("git", ["-C", repoPath, "fetch", "origin"], {
-      encoding: "utf8",
-      timeout: 30000,
-      stdio: ["ignore", "pipe", "ignore"],
-    });
-    return true;
-  } catch {
-    return false;
-  }
+export async function getOpenPrIds(repoId: string): Promise<string[]> {
+  const prs = await prisma.pullRequest.findMany({
+    where: { repoId, status: "Open" },
+    select: { id: true },
+  });
+  return prs.map((p) => p.id);
 }
 
-export async function scanRepoPrs(repoId: string, repoPath: string, branchName?: string) {
+/**
+ * Run `git fetch origin` against the repo. Legacy mode (local-path):
+ * execFileSync directly. Remote-volume mode: spin up an alpine/git
+ * sidecar with the named volume mounted. Returns true on success,
+ * false on failure (webhook flow continues regardless).
+ */
+export async function gitFetch(repo: RepoLike): Promise<boolean> {
+  const { exitCode } = await runGitInRepo(repo, ["fetch", "origin"], {
+    networkMode: "bridge",
+    timeoutMs: 60_000,
+  });
+  return exitCode === 0;
+}
+
+export async function scanRepoPrs(repo: RepoLike): Promise<string[]> {
   try {
-    const { getRealLocalPrs } = await import("./getRealLocalPrs");
-    await getRealLocalPrs(repoPath, repoId, branchName ? [branchName] : undefined);
+    const { getRealPrs } = await import("./getRealPrs");
+    const prs = await getRealPrs(repo);
+    return (prs ?? []).map((p: any) => p.id);
   } catch (err) {
-    console.error(`PR scan failed for ${repoId}:`, err);
+    console.error(`PR scan failed for ${repo.id}:`, err);
+    return [];
   }
 }

@@ -148,7 +148,7 @@ export default function ReviewLimitsPanel() {
     <div className="space-y-6">
       <SectionCard
         title="Chunking"
-        subtitle="How big each LLM call's input is. Bigger = fewer chunks but slower per call."
+        subtitle="How big each LLM call's input is. Effective cap = max(Lines per chunk, Normal max lines)."
       >
         <NumberInput
           label="Lines per chunk"
@@ -156,6 +156,7 @@ export default function ReviewLimitsPanel() {
           min={BOUNDS.chunkLineCap.min}
           max={BOUNDS.chunkLineCap.max}
           onChange={(v) => updateField("chunkLineCap", v)}
+          helpText={`Effective: ${Math.max(limits.chunkLineCap, limits.normalMaxLines)}`}
         />
         <NumberInput
           label="Min useful chunk"

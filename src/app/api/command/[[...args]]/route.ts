@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/src/lib/prisma";
 import { findPrByIdOrNumber, findPrByBranch } from "@/src/lib/findPr";
-import { refreshPrFiles } from "@/src/lib/getRealLocalPrs";
+import { refreshPrFiles } from "@/src/lib/getRealPrs";
 import { runPrScan, SYSTEM_INSTRUCTION } from "@/reviewService";
 import { authenticateApiRequest } from "@/src/lib/apiAuth";
 import { IndexingService } from "@/src/services/indexingService";
@@ -13,6 +13,7 @@ import { readPrCommitCount } from "@/src/lib/prSizeProfile.server";
 import { computeStackTopology, type PrTopologyInput } from "@/src/lib/prStackTopology";
 import { assertTier, buildDiffManifest, runLargePrReview } from "@/src/services/largePrReview";
 import { readLimits } from "@/src/lib/prSizeConfig";
+import { logReview } from "@/src/services/deterministicChecks/logging";
 import {
   computeDiffHash,
   computeReviewConfigHash,
@@ -36,20 +37,48 @@ import { lookupTrustWeight } from "@/src/lib/modelTrustWeights";
  * Returns `conflict: true` if another scan is already running on the PR
  * (caller surfaces a SCAN_IN_PROGRESS message instead of starting a race).
  */
-async function startTrackedReview(pr: any, repo: any): Promise<
+async function startTrackedReview(pr: any, repo: any, userId: string | null): Promise<
   | { sourceBranch: string; sizeProfile: PrSizeProfile }
   | { conflict: true; runId: string; startedAt: Date }
 > {
+  // Each step logs an info row to reviewLog so the sidebar's "in progress"
+  // UI shows what's happening during the 1-15s warm-up where otherwise
+  // nothing visible happens. Best-effort: logReview swallows its own errors,
+  // so a DB hiccup never blocks the scan.
+  void logReview(pr.id, `> Scan requested for ${pr.sourceBranch}`, "info");
+
   const chatChain = getChatChain();
+  void logReview(
+    pr.id,
+    `> Resolving LLM chain: ${chatChain.length} provider(s) configured${chatChain.length > 0 ? `, primary=${chatChain[0]?.model ?? "unknown"}` : " — chat review will be skipped"}`,
+    chatChain.length > 0 ? "info" : "warn",
+  );
+
   let files: any[] = [];
-  if (repo?.path && pr.sourceBranch) {
+  if ((repo?.path || repo?.cloneUrl) && pr.sourceBranch) {
+    void logReview(pr.id, `> Syncing repository (clone path or container fetch)…`, "info");
     try {
-      files = await refreshPrFiles(repo.path, repo.baseBranch || "main", pr.sourceBranch, pr.id);
+      files = await refreshPrFiles(repo, pr.sourceBranch, pr.id);
+      void logReview(
+        pr.id,
+        `> Diff files refreshed — ${files.length} file${files.length === 1 ? "" : "s"} in scope`,
+        "info",
+      );
     } catch (e) {
       console.warn("[api] prfile refresh failed, using cached:", e);
+      void logReview(pr.id, `> WARNING: prfile refresh failed, falling back to cached files: ${(e as Error).message}`, "warn");
     }
+  } else {
+    void logReview(pr.id, `> No repo path/cloneUrl on the record, skipping file refresh`, "warn");
   }
+
   const sizeProfile = await loadPrSizeProfile(pr, repo, files.length > 0 ? files : undefined);
+  void logReview(
+    pr.id,
+    `> Size profile computed — tier=${sizeProfile.tier}, codeLines=${sizeProfile.codeLines.toLocaleString()}, files=${sizeProfile.codeFiles}/${sizeProfile.totalFiles}${sizeProfile.message ? ` (${sizeProfile.message})` : ""}`,
+    "info",
+  );
+
   const limits = readLimits();
   const manifest = buildDiffManifest(files, sizeProfile.commitCount, {
     normalMaxLines: limits.normalMaxLines,
@@ -67,8 +96,10 @@ async function startTrackedReview(pr: any, repo: any): Promise<
   // window that the previous assertNoActiveScan→createReviewRun→beginReview
   // sequence left open. Same helper as scan/prcheck/prepush so all four
   // entry points share identical guard semantics.
+  void logReview(pr.id, `> Acquiring scan lock…`, "info");
   const lock = await acquireReviewLock(pr.id, false);
   if (lock.status === "busy") {
+    void logReview(pr.id, `> Scan already in progress (runId=${lock.runId}), aborting`, "warn");
     return {
       conflict: true,
       runId: lock.runId,
@@ -96,7 +127,14 @@ async function startTrackedReview(pr: any, repo: any): Promise<
     reviewConfigHash: configHash,
     model: chatChain[0]?.model ?? null,
     triggerReason: "prcheck",
+    createdByUserId: userId,
   });
+
+  if (tier.tier === "normal") {
+    void logReview(pr.id, `> Scan started — single-shot mode (no chunking), runId=${reviewRunId}`, "info");
+  } else {
+    void logReview(pr.id, `> Scan started — Large PR mode (${tier.tier}), splitting into chunks, runId=${reviewRunId}`, "info");
+  }
 
   const runPromise = tier.tier === "normal"
     ? runPrScan(pr.id, files, reviewRunId)
@@ -128,14 +166,25 @@ async function startTrackedReview(pr: any, repo: any): Promise<
 async function loadPrSizeProfile(pr: any, repo?: any, refreshedFiles?: any[]): Promise<PrSizeProfile> {
   const profileRepo = repo ?? await prisma.repository.findUnique({
     where: { id: pr.repoId },
-    select: { path: true, baseBranch: true },
+    select: {
+      path: true,
+      baseBranch: true,
+      cloneUrl: true,
+      cloneUrlHttps: true,
+      deployKeyCipher: true,
+      deployKeyIv: true,
+      deployKeyTag: true,
+      patCipher: true,
+      patIv: true,
+      patTag: true,
+    },
   });
   const files = refreshedFiles ?? await prisma.prFile.findMany({
     where: { prId: pr.id },
     select: { filename: true, additions: true, deletions: true },
   });
-  const commitCount = readPrCommitCount(
-    profileRepo?.path,
+  const commitCount = await readPrCommitCount(
+    profileRepo,
     pr.targetBranch || profileRepo?.baseBranch || "main",
     pr.sourceBranch,
   );
@@ -242,7 +291,8 @@ function formatFindings(pr: any, findings: any[], sizeProfile?: PrSizeProfile): 
     out += "No findings.\n";
   } else {
     for (const f of findings) {
-      out += `### ${f.filename}:${f.line}\n**[${f.category}|${f.severity}${f.exploitability ? `|${f.exploitability}` : ""}]** (confidence: ${((f.confidence ?? 0.5) * 100).toFixed(0)}%${f.impact ? `, impact: ${f.impact}` : ""})\n${f.explanation}\n`;
+      const confPct = ((f.confidence ?? 0.5) * 100).toFixed(0);
+      out += `### ${f.filename}:${f.line}\n**[${f.category}|${f.severity}${f.exploitability ? `|${f.exploitability}` : ""}]** (confidence: ${confPct}%${f.confidenceReason ? ` — ${f.confidenceReason}` : ""}${f.impact ? `, impact: ${f.impact}` : ""})\n${f.explanation}\n`;
       if (f.diffSuggestion) {
         out += `Suggested fix:\n\`\`\`diff\n${f.diffSuggestion}\n\`\`\`\n`;
       }
@@ -280,7 +330,7 @@ async function formatLatestFindings(pr: any): Promise<string> {
   return out;
 }
 
-async function handlePrCheck(args: any): Promise<string> {
+async function handlePrCheck(args: any, userId: string | null): Promise<string> {
   const pr = await resolvePrFromArgs(args);
   if (!pr) return `> **No pull requests found** matching that criteria on this repository.\n>\n> To review a PR, create a feature branch and push it, or check available PRs with \`prlist\`.`;
 
@@ -291,7 +341,7 @@ async function handlePrCheck(args: any): Promise<string> {
     return `> ⚠ Repository for PR \`${pr.sourceBranch}\` could not be loaded.`;
   }
 
-  const freshness = assertIndexFresh(repo);
+  const freshness = await assertIndexFresh(repo);
   if (freshness.ok === false) {
     if (freshness.kind === "INDEX_REQUIRED") {
       return `> ⚠ **Index required.** ${freshness.message}`;
@@ -302,7 +352,7 @@ async function handlePrCheck(args: any): Promise<string> {
     }
   }
 
-  const started = await startTrackedReview(pr, repo);
+  const started = await startTrackedReview(pr, repo, userId);
   if ("conflict" in started) {
     return `> ⚠ **Scan already in progress** for PR \`${pr.sourceBranch}\` (started ${started.startedAt.toISOString()}). Re-run \`prcheck ${pr.sourceBranch}\` after it completes.`;
   }
@@ -310,7 +360,7 @@ async function handlePrCheck(args: any): Promise<string> {
   return `> **Review started** for PR \`${started.sourceBranch}\`.\n>\n> Size: ${formatSizeProfile(started.sizeProfile)}\n>\n> This runs in the background. Check results with \`prcheckstatus ${started.sourceBranch}\` or view in the Dragnet dashboard.\n>\n> Alternatively, use \`prcomments ${started.sourceBranch}\` for the latest persisted findings.`;
 }
 
-async function handlePrCheckStatus(args: any): Promise<string> {
+async function handlePrCheckStatus(args: any, _userId: string | null): Promise<string> {
   const pr = await resolvePrFromArgs(args);
   if (!pr) return `> **No pull requests found** matching that criteria on this repository.`;
 
@@ -323,10 +373,40 @@ async function handlePrCheckStatus(args: any): Promise<string> {
   const freshPr = await prisma.pullRequest.findUnique({ where: { id: pr.id } });
   if (!freshPr) return `> **No pull requests found** matching that criteria on this repository.`;
 
-  return formatLatestFindings(freshPr);
+  const latest = await getLatestCompletedReview(pr.id);
+  const displayPr = {
+    ...pr,
+    rating: latest.reviewRun?.rating ?? pr.rating,
+  };
+  const sizeProfile = await loadPrSizeProfile(pr);
+  let out = formatFindings(displayPr, latest.findings, sizeProfile);
+  if (latest.regressions.length > 0) {
+    out += `\n## Regressions (reappeared findings)\n\n`;
+    out += `The following findings were previously resolved but have reappeared:\n\n`;
+    for (const f of latest.regressions) {
+      const confPct = ((f.confidence ?? 0.5) * 100).toFixed(0);
+      out += `### ${f.filename}:${f.line}\n**[${f.category}|${f.severity}${f.exploitability ? `|${f.exploitability}` : ""}]** (confidence: ${confPct}%${f.confidenceReason ? ` — ${f.confidenceReason}` : ""}${f.impact ? `, impact: ${f.impact}` : ""})\n${f.explanation}\n`;
+      if (f.diffSuggestion) {
+        out += `Suggested fix:\n\`\`\`diff\n${f.diffSuggestion}\n\`\`\`\n`;
+      }
+      out += "\n";
+    }
+  }
+  if (!latest.reviewRun) {
+    out += "\n_No completed ReviewRun yet._\n";
+  } else {
+    out += `\n_Reviewed commit ${latest.reviewRun.commitHash.slice(0, 7)}${latest.stale ? " (stale)" : ""}._\n`;
+    if (latest.rejectedCount > 0) {
+      out += `_Verifier filtered ${latest.rejectedCount} finding${latest.rejectedCount === 1 ? "" : "s"}._\n`;
+    }
+    if (latest.reviewRun.refused) {
+      out += `\n> ⚠ **Reviewer flagged incomplete coverage.** ${latest.reviewRun.refusalNote ?? "Parts of the PR were skipped or not fully analyzed."} Re-scan recommended after addressing the underlying cause.\n`;
+    }
+  }
+  return out;
 }
 
-async function handlePrComments(args: any): Promise<string> {
+async function handlePrComments(args: any, _userId: string | null): Promise<string> {
   const pr = await resolvePrFromArgs(args);
   if (!pr) return `> **No pull requests found** matching that criteria on this repository.`;
   const latest = await getLatestCompletedReview(pr.id);
@@ -381,7 +461,7 @@ async function buildPrList(repoId: string) {
   return { prs, topology, scannedPrIds };
 }
 
-async function handlePrList(args: any): Promise<string> {
+async function handlePrList(args: any, _userId: string | null): Promise<string> {
   if (!args.repoId) return 'Pass "repoId" to list PRs.';
   const { prs, topology } = await buildPrList(args.repoId);
   if (prs.length === 0) return "> **No pull requests found** for this repo.";
@@ -399,7 +479,7 @@ async function handlePrList(args: any): Promise<string> {
   return out;
 }
 
-type Handler = (args: any) => Promise<string>;
+type Handler = (args: any, userId: string | null) => Promise<string>;
 const toolHandlers: Record<string, Handler> = {
   prcheck: handlePrCheck,
   prcheckstatus: handlePrCheckStatus,
@@ -422,12 +502,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ args?: 
   const body = await req.json().catch(() => null);
 
   if (body && body.jsonrpc && body.method) {
-    return handleJsonRpc(body, defRepo);
+    return handleJsonRpc(body, defRepo, auth.userId);
   }
-  return handleLegacyCommand(body, defRepo);
+  return handleLegacyCommand(body, defRepo, auth.userId);
 }
 
-async function handleJsonRpc(body: any, defRepo: string | null) {
+async function handleJsonRpc(body: any, defRepo: string | null, userId: string | null) {
   const { method, id, params } = body;
   if (id === undefined || id === null) return new Response(null, { status: 202 });
 
@@ -452,7 +532,7 @@ async function handleJsonRpc(body: any, defRepo: string | null) {
     if (!toolName || !toolHandlers[toolName]) {
       return NextResponse.json({ jsonrpc: "2.0", id, error: { code: -32601, message: `Unknown tool: ${toolName}` } });
     }
-    const result = await toolHandlers[toolName](args);
+    const result = await toolHandlers[toolName](args, userId);
     return NextResponse.json({ jsonrpc: "2.0", id, result: { content: [{ type: "text", text: result }] } });
   }
 
@@ -467,7 +547,7 @@ async function resolvePr(body: any, argVal: string): Promise<any | null> {
   return pr;
 }
 
-async function handleLegacyCommand(body: any, defRepo: string | null) {
+async function handleLegacyCommand(body: any, defRepo: string | null, userId: string | null) {
   const { command } = body || {};
   if (!command || typeof command !== "string") {
     return NextResponse.json({ status: "Error", message: "Send a command." }, { status: 400 });
@@ -494,7 +574,7 @@ async function handleLegacyCommand(body: any, defRepo: string | null) {
           message: `> Repository for PR \`${pr.sourceBranch}\` could not be loaded.`,
         });
       }
-      const freshness = assertIndexFresh(repo);
+const freshness = await assertIndexFresh(repo);
       if (freshness.ok === false) {
         if (freshness.kind === "INDEX_REQUIRED") {
           return NextResponse.json({
@@ -509,7 +589,7 @@ async function handleLegacyCommand(body: any, defRepo: string | null) {
           await IndexingService.indexFolder(pr.repoId, repo.path);
         }
       }
-      const started = await startTrackedReview(pr, repo);
+const started = await startTrackedReview(pr, repo, userId);
       if ("conflict" in started) {
         return NextResponse.json({
           status: "Conflict",

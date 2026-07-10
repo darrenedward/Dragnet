@@ -29,7 +29,10 @@ import { getSessionCookie } from "better-auth/cookies";
  */
 export async function proxy(req: NextRequest) {
   const session = getSessionCookie(req);
-  if (!session) {
+  const authHeader = req.headers.get("authorization");
+  const hasBearerKey = authHeader && authHeader.startsWith("Bearer dr_");
+
+  if (!session && !hasBearerKey) {
     return NextResponse.json(
       {
         error:

@@ -42,6 +42,7 @@ interface Props {
   activePR: PullRequest | undefined;
   isScanning: boolean;
   onTriggerScan: (opts?: { force?: boolean }) => void;
+  onStopScan?: () => void;
   onExportMarkdown: (format: "file" | "download") => void;
   exportStatus: { kind: "file" | "download"; success: boolean; message: string } | null;
   scanResult: ScanResult | null;
@@ -60,6 +61,21 @@ interface Props {
     chunksCompleted?: number;
     chunksFailed?: number;
     chunksSkipped?: number;
+    tokensUsed?: {
+      totalCostUsd: number;
+      totalPromptTokens: number;
+      totalCompletionTokens: number;
+      providers: Array<{
+        name: string;
+        model: string;
+        promptTokens: number;
+        completionTokens: number;
+        costUsd: number;
+        outcome: string;
+        iterationsUsed: number;
+        maxIterations: number;
+      }>;
+    } | null;
   } | null;
   stability?: StabilityProp | null;
   chunks?: ReviewChunk[];
@@ -87,7 +103,11 @@ interface Props {
   rejectedFindings?: Array<{
     id: string; filename: string; line: number | null;
     severity: string; category: string; explanation: string;
+    verificationStatus: string | null;
     verificationNote: string | null;
+    skepticVerdict: string | null;
+    skepticNote: string | null;
+    source: string | null;
   }>;
   stale?: boolean;
   onCopySuggestion: (text: string, id: string) => void;
@@ -110,6 +130,7 @@ export default function PrsView({
   activePR,
   isScanning,
   onTriggerScan,
+  onStopScan,
   onExportMarkdown,
   exportStatus,
   scanResult,
@@ -156,6 +177,7 @@ export default function PrsView({
           activePR={activePR}
           isScanning={isScanning}
           onTriggerScan={onTriggerScan}
+          onStopScan={onStopScan}
           onExportMarkdown={onExportMarkdown}
           exportStatus={exportStatus}
           hasFindings={findings.length > 0}
@@ -222,6 +244,7 @@ function PrHeader({
   activePR,
   isScanning,
   onTriggerScan,
+  onStopScan,
   onExportMarkdown,
   exportStatus,
   hasFindings,
@@ -238,6 +261,7 @@ function PrHeader({
   activePR: PullRequest | undefined;
   isScanning: boolean;
   onTriggerScan: (opts?: { force?: boolean }) => void;
+  onStopScan?: () => void;
   onExportMarkdown: (format: "file" | "download") => void;
   exportStatus: { kind: "file" | "download"; success: boolean; message: string } | null;
   hasFindings: boolean;
@@ -321,14 +345,24 @@ function PrHeader({
             <span>{scanning ? "Review Running..." : !repoIndexedAt ? "Index Required" : "Run PR Review"}</span>
           </button>
           {scanning && (
-            <button
-              onClick={() => onTriggerScan({ force: true })}
-              title="Reap the current run (orphaned or stuck) and start a fresh scan. Use when a scan appears hung after a dev-server restart."
-              className="min-h-11 px-3 py-2 bg-rose-500/15 border border-rose-500/30 text-rose-300 hover:bg-rose-500/25 text-xs font-mono font-bold rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer"
-            >
-              <AlertTriangle size={13} />
-              <span>Force Restart</span>
-            </button>
+            <>
+              <button
+                onClick={() => onStopScan?.()}
+                title="Stop the currently running scan without starting a replacement."
+                className="min-h-11 px-3 py-2 bg-amber-500/15 border border-amber-500/30 text-amber-300 hover:bg-amber-500/25 text-xs font-mono font-bold rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer"
+              >
+                <X size={13} />
+                <span>Stop</span>
+              </button>
+              <button
+                onClick={() => onTriggerScan({ force: true })}
+                title="Reap the current run (orphaned or stuck) and start a fresh scan. Use when a scan appears hung after a dev-server restart."
+                className="min-h-11 px-3 py-2 bg-rose-500/15 border border-rose-500/30 text-rose-300 hover:bg-rose-500/25 text-xs font-mono font-bold rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer"
+              >
+                <AlertTriangle size={13} />
+                <span>Force Restart</span>
+              </button>
+            </>
           )}
           {hasFindings && (
             <>
@@ -486,7 +520,7 @@ function ScanSettingsStrip({ settings }: { settings: ScanSettingsSummary | null 
       <span className="uppercase tracking-wider text-slate-600">Next scan</span>
       <ScanSettingPill label="Model" value={modelText} />
       <ScanSettingPill label="Iterations" value={String(settings.maxIterations)} />
-      <ScanSettingPill label="Lines/chunk" value={limits.chunkLineCap.toLocaleString()} />
+      <ScanSettingPill label="Lines/chunk" value={`${Math.max(limits.chunkLineCap, limits.normalMaxLines).toLocaleString()} (raw: ${limits.chunkLineCap.toLocaleString()})`} />
       <ScanSettingPill label="Normal" value={`${limits.normalMaxLines.toLocaleString()} lines / ${limits.normalMaxCodeFiles} files`} />
       <ScanSettingPill label="Oversized" value={`${limits.oversizedLines.toLocaleString()} lines / ${limits.oversizedCodeFiles} files`} />
       <ScanSettingPill label="File cap" value={limits.maxFilesPerReview > 0 ? String(limits.maxFilesPerReview) : "off"} />

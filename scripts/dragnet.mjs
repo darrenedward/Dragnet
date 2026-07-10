@@ -6,7 +6,7 @@
 //   node scripts/dragnet.mjs review <branch>       # run review, exit 0/1
 
 const BASE = process.env.DRAGNET_URL || "http://localhost:3300";
-const API_KEY = process.env.DRAGNET_API_KEY || "";
+const API_KEY = process.env.DRAGNET_REPO_KEY || process.env.DRAGNET_API_KEY || "";
 
 const [cmd, ...args] = process.argv.slice(2);
 
@@ -93,9 +93,22 @@ async function main() {
       console.log(`Pruned ${pruned} orphaned volume(s).`);
       break;
     }
-    default:
-      console.log("Usage: dragnet <install-hooks|uninstall-hooks|review|prune-volumes>");
-      process.exit(1);
+        default:
+          console.log(`Usage: dragnet <command> [options]
+        
+Commands:
+  install-hooks         Install pre-push hook (requires API key)
+  uninstall-hooks       Remove pre-push hook
+  review <branch>       Run review on branch (requires API key)
+  prune-volumes         Remove orphaned Docker volumes
+
+Environment variables:
+  DRAGNET_URL          Dragnet server URL (default: http://localhost:3300)
+  DRAGNET_REPO_KEY     API key for authentication (generated in UI)
+                        Falls back to DRAGNET_API_KEY for backward compatibility
+
+Set these in your shell profile or .env file.`);
+          process.exit(1);
   }
 }
 

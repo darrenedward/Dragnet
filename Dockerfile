@@ -26,10 +26,12 @@ FROM node:22-alpine AS runner
 WORKDIR /app
 
 # Runtime OS deps:
-#   git    — Dragnet clones repos into REPOS_DIR
-#   curl   — healthcheck
-#   openssl — Prisma's pg adapter needs it for SSL to Supabase
-RUN apk add --no-cache git curl openssl
+#   git       — Dragnet clones repos into REPOS_DIR
+#   curl      — healthcheck
+#   openssl   — Prisma's pg adapter needs it for SSL to Supabase
+#   docker-cli — orchestrator spawns alpine/git + runner images via the
+#                host Docker daemon (mounted socket, read-only).
+RUN apk add --no-cache git curl openssl docker-cli
 
 # Copy build output + runtime assets from builder. Source .ts files are
 # already bundled into .next/server/ — they don't need to exist here.
@@ -47,6 +49,6 @@ ENV HOSTNAME=0.0.0.0
 EXPOSE 3300
 
 # Documented mount points — see docker-compose.yml for the bind mounts.
-VOLUME ["/app/.dragnet", "/app/repos"]
+VOLUME ["/app/.dragnet", "/app/repos", "/var/lib/dragnet/scans"]
 
 CMD ["npm", "run", "start"]

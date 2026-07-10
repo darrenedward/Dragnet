@@ -1,16 +1,16 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/src/lib/prisma";
 import { runPrScan, SYSTEM_INSTRUCTION } from "@/reviewService";
-import { refreshPrFiles, isBranchMerged } from "@/src/lib/getRealLocalPrs";
+import { refreshPrFiles, isBranchMerged } from "@/src/lib/getRealPrs";
 import { assertIndexFresh } from "@/src/lib/indexFreshness";
 import { IndexingService } from "@/src/services/indexingService";
 import { getChatChain, getEmbeddingChain } from "@/src/lib/llmClient";
-import { acquireReviewLock, endReview } from "@/src/lib/reviewLocks";
+import { acquireReviewLock, endReview, checkPendingAbort } from "@/src/lib/reviewLocks";
 import { computePrSizeProfile } from "@/src/lib/prSizeProfile";
 import { readPrCommitCount } from "@/src/lib/prSizeProfile.server";
 import { assertTier, buildDiffManifest, runLargePrReview } from "@/src/services/largePrReview";
 import { readLimits } from "@/src/lib/prSizeConfig";
-import { authenticateSessionOrKey } from "@/src/lib/apiAuth";
+import { authenticateSessionOrKey, enforcePrRepoScope } from "@/src/lib/apiAuth";
 import {
   computeDiffHash,
   computeReviewConfigHash,
@@ -25,6 +25,7 @@ import {
   RUN_CHECKPOINT_ID,
   type CheckpointState,
 } from "@/src/services/checkpointStore";
+import { logReview } from "@/src/services/deterministicChecks/logging";
 
 export async function POST(req: Request, { params }: { params: Promise<{ prId: string }> }) {
   // Route-level auth: this is the UI scan trigger (the API-key path is
@@ -32,10 +33,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
   const auth = await authenticateSessionOrKey(req);
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: 401 });
   const { prId } = await params;
+  const prScopeErr = await enforcePrRepoScope(auth, prId);
+  if (prScopeErr) return NextResponse.json(prScopeErr, { status: 403 });
   await req.json().catch(() => ({}));
   console.log(`[scan] route: POST received for prId=${prId}`);
-
   const force = new URL(req.url).searchParams.get("force") === "true";
+  void logReview(prId, `> Scan requested via /api/prs/.../scan (force=${force})`, "info");
   // Phase 7 resume parameters. `resume=true` loads the prior run's
   // checkpoint and continues at the saved iteration. `fresh=true` marks
   // the prior run failed/interrupted, deletes its checkpoints, and
@@ -75,7 +78,22 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
 
     const repo = await prisma.repository.findUnique({
       where: { id: pr.repoId },
-      select: { id: true, name: true, indexedAt: true, lastCommitHash: true, path: true, baseBranch: true },
+      select: {
+        id: true,
+        name: true,
+        indexedAt: true,
+        lastCommitHash: true,
+        path: true,
+        baseBranch: true,
+        cloneUrl: true,
+        cloneUrlHttps: true,
+        deployKeyCipher: true,
+        deployKeyIv: true,
+        deployKeyTag: true,
+        patCipher: true,
+        patIv: true,
+        patTag: true,
+      },
     });
     if (!repo) {
       console.log(`[scan] route: repo not found for repoId=${pr.repoId}`);
@@ -83,10 +101,18 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
     }
     console.log(`[scan] route: repo=${repo.name}, indexedAt=${repo.indexedAt}, path=${repo.path}`);
 
-    const freshness = assertIndexFresh(repo);
+    const freshness = await assertIndexFresh(repo);
     if (freshness.ok === false) {
       console.log(`[scan] route: freshness not ok kind=${freshness.kind} message=${freshness.message}`);
       if (freshness.kind === "INDEX_REQUIRED") {
+        const indexingInProgress = IndexingService.isIndexing(pr.repoId);
+        if (indexingInProgress) {
+          console.log(`[scan] route: INDEX_REQUIRED but indexing is in progress — returning 409`);
+          return NextResponse.json(
+            { error: "INDEXING_IN_PROGRESS", message: "Indexing is currently running for this repo. Please wait for it to complete before running a PR review.", repoId: pr.repoId },
+            { status: 409 },
+          );
+        }
         console.log(`[scan] route: INDEX_REQUIRED - returning 409`);
         return NextResponse.json(
           { error: freshness.kind, message: freshness.message, repoId: pr.repoId },
@@ -94,6 +120,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
         );
       }
       console.log(`[scan] route: STALE_INDEX - triggering incremental index`);
+    void logReview(prId, `> Index is stale — running incremental reindex inline…`, "info");
       if (repo.path) {
         await IndexingService.indexFolder(pr.repoId, repo.path);
         console.log(`[scan] route: incremental index complete`);
@@ -107,16 +134,33 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
     const repoPath = repo.path;
     const baseBranch = pr.targetBranch || repo.baseBranch || "main";
     let files: any[] = [];
-    if (repoPath && pr.sourceBranch) {
+    if ((repo.path || repo.cloneUrl) && pr.sourceBranch) {
       console.log(`[scan] route: refreshing PR files from git`);
-      files = await refreshPrFiles(repoPath, baseBranch, pr.sourceBranch, prId);
+      files = await refreshPrFiles(repo, pr.sourceBranch, prId);
       console.log(`[scan] route: got ${files.length} files`);
+    void logReview(prId, `> Diff files refreshed — ${files.length} file${files.length === 1 ? "" : "s"} in scope`, "info");
+
+      // Check if Stop was clicked during the (potentially slow) file
+      // collection phase. When no review lock exists yet, abortScan
+      // stores the prId in pendingAborts — check it here and bail.
+      if (checkPendingAbort(prId)) {
+        console.log(`[scan] route: abort requested during file collection — returning interrupted`);
+        return NextResponse.json({
+          success: false,
+          interrupted: true,
+          rating: null,
+          findings: [],
+          usedModel: null,
+          systemWarn: null,
+          message: "Scan cancelled during file collection.",
+        });
+      }
     } else {
       console.log(`[scan] route: no repoPath or sourceBranch - skipping file refresh`);
     }
     const sizeProfile = computePrSizeProfile(
       files,
-      readPrCommitCount(repoPath, baseBranch, pr.sourceBranch),
+      await readPrCommitCount(repo, baseBranch, pr.sourceBranch),
     );
     const limits = readLimits();
     const manifest = buildDiffManifest(files, sizeProfile.commitCount, {
@@ -126,12 +170,18 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
       oversizedCodeFiles: limits.oversizedCodeFiles,
     });
     const tier = assertTier(manifest);
+    const tierLines = "codeLines" in manifest && typeof manifest.codeLines === "number" ? manifest.codeLines.toLocaleString() + " code lines" : "n/a";
+    void logReview(
+      prId,
+      `> Tier detected: ${tier.tier} (${tierLines})`,
+      "info",
+    );
 
     // Merged-branch short-circuit. If the branch is fully merged into base,
     // there is nothing to review — returning a clean merged state instead
     // of letting runPrScan throw "No modified files". Also marks the PR
     // row so the list view can render it as Merged.
-    if (repoPath && pr.sourceBranch && files.length === 0 && await isBranchMerged(repoPath, baseBranch, pr.sourceBranch)) {
+    if ((repo.path || repo.cloneUrl) && pr.sourceBranch && files.length === 0 && await isBranchMerged(repo, baseBranch, pr.sourceBranch)) {
       console.log(`[scan] route: branch ${pr.sourceBranch} fully merged into ${baseBranch} — returning merged state`);
       await prisma.pullRequest.update({
         where: { id: prId },
@@ -182,6 +232,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
       }
       // fresh.ok === false → narrowed to STALE_RUN / NO_RUN
       console.log(`[scan] route: cache MISS — running scan`);
+      void logReview(prId, `> Cache miss — kicking off fresh ${tier.tier} scan`, "info");
     }
 
     // Concurrency guard — shared with the command/prcheck/prepush routes.
@@ -336,6 +387,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
       model: chatChain[0]?.model ?? null,
       triggerReason: "manual",
       forced: force,
+      createdByUserId: auth.userId,
     });
     if (resumeRunId) {
       // Resume re-uses the prior run row — flip it back to in_progress

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/src/lib/prisma";
-import { authenticateSessionOrKey } from "@/src/lib/apiAuth";
+import { authenticateSessionOrKey, enforceRepoScope } from "@/src/lib/apiAuth";
 import { IndexingService } from "@/src/services/indexingService";
 
 export const runtime = "nodejs";
@@ -10,6 +10,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: 401 });
   try {
     const { id } = await params;
+    const scopeErr = enforceRepoScope(auth, id);
+    if (scopeErr) return NextResponse.json(scopeErr, { status: 403 });
     const repo = await prisma.repository.findUnique({ where: { id } });
     if (!repo) {
       return NextResponse.json({ error: "Repository not found" }, { status: 404 });
@@ -22,26 +24,19 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       );
     }
 
-    await prisma.repository.updateMany({ where: { id }, data: { status: "stabilizing" } });
+    await IndexingService.clearIndex(id);
+    await prisma.repository.update({
+      where: { id },
+      data: { indexedAt: null, status: "idle" },
+    });
 
-    IndexingService.clearIndex(id)
-      .then(() => IndexingService.indexFolder(id, repo.path))
-      .then(async (stats) => {
-        console.log(`[reindex] completed for ${id}:`, stats);
-      })
-      .catch(async (err) => {
-        console.error(`[reindex] failed for ${id}:`, err);
-        try {
-          await prisma.repository.updateMany({ where: { id }, data: { status: "idle" } });
-        } catch {}
-      });
-
-    return NextResponse.json(
-      { accepted: true, status: "stabilizing", message: "Reindex dispatched. Poll GET /api/repos/[id]/stats for completion." },
-      { status: 202 },
-    );
+    console.log(`[reindex] index cleared for ${id}`);
+    return NextResponse.json({
+      success: true,
+      message: "Index cleared. Use Index Now to rebuild.",
+    });
   } catch (err: any) {
-    console.error("Failed dispatching reindex:", err);
+    console.error("Failed clearing index:", err);
     return NextResponse.json({ error: err.message }, { status: 500 });
   }
 }

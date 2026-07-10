@@ -90,6 +90,7 @@ vi.mock("../src/lib/prisma", () => {
             originalContent: "",
           },
         ]),
+        deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
       },
       symbol: { findMany: vi.fn().mockResolvedValue([]) },
       edge: { findMany: vi.fn().mockResolvedValue([]) },
@@ -164,14 +165,16 @@ vi.mock("../src/services/largePrReview/fingerprint", () => ({
 
 vi.mock("../src/services/largePrReview/reconcile", () => ({
   reconcileFindingsAcrossRuns: vi.fn().mockResolvedValue([]),
+  dedupFindingsWithinRun: vi.fn().mockResolvedValue(0),
 }));
 
 vi.mock("../src/lib/apiAuth", () => ({
   authenticateSessionOrKey: vi.fn().mockResolvedValue({ ok: true }),
+  enforcePrRepoScope: vi.fn().mockResolvedValue(null),
 }));
 
 vi.mock("../src/lib/indexFreshness", () => ({
-  assertIndexFresh: vi.fn().mockReturnValue({ ok: true }),
+  assertIndexFresh: vi.fn().mockResolvedValue({ ok: true }),
 }));
 
 vi.mock("../src/lib/getRealLocalPrs", () => ({

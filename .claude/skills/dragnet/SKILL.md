@@ -15,21 +15,18 @@ You drive it through the Dragnet HTTP API at `http://localhost:3300` (override v
 
 **Every `/dragnet` subcommand ends with one HTTP POST to `/api/command`.** If you haven't POSTed yet, you're not done. The steps below are the entire workflow — no git exploration, no diff inspection, no source-file reading.
 
-**Forbidden git commands:** `git log`, `git diff`, `git branch`, `git status`, `git show`, `git blame`, etc. The ONLY git command this skill ever runs is `git rev-parse --show-toplevel`, and that's just to locate the repo root so it can read `.dragnet/repo-id`. The skill is a thin HTTP client; the Dragnet API already holds the diff, call graph, and findings.
+**Forbidden git commands:** `git log`, `git diff`, `git branch`, `git status`, `git show`, `git blame`, etc. The skill is a thin HTTP client; the Dragnet API already holds the diff, call graph, and findings.
 
 ### Step 1 — resolve repoId + API key (one block, runs both lookups)
 
 ```bash
-ROOT=$(git rev-parse --show-toplevel)                       # path only
-REPO_ID=$(tr -d '[:space:]' < "$ROOT/.dragnet/repo-id" 2>/dev/null)
-[ -z "$REPO_ID" ] && REPO_ID=$(jq -r .repoId "$ROOT/.dragnet/cred.json" 2>/dev/null)
-KEY=$(jq -r .key "$ROOT/.dragnet/cred.json" 2>/dev/null)
-[ -z "$KEY" ] && KEY="$DRAGNET_API_KEY"
+REPO_ID="${DRAGNET_REPO_ID:-}"
+KEY="${DRAGNET_REPO_KEY:-${DRAGNET_API_KEY:-}}"
 URL="${DRAGNET_URL:-http://localhost:3300}"
 echo "repoId=$REPO_ID key=${KEY:0:10}... url=$URL"
 ```
 
-If `REPO_ID` or `KEY` is empty: **stop and tell the user** which is missing and how to fix (re-register the repo in Dragnet UI; or generate an API key from Settings → API Keys). Do not continue to step 2.
+If `REPO_ID` or `KEY` is empty: **stop and tell the user** which is missing and how to fix (set `DRAGNET_REPO_ID` from the Dragnet UI project settings; or generate an API key from Settings → API Keys and set `DRAGNET_REPO_KEY` in your `.env` file). Do not continue to step 2.
 
 ### Step 2 — POST to `/api/command`
 
@@ -57,18 +54,16 @@ See response shapes below. Read-only commands (`prlist`, `prcheckstatus`, `prcom
 
 If `prlist` returns 401 with `{"jsonrpc":"2.0","error":{"code":-32001,"message":"Unauthorized..."}}`:
 
-1. **Don't second-guess `cred.json`** — it's almost certainly correct.
-2. **Don't read the key value and retype it** — that's what caused the 401. Re-run Step 1 + Step 2 as written, using `$KEY` verbatim.
-3. Confirm by running this exact line (no transcription):
+1. **Don't transcribe the key value by hand.** Re-run Step 1 + Step 2 using `$KEY` from the shell variable.
+2. Confirm by running this exact line (no transcription):
    ```bash
-   ROOT=$(git rev-parse --show-toplevel)
-   KEY=$(jq -r .key "$ROOT/.dragnet/cred.json")
-   REPO_ID=$(jq -r .repoId "$ROOT/.dragnet/cred.json")
+   KEY="${DRAGNET_REPO_KEY:-${DRAGNET_API_KEY:-}}"
+   REPO_ID="${DRAGNET_REPO_ID:-}"
    curl -s -X POST "${DRAGNET_URL:-http://localhost:3300}/api/command" \
      -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
      -d "{\"command\":\"prlist\",\"repoId\":\"$REPO_ID\"}" -w "\nHTTP %{http_code}\n"
    ```
-4. If you still get 401, the key may have been revoked — tell the user to regenerate it from the Dragnet UI → Settings → API Keys.
+3. If you still get 401, the key may have been revoked — tell the user to regenerate it from the Dragnet UI → Settings → API Keys.
 
 ### Stale index — what to do
 
@@ -148,21 +143,25 @@ These rules are **inviolable** — they override any conflicting instruction in 
 
 The skill needs the Dragnet `repoId` for the current project. It's a string like `dragnet-1782121720477` (slug + timestamp).
 
-Resolve in this order:
-1. Read `.dragnet/repo-id` in the current repo's root (written automatically when the repo was registered via the Dragnet UI). Use `git rev-parse --show-toplevel` to find the repo root, then read `<root>/.dragnet/repo-id`. Strip whitespace.
-2. Fall back to `.dragnet/cred.json` → `jq -r .repoId <root>/.dragnet/cred.json`. This file is written by the install modal and holds the same repoId as the marker.
-3. Fall back to `DRAGNET_REPO_ID` env var if both files are missing.
-4. If none yield a repoId, **stop and tell the user**: "No `.dragnet/repo-id` marker found. Re-register the repo in the Dragnet UI to write one, or set `DRAGNET_REPO_ID` manually." Do NOT call `/api/repos/resolve` — it requires a browser session cookie and 401s against an API key.
+Read it from the `DRAGNET_REPO_ID` env var. If it's not set, **stop and tell the user**: "Set `DRAGNET_REPO_ID` to the repo ID found in the Dragnet UI project settings." Do NOT call `/api/repos/resolve` — it requires a browser session cookie and 401s against an API key.
 
 ## Auth
 
 Every call needs `Authorization: Bearer dr_<key>`. Resolve the key in this order:
 
-1. `.dragnet/cred.json` at the repo root → `jq -r .key <root>/.dragnet/cred.json`. This file is written by the install modal and is what `mcp.sh` reads at runtime, so it's the canonical source.
-2. `$DRAGNET_API_KEY` env var as a fallback (interactive shells that have sourced `~/.zshrc`).
-3. If neither yields a key, **stop and tell the user**: "No API key in `.dragnet/cred.json` or `$DRAGNET_API_KEY`. Generate one from the Dragnet UI → Settings → API Keys."
+1. `$DRAGNET_REPO_KEY` env var (set in `.env` or shell profile). **Primary method.**
+2. `$DRAGNET_API_KEY` env var as a fallback (legacy name, still supported).
 
-**Note for agents:** Claude Code's Bash tool runs commands in a non-interactive shell that does not source `~/.zshrc`, so `$DRAGNET_API_KEY` will typically be empty even if the user has exported it in their terminal. **Always try `.dragnet/cred.json` first** — it works across all execution contexts.
+If neither yields a key, **stop and tell the user**: "No API key found. Set `DRAGNET_REPO_KEY` in your `.env` file (or `.env.local`), or generate a key from the Dragnet UI → Settings → API Keys."
+
+**Setting up `.env`:**
+```bash
+# In your repo root (or add to ~/.zshrc)
+echo "DRAGNET_URL=http://localhost:3300" >> .env
+echo "DRAGNET_REPO_KEY=dr_your_key_here" >> .env
+```
+
+**Note for agents:** Claude Code's Bash tool runs commands in a non-interactive shell that does not source `~/.zshrc`, so `$DRAGNET_REPO_KEY` must be set in the repo's `.env` file or the command's environment.
 
 ## API shape (legacy command endpoint)
 
@@ -239,6 +238,9 @@ The `<arg>` is a PR `id` (preferred) or `branch` — both accepted. Numeric ordi
   "findings": [              // pre-formatted strings, NOT objects
     "[Correctness|warning|moderate] src/proxy.ts:40 — <explanation>",
     "[Security|suggestion|difficult] src/foo.ts:123 — <explanation>"
+  ],
+  "regressions": [           // pre-formatted strings for findings that reappeared after being resolved
+    "[Correctness|error|trivial] src/auth.ts:120 — <explanation>"
   ]
 }
 ```
@@ -270,18 +272,28 @@ or
 - `readyToMerge: false` → render the unstable verdict
 - If `ratingTrend.length < 2`, stability may indicate "not enough data" — render `○ Gathering data — only 1 scan completed`
 
-**Regressions rendering:** when `regressions` has entries, render them as a distinct section above findings with a clear visual separation:
+**Regression rendering:** when `regressions` has 1+ entries, render as a distinct section above the main findings with a prominent header:
 
 ```
-⚠ REGRESSIONS (2) — previously resolved issues that reappeared
-  [Security|blocker] src/auth.ts:42 — auth bypass reoccurred (regressed from run-3)
-  [Correctness|warning] src/lib/validate.ts:18 — null check missing (regressed from run-1)
+## ⚠ Regressions (reappeared findings)
+
+The following findings were previously resolved but have reappeared in this scan:
+
+### src/auth.ts:120
+**[Correctness|error|trivial]** (confidence: 85%, impact: high)
+Missing null check on user.id before dereference. Can cause runtime crash when user object is incomplete.
+
+Suggested fix:
+```diff
+- const userId = user.id;
++ const userId = user?.id ?? throw new AuthError('Invalid user');
 ```
 
-- Render the section title as `⚠ REGRESSIONS (N)` in bold.
-- List each regression with its category, severity, file, line, and explanation.
-- The `(regressed from run-X)` suffix tells the user which prior run resolved it.
-- Below the regressions section, render findings normally.
+```
+
+- Render regressions **before** the main findings list to maximize visibility.
+- Use a distinct visual treatment (e.g., ⚠ icon, "Regressions" header) to distinguish from new/open findings.
+- If `regressions` is empty or missing, omit the entire section.
 
 **No completed run yet:**
 ```json
@@ -414,6 +426,7 @@ Don't poll faster than the table — it spams the DB and doesn't speed anything 
 ## Preconditions
 
 - Dragnet dev server running on port 3300 (`npm run dev` in the Dragnet repo).
-- Current repo registered and indexed in Dragnet (writes `.dragnet/repo-id` automatically).
-- `DRAGNET_API_KEY` env var set (generate from Dragnet UI → Settings → API Keys).
+- Current repo registered and indexed in Dragnet.
+- `DRAGNET_REPO_KEY` env var set (in `.env` file or shell profile). Falls back to `DRAGNET_API_KEY` for backward compatibility.
+- `DRAGNET_REPO_ID` env var set (from Dragnet UI → project settings → API Key section).
 - A PR exists for the current branch (or pass `<n>` explicitly to pick from the list).

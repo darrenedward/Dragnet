@@ -2,12 +2,14 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const prismaMocks = vi.hoisted(() => ({
   reviewRunFindFirst: vi.fn(),
+  reviewRunCreate: vi.fn(),
 }));
 
 vi.mock("../src/lib/prisma", () => ({
   prisma: {
     reviewRun: {
       findFirst: prismaMocks.reviewRunFindFirst,
+      create: prismaMocks.reviewRunCreate,
     },
   },
 }));
@@ -16,12 +18,14 @@ import {
   assertReviewFreshness,
   computeDiffHash,
   computeReviewConfigHash,
+  createReviewRun,
   parseIterationLogs,
   shortHash,
 } from "../src/lib/reviewFreshness";
 
 beforeEach(() => {
   prismaMocks.reviewRunFindFirst.mockReset();
+  prismaMocks.reviewRunCreate.mockReset();
 });
 
 describe("reviewFreshness", () => {
@@ -228,6 +232,42 @@ describe("reviewFreshness", () => {
 
       expect(parsed["chunk-a"]).toEqual({ current: 1, max: 16, provider: "Minimax" });
       expect(parsed["chunk-b"]).toEqual({ current: 3, max: 4, provider: "NVIDIA" });
+    });
+  });
+
+  describe("createReviewRun", () => {
+    it("persists createdByUserId when provided", async () => {
+      prismaMocks.reviewRunCreate.mockResolvedValue({ id: "run-new" });
+      const id = await createReviewRun({
+        prId: "pr-1",
+        repoId: "repo-1",
+        commitHash: "abc",
+        diffHash: "def",
+        reviewConfigHash: "ghi",
+        createdByUserId: "user-42",
+      });
+      expect(id).toMatch(/^run-/);
+      expect(prismaMocks.reviewRunCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ createdByUserId: "user-42" }),
+        }),
+      );
+    });
+
+    it("persists createdByUserId as null when omitted (legacy/webhook runs)", async () => {
+      prismaMocks.reviewRunCreate.mockResolvedValue({ id: "run-new" });
+      await createReviewRun({
+        prId: "pr-1",
+        repoId: "repo-1",
+        commitHash: "abc",
+        diffHash: "def",
+        reviewConfigHash: "ghi",
+      });
+      expect(prismaMocks.reviewRunCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ createdByUserId: null }),
+        }),
+      );
     });
   });
 });

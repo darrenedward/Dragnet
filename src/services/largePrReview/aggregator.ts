@@ -1,6 +1,5 @@
 import { prisma } from "@/src/lib/prisma";
-import { buildFindingFingerprint, resolveSymbolsBatch } from "./fingerprint";
-import { reconcileFindingsAcrossRuns } from "./reconcile";
+import { dedupFindingsWithinRun, reconcileFindingsAcrossRuns } from "./reconcile";
 import type { ReviewReliability } from "./types";
 
 export interface AggregatedReviewResult {
@@ -51,7 +50,7 @@ export async function aggregateResults(reviewRunId: string): Promise<AggregatedR
     ? null
     : weightedRating(chunks);
 
-  await dedupFindings(reviewRunId);
+  await dedupFindingsWithinRun(reviewRunId);
   await reconcileFindingsAcrossRuns(run.prId, reviewRunId);
   const findings = await prisma.reviewFinding.findMany({
     where: {
@@ -59,6 +58,16 @@ export async function aggregateResults(reviewRunId: string): Promise<AggregatedR
       OR: [
         { verificationStatus: null },
         { verificationStatus: { not: "rejected" } },
+      ],
+      // Skeptic rejects mirror the verifier pattern: persisted for audit,
+      // excluded from the active findings list.
+      AND: [
+        {
+          OR: [
+            { skepticVerdict: null },
+            { skepticVerdict: { not: "rejected" } },
+          ],
+        },
       ],
     },
     orderBy: [{ filename: "asc" }, { line: "asc" }],
@@ -123,60 +132,6 @@ export async function aggregateResults(reviewRunId: string): Promise<AggregatedR
     findings,
     skippedReasons,
   };
-}
-
-async function dedupFindings(reviewRunId: string): Promise<void> {
-  const findings = await prisma.reviewFinding.findMany({
-    where: { reviewRunId },
-    orderBy: [{ filename: "asc" }, { line: "asc" }, { timestamp: "asc" }],
-    select: {
-      id: true,
-      repoId: true,
-      filename: true,
-      line: true,
-      category: true,
-      confidence: true,
-      timestamp: true,
-    },
-  });
-  if (findings.length === 0) return;
-
-  const repoId = findings[0].repoId;
-  const symbolMap = await resolveSymbolsBatch(
-    repoId,
-    findings.map((f) => ({ filePath: f.filename, line: f.line })),
-  );
-
-  const byFingerprint = new Map<string, typeof findings>();
-  for (const finding of findings) {
-    const resolution = symbolMap.get(`${finding.filename}:${finding.line ?? "?"}`);
-    const symbolId = resolution?.symbolId ?? null;
-    const fingerprint = buildFindingFingerprint({
-      symbolId,
-      filePath: finding.filename,
-      category: finding.category,
-    });
-    byFingerprint.set(fingerprint, [
-      ...(byFingerprint.get(fingerprint) || []),
-      finding,
-    ]);
-  }
-
-  const duplicateIds: string[] = [];
-  for (const group of byFingerprint.values()) {
-    if (group.length < 2) continue;
-    const [keep, ...dupes] = [...group].sort((a, b) => {
-      const confidenceDelta = (b.confidence ?? -1) - (a.confidence ?? -1);
-      if (confidenceDelta !== 0) return confidenceDelta;
-      return a.timestamp.localeCompare(b.timestamp);
-    });
-    void keep;
-    duplicateIds.push(...dupes.map((finding) => finding.id));
-  }
-
-  if (duplicateIds.length > 0) {
-    await prisma.reviewFinding.deleteMany({ where: { id: { in: duplicateIds } } });
-  }
 }
 
 function weightedRating(chunks: Array<{ status: string; rating: number | null; lineCount: number }>): number | null {

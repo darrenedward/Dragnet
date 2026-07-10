@@ -5,6 +5,7 @@ type PrRow = {
   sourceBranch: string;
   commitHash: string;
   status: string;
+  targetBranch?: string;
 };
 
 type RepoRow = {
@@ -27,6 +28,12 @@ type PrismaFindManyArgs = {
     };
   };
 };
+
+const mockExecFileSync = vi.hoisted(() => vi.fn<(...args: any[]) => string>());
+
+vi.mock("child_process", () => ({
+  execFileSync: mockExecFileSync,
+}));
 
 const mockState = vi.hoisted(() => ({
   dbFixtures: [] as RepoRow[],
@@ -60,7 +67,8 @@ vi.mock("../src/lib/prisma", () => {
   };
 });
 
-import { pollOnce } from "../src/lib/prPollingWorker";
+import { pollOnce, fetchGhTargetBranch } from "../src/lib/prPollingWorker";
+import { prisma } from "../src/lib/prisma";
 
 describe("pollOnce", () => {
   const baseRepo: Omit<RepoRow, "pullRequests"> = {
@@ -342,6 +350,88 @@ describe("pollOnce", () => {
     await pollOnce(triggerScan);
 
     expect(triggerScan).toHaveBeenCalledTimes(1);
+    expect(triggerScan).toHaveBeenCalledWith("repo-1", "pr-1", "new-sha");
+  });
+
+  // ─── targetBranch sync ────────────────────────────────────────────
+
+  it("updates targetBranch when gh returns a different value", async () => {
+    mockState.dbFixtures = [
+      repoWithPrs({
+        pullRequests: [
+          { id: "pr-1", sourceBranch: "feature", commitHash: "sha", status: "Pending", targetBranch: "main" },
+        ],
+      }),
+    ];
+    mockExecFileSync.mockReturnValue('{"baseRefName":"develop"}');
+
+    fetchSpy = vi
+      .spyOn(global, "fetch")
+      .mockImplementationOnce(() =>
+        Promise.resolve(ghResponse([{ number: 1, ref: "feature", sha: "sha" }])),
+      );
+
+    await pollOnce(triggerScan);
+
+    expect(prisma.pullRequest.update).toHaveBeenCalledWith({
+      where: { id: "pr-1" },
+      data: { targetBranch: "develop" },
+    });
+  });
+
+  it("does not update targetBranch when value matches stored", async () => {
+    mockState.dbFixtures = [
+      repoWithPrs({
+        pullRequests: [
+          { id: "pr-1", sourceBranch: "feature", commitHash: "sha", status: "Pending", targetBranch: "main" },
+        ],
+      }),
+    ];
+    mockExecFileSync.mockReturnValue('{"baseRefName":"main"}');
+
+    fetchSpy = vi
+      .spyOn(global, "fetch")
+      .mockImplementationOnce(() =>
+        Promise.resolve(ghResponse([{ number: 1, ref: "feature", sha: "sha" }])),
+      );
+
+    await pollOnce(triggerScan);
+
+    expect(prisma.pullRequest.update).not.toHaveBeenCalled();
+  });
+
+  it("skips targetBranch sync gracefully when gh CLI is unavailable but still processes commit advance", async () => {
+    mockState.dbFixtures = [
+      repoWithPrs({
+        pullRequests: [
+          { id: "pr-1", sourceBranch: "feature", commitHash: "old-sha", status: "Pending", targetBranch: "main" },
+        ],
+      }),
+    ];
+    mockExecFileSync.mockImplementation(() => {
+      throw new Error("command not found");
+    });
+
+    fetchSpy = vi
+      .spyOn(global, "fetch")
+      .mockImplementationOnce(() =>
+        Promise.resolve(ghResponse([{ number: 1, ref: "feature", sha: "new-sha" }])),
+      );
+
+    await pollOnce(triggerScan);
+
+    // targetBranch was NOT updated (graceful skip — no call with targetBranch in data)
+    expect(prisma.pullRequest.update).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ targetBranch: expect.any(String) }),
+      }),
+    );
+
+    // commitHash WAS updated (sync cycle continues despite gh failure)
+    expect(prisma.pullRequest.update).toHaveBeenCalledWith({
+      where: { id: "pr-1" },
+      data: { commitHash: "new-sha" },
+    });
     expect(triggerScan).toHaveBeenCalledWith("repo-1", "pr-1", "new-sha");
   });
 });

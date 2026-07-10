@@ -48,77 +48,19 @@
  * needs_verification/false_positive) deferred to a follow-on spec.
  */
 
-import path from "node:path";
 import { prisma } from "@/src/lib/prisma";
 import { safeReadFileSync } from "@/src/lib/pathSafety";
 import { getChatClient, getChatModel } from "@/src/lib/llmClient";
 import { checkAbsenceClaim, extractCitedSymbols } from "./findingVerifier/absenceClaim";
+import { isDocumentationFile } from "./findingVerifier/docsRules";
+import type { CandidateFinding, VerificationResult, VerifyOptions } from "./findingVerifier/types";
 
-export interface CandidateFinding {
-  id: string;
-  category: string;
-  severity: string;
-  filename: string;
-  line?: number | null;
-  explanation: string;
-  source?: string | null;
-}
-
-export interface VerificationResult {
-  status: "verified" | "downgraded" | "rejected" | "unverified";
-  note: string;
-}
-
-/**
- * Options for a verification pass.
- *
- *   docsReview — when true, findings citing documentation files
- *                (.md, docs/, .agent-os/, etc.) are NOT auto-rejected.
-                Set when the scan's explicit purpose is to review docs
- *                (a future scan mode). Default false — normal PR code
- *                reviews treat docs as context, not bug locations.
- */
-export interface VerifyOptions {
-  docsReview?: boolean;
-}
-
-/**
- * File extensions + path patterns treated as documentation. Findings
- * citing these are auto-rejected in normal code review mode — docs are
- * context for understanding intent, not bug locations.
- *
- * If you add a new doc format, add it here. Anything NOT in this list
- * (.ts, .tsx, .js, .prisma, .sql, .json, .yml, .tf, etc.) stays
- * reviewable.
- */
-const DOCS_EXTENSIONS = new Set([
-  ".md",
-  ".markdown",
-  ".mdx",
-  ".txt",
-  ".rst",
-  ".adoc",
-  ".asciidoc",
-  ".org",
-]);
-
-const DOCS_PATH_PATTERNS = [
-  /^\.agent-os\//i,
-  /^docs?\//i,
-  /^documentation\//i,
-  /(^|\/)CHANGELOG/i,
-  /(^|\/)CONTRIBUTING/i,
-  /(^|\/)LICENSE/i,
-  /(^|\/)README/i,
-  /(^|\/)AUTHORS/i,
-];
-
-export function isDocumentationFile(filename: string): boolean {
-  const normalized = filename.replace(/\\/g, "/").replace(/^\.\//, "");
-  const ext = path.extname(normalized).toLowerCase();
-  if (DOCS_EXTENSIONS.has(ext)) return true;
-  return DOCS_PATH_PATTERNS.some((p) => p.test(normalized));
-}
+export type {
+  CandidateFinding,
+  VerificationResult,
+  VerifyOptions,
+} from "./findingVerifier/types";
+export { isDocumentationFile } from "./findingVerifier/docsRules";
 
 /**
  * Verify a batch of findings. Returns a Map keyed by finding.id so the
@@ -186,7 +128,7 @@ async function verifyOne(
   }
 
   // ─── Stage A: line/file validation ─────────────────────────────────
-  const stageA = validateLineAndFile(finding, repoPath, prId);
+  const stageA = await validateLineAndFile(finding, repoPath, prId);
   if (stageA) return stageA;
 
   // ─── Stage A.5: absence-claim verification ────────────────────────
@@ -219,12 +161,12 @@ async function verifyOne(
 
 // ─── Stage A ──────────────────────────────────────────────────────────
 
-function validateLineAndFile(
+async function validateLineAndFile(
   finding: CandidateFinding,
   repoPath: string,
   prId: string,
-): VerificationResult | null {
-  const content = loadFileContent(finding.filename, repoPath, prId);
+): Promise<VerificationResult | null> {
+  const content = await loadFileContent(finding.filename, repoPath, prId);
   if (content === null) {
     return {
       status: "rejected",
@@ -265,19 +207,51 @@ function validateLineAndFile(
   return null;
 }
 
-function loadFileContent(
+export async function loadFileContent(
   filename: string,
   repoPath: string,
-  _prId: string,
-): string | null {
-  // v1: disk read only. PrFile-table fallback (for files deleted in
-  // working tree but still in the diff) deferred to a follow-on — the
-  // vast majority of findings cite files that still exist on disk.
+  prId: string,
+): Promise<string | null> {
+  // 1) Preferred: disk read. Works for local-path repos and any other
+  //    case where repoPath actually points at a directory the host can
+  //    open. filename is LLM-cited via submitReview — untrusted.
+  //    safeReadFileSync resolves + opens + reads in one step with
+  //    O_NOFOLLOW, closing the TOCTOU window that resolveSafePath +
+  //    readFileSync would leave open.
+  const fromDisk = safeReadFileSync(repoPath, filename);
+  if (fromDisk !== null) return fromDisk;
+
+  // 2) Fallback: read modifiedContent from the PrFile table.
+  //    Necessary for remote-volume repos where the cloned code only
+  //    exists inside a container volume — the host verifier can't open
+  //    those files but the bytes were already captured into prFile by
+  //    refreshPrFiles before the scan started.
   //
-  // filename is LLM-cited via submitReview — untrusted. safeReadFileSync
-  // resolves + opens + reads in one step with O_NOFOLLOW, closing the
-  // TOCTOU window that resolveSafePath + readFileSync would leave open.
-  return safeReadFileSync(repoPath, filename);
+  //    modifiedContent is the post-diff snapshot (what the LLM was
+  //    looking at when it cited the file). For deleted files it will
+  //    be null — fall back to originalContent (file existed pre-diff)
+  //    or the diff text. If all three are missing, give up.
+  try {
+    const row = await prisma.prFile.findUnique({
+      where: { prId_filename: { prId, filename } },
+      select: {
+        modifiedContent: true,
+        originalContent: true,
+        diff: true,
+      },
+    });
+    if (row?.modifiedContent) return row.modifiedContent;
+    if (row?.originalContent) return row.originalContent;
+    if (row?.diff) return row.diff;
+  } catch (err) {
+    // DB error — don't blow up the whole scan for one missing file.
+    console.warn(
+      `[verifier] loadFileContent PrFile lookup failed for ${prId}/${filename}:`,
+      (err as Error).message,
+    );
+  }
+
+  return null;
 }
 
 // ─── Stage B: classification + counter-evidence ──────────────────────

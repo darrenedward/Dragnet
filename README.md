@@ -59,6 +59,37 @@ The in-app **DB Config** tab lets you re-test and re-save the database connectio
 
 ---
 
+## Setup
+
+Each developer configures their local environment with two environment variables so the CLI and git hooks know where to send reviews and how to authenticate.
+
+### Environment variables
+
+| Variable | Purpose | Default |
+|---|---|---|
+| `DRAGNET_URL` | Dragnet server address | `http://localhost:3300` |
+| `DRAGNET_REPO_KEY` | Per-repo, per-user API key (generate from UI) | _(required)_ |
+
+### Configuration
+
+Add these to your shell profile (`.bashrc`, `.zshrc`, etc.) or create a `.env` file in your repo root:
+
+```bash
+# .env (or .env.local)
+DRAGNET_URL=http://localhost:3300
+DRAGNET_REPO_KEY=dr_your_key_here
+```
+
+**Generating an API key:**
+1. Open the Dragnet dashboard at `http://localhost:3300`
+2. Navigate to **Settings → API Keys**
+3. Click **Generate key**
+4. Copy the key and add it to your `.env` file
+
+**Note:** `~/.dragnet/` is used for server-side artifacts (provider health, checkpoints, scan reports). Client configuration uses `.env` files only. Repo-specific `.dragnet/` directories (under the repo root) are also server-side only — they hold provider health state, checkpoints, and scan reports for that repo.
+
+---
+
 ## Scripts
 
 | Script             | Does                                          |

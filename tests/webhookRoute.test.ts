@@ -1,198 +1,588 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { createHmac } from "crypto";
 
-const mockVerifyGithubSignature = vi.hoisted(() => vi.fn());
-const mockFindRepoByCloneUrl = vi.hoisted(() => vi.fn());
-const mockVerifyReplayAttack = vi.hoisted(() => vi.fn());
-const mockGitFetch = vi.hoisted(() => vi.fn());
-const mockScanRepoPrs = vi.hoisted(() => vi.fn());
-const mockEnqueue = vi.hoisted(() => vi.fn());
-const mockPrismaUpdate = vi.hoisted(() => vi.fn().mockResolvedValue({}));
-
-vi.mock("@/src/lib/prisma", () => ({
-  prisma: {
-    repository: {
-      update: mockPrismaUpdate,
-    },
-  },
+const mocks = vi.hoisted(() => ({
+  mockVerifySignature: vi.fn(),
+  mockFindRepo: vi.fn(),
+  mockGitFetch: vi.fn(),
+  mockScanRepoPrs: vi.fn(),
+  mockEnqueue: vi.fn(),
+  mockCheckDelivery: vi.fn(),
+  mockRunPrScan: vi.fn(),
+  mockTriggerHostedScan: vi.fn(),
+  mockCreateDeliveryLog: vi.fn(),
+  mockUpdateDeliveryStatus: vi.fn(),
+  mockGetOpenPrIds: vi.fn(),
 }));
 
-vi.mock("@/src/lib/webhook", () => ({
-  verifyGithubSignature: mockVerifyGithubSignature,
-  findRepoByCloneUrl: mockFindRepoByCloneUrl,
-  verifyReplayAttack: mockVerifyReplayAttack,
-  gitFetch: mockGitFetch,
-  scanRepoPrs: mockScanRepoPrs,
+vi.mock("../src/lib/webhook", () => ({
+  verifyGithubSignature: mocks.mockVerifySignature,
+  findRepoByCloneUrl: mocks.mockFindRepo,
+  gitFetch: mocks.mockGitFetch,
+  scanRepoPrs: mocks.mockScanRepoPrs,
+  getOpenPrIds: mocks.mockGetOpenPrIds,
 }));
 
 vi.mock("@/src/services/remoteFetchWorker", () => ({
-  enqueue: mockEnqueue,
+  enqueue: mocks.mockEnqueue,
 }));
 
-async function postToWebhook(headers: Record<string, string>, body: unknown): Promise<Response> {
-  const { POST } = await import("@/src/app/api/webhooks/github/route");
-  const req = new Request("http://localhost/api/webhooks/github", {
-    method: "POST",
-    headers: new Headers({ "content-type": "application/json", ...headers }),
-    body: JSON.stringify(body),
-  });
-  return POST(req);
+vi.mock("../src/lib/webhookReplay", () => ({
+  checkDelivery: mocks.mockCheckDelivery,
+}));
+
+vi.mock("@/reviewService", () => ({
+  runPrScan: mocks.mockRunPrScan,
+}));
+
+vi.mock("../src/services/hostedScan/orchestrator", () => ({
+  triggerHostedScan: mocks.mockTriggerHostedScan,
+}));
+
+vi.mock("../src/lib/webhookDelivery", () => ({
+  createDeliveryLog: mocks.mockCreateDeliveryLog,
+  updateDeliveryStatus: mocks.mockUpdateDeliveryStatus,
+}));
+
+import { POST } from "../src/app/api/webhooks/github/route";
+
+function sign(payload: string, secret: string): string {
+  const hmac = createHmac("sha256", secret);
+  hmac.update(payload, "utf8");
+  return `sha256=${hmac.digest("hex")}`;
 }
 
-describe("github webhook route", () => {
-  beforeEach(async () => {
+function buildRequest({
+  event = "push",
+  delivery = "abc-123",
+  signature,
+  body,
+}: {
+  event?: string;
+  delivery?: string;
+  signature?: string;
+  body: Record<string, unknown>;
+}) {
+  const raw = JSON.stringify(body);
+  const sig = signature ?? sign(raw, "test-secret");
+  return new Request("https://example.com/api/webhooks/github", {
+    method: "POST",
+    headers: {
+      "x-github-event": event,
+      "x-github-delivery": delivery,
+      "x-hub-signature-256": sig,
+      "content-type": "application/json",
+    },
+    body: raw,
+  });
+}
+
+describe("webhooks/github/route POST", () => {
+  beforeEach(() => {
     vi.clearAllMocks();
-    mockVerifyGithubSignature.mockReturnValue(true);
-    mockFindRepoByCloneUrl.mockResolvedValue({
+    mocks.mockFindRepo.mockResolvedValue({
       id: "repo-1",
       localPath: "/tmp/repo",
-      webhookSecret: "s3cret",
-      webhookEnabled: true,
+      path: "/tmp/repo",
+      webhookSecret: "test-secret",
+      hostedMode: false,
     });
-    mockVerifyReplayAttack.mockReturnValue(true);
-    mockGitFetch.mockReturnValue(true);
-    mockScanRepoPrs.mockResolvedValue(undefined);
-    mockEnqueue.mockResolvedValue(undefined);
-    mockPrismaUpdate.mockResolvedValue({});
+    mocks.mockVerifySignature.mockImplementation(
+      (payload: string, signature: string, secret: string) => {
+        return signature === sign(payload, secret);
+      },
+    );
+    mocks.mockEnqueue.mockResolvedValue("/tmp/remote-repo");
+    mocks.mockCheckDelivery.mockReturnValue(false);
+    mocks.mockScanRepoPrs.mockResolvedValue(["pr-1"]);
+    mocks.mockRunPrScan.mockResolvedValue(undefined);
+    mocks.mockCreateDeliveryLog.mockResolvedValue("del-1");
+    mocks.mockUpdateDeliveryStatus.mockResolvedValue(undefined);
+    mocks.mockTriggerHostedScan.mockResolvedValue({ ok: true, prId: "pr-42" });
+    mocks.mockGetOpenPrIds.mockResolvedValue(["pr-1"]);
   });
 
-  it("returns 400 when x-github-delivery is missing", async () => {
-    const res = await postToWebhook(
-      { "x-github-event": "push", "x-hub-signature-256": "sha256=abc" },
-      { ref: "refs/heads/main", repository: { clone_url: "https://github.com/user/repo.git" } },
-    );
-    expect(res.status).toBe(400);
-    const data = await res.json();
-    expect(data.error).toContain("x-github-delivery");
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   it("returns 400 when x-github-event is missing", async () => {
-    const res = await postToWebhook(
-      { "x-github-delivery": "guid-1", "x-hub-signature-256": "sha256=abc" },
-      { ref: "refs/heads/main", repository: { clone_url: "https://github.com/user/repo.git" } },
-    );
+    const req = new Request("https://example.com/api/webhooks/github", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    const res = await POST(req);
     expect(res.status).toBe(400);
-    const data = await res.json();
-    expect(data.error).toContain("x-github-event");
+    const body = await res.json();
+    expect(body.error).toContain("Missing x-github-event");
   });
 
   it("returns 401 when x-hub-signature-256 is missing", async () => {
-    const res = await postToWebhook(
-      { "x-github-delivery": "guid-1", "x-github-event": "push" },
-      { ref: "refs/heads/main", repository: { clone_url: "https://github.com/user/repo.git" } },
-    );
+    const req = new Request("https://example.com/api/webhooks/github", {
+      method: "POST",
+      headers: {
+        "x-github-event": "push",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({}),
+    });
+    const res = await POST(req);
     expect(res.status).toBe(401);
-    const data = await res.json();
-    expect(data.error).toContain("x-hub-signature-256");
+    const body = await res.json();
+    expect(body.error).toContain("Missing x-hub-signature-256");
   });
 
-  it("returns 429 when replay attack detected", async () => {
-    mockVerifyReplayAttack.mockReturnValue(false);
-    const res = await postToWebhook(
-      {
-        "x-github-delivery": "replayed-guid",
+  it("returns 400 for invalid JSON body", async () => {
+    const req = new Request("https://example.com/api/webhooks/github", {
+      method: "POST",
+      headers: {
         "x-github-event": "push",
         "x-hub-signature-256": "sha256=abc",
+        "content-type": "application/json",
       },
-      { ref: "refs/heads/main", repository: { clone_url: "https://github.com/user/repo.git" } },
-    );
-    expect(res.status).toBe(429);
-    const data = await res.json();
-    expect(data.error).toContain("Replay");
+      body: "not-json",
+    });
+    const res = await POST(req);
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toContain("Invalid JSON");
   });
 
-  it("returns 404 when no matching repository found", async () => {
-    mockFindRepoByCloneUrl.mockResolvedValue(null);
-    const res = await postToWebhook(
-      {
-        "x-github-delivery": "guid-2",
-        "x-github-event": "push",
-        "x-hub-signature-256": "sha256=abc",
-      },
-      { ref: "refs/heads/main", repository: { clone_url: "https://github.com/unknown/repo.git" } },
-    );
+  it("returns 400 when repository or clone_url is missing", async () => {
+    const req = buildRequest({ body: { notARepo: true } });
+    const res = await POST(req);
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toMatch(/missing/i);
+  });
+
+  it("returns 404 when no matching repo found from clone_url", async () => {
+    mocks.mockFindRepo.mockResolvedValue(null);
+    const req = buildRequest({
+      body: { repository: { clone_url: "https://github.com/other/repo.git" } },
+    });
+    const res = await POST(req);
     expect(res.status).toBe(404);
+    const body = await res.json();
+    expect(body.error).toContain("No matching repository found");
   });
 
-  it("returns 403 when webhook is disabled", async () => {
-    mockFindRepoByCloneUrl.mockResolvedValue({
+  it("returns 401 when webhook secret is not configured", async () => {
+    mocks.mockFindRepo.mockResolvedValue({
       id: "repo-1",
       localPath: "/tmp/repo",
-      webhookSecret: "s3cret",
-      webhookEnabled: false,
+      webhookSecret: null,
+      hostedMode: false,
     });
-    const res = await postToWebhook(
-      {
-        "x-github-delivery": "guid-3",
-        "x-github-event": "push",
-        "x-hub-signature-256": "sha256=abc",
-      },
-      { ref: "refs/heads/main", repository: { clone_url: "https://github.com/user/repo.git" } },
-    );
-    expect(res.status).toBe(403);
-  });
-
-  it("returns 401 when signature is invalid", async () => {
-    mockVerifyGithubSignature.mockReturnValue(false);
-    const res = await postToWebhook(
-      {
-        "x-github-delivery": "guid-4",
-        "x-github-event": "push",
-        "x-hub-signature-256": "sha256=bad",
-      },
-      { ref: "refs/heads/main", repository: { clone_url: "https://github.com/user/repo.git" } },
-    );
+    const req = buildRequest({
+      body: { repository: { clone_url: "https://github.com/owner/repo.git" } },
+    });
+    const res = await POST(req);
     expect(res.status).toBe(401);
-    const data = await res.json();
-    expect(data.error).toContain("signature");
+    const body = await res.json();
+    expect(body.error).toContain("Webhook secret not configured");
   });
 
-  it("triggers scan for valid pull_request event", async () => {
-    const res = await postToWebhook(
-      {
-        "x-github-delivery": "guid-5",
-        "x-github-event": "pull_request",
-        "x-hub-signature-256": "sha256=abc",
-      },
-      {
+  it("returns 401 for invalid HMAC signature", async () => {
+    mocks.mockVerifySignature.mockReturnValue(false);
+    const req = buildRequest({
+      signature: "sha256=invalid",
+      body: { repository: { clone_url: "https://github.com/owner/repo.git" } },
+    });
+    const res = await POST(req);
+    expect(res.status).toBe(401);
+    const body = await res.json();
+    expect(body.error).toContain("Invalid signature");
+  });
+
+  it("triggers AFK scan on valid pull_request event (opened)", async () => {
+    const req = buildRequest({
+      event: "pull_request",
+      body: {
         action: "opened",
+        repository: { clone_url: "https://github.com/owner/repo.git" },
         pull_request: { number: 42 },
-        repository: { clone_url: "https://github.com/user/repo.git" },
       },
-    );
+    });
+    const res = await POST(req);
     expect(res.status).toBe(200);
-    const data = await res.json();
-    expect(data.ok).toBe(true);
-    expect(data.pr).toBe(42);
-    expect(mockScanRepoPrs).toHaveBeenCalledWith("repo-1", "/tmp/repo");
+    expect(mocks.mockGitFetch).toHaveBeenCalledWith(expect.objectContaining({ id: "repo-1", path: "/tmp/repo" }));
+    expect(mocks.mockScanRepoPrs).toHaveBeenCalledWith(expect.objectContaining({ id: "repo-1", path: "/tmp/repo" }));
+    expect(mocks.mockRunPrScan).toHaveBeenCalledWith("pr-1");
+    const body = await res.json();
+    expect(body.pr).toBe(42);
+    expect(body.afkScans).toBe(1);
   });
 
-  it("triggers scoped scan for valid push event with branch", async () => {
-    const res = await postToWebhook(
-      {
-        "x-github-delivery": "guid-6",
-        "x-github-event": "push",
-        "x-hub-signature-256": "sha256=abc",
+  it("triggers AFK scan on pull_request synchronize event", async () => {
+    const req = buildRequest({
+      event: "pull_request",
+      body: {
+        action: "synchronize",
+        repository: { clone_url: "https://github.com/owner/repo.git" },
+        pull_request: { number: 7 },
       },
-      { ref: "refs/heads/feature/my-feature", repository: { clone_url: "https://github.com/user/repo.git" } },
-    );
+    });
+    const res = await POST(req);
     expect(res.status).toBe(200);
-    const data = await res.json();
-    expect(data.ok).toBe(true);
-    expect(data.branch).toBe("feature/my-feature");
-    expect(mockScanRepoPrs).toHaveBeenCalledWith("repo-1", "/tmp/repo", "feature/my-feature");
+    expect(mocks.mockGitFetch).toHaveBeenCalled();
+    expect(mocks.mockScanRepoPrs).toHaveBeenCalled();
+    expect(mocks.mockRunPrScan).toHaveBeenCalled();
   });
 
-  it("returns ok true for ignored events", async () => {
-    const res = await postToWebhook(
-      {
-        "x-github-delivery": "guid-7",
-        "x-github-event": "issues",
-        "x-hub-signature-256": "sha256=abc",
+  it("triggers AFK scan on pull_request reopened event", async () => {
+    const req = buildRequest({
+      event: "pull_request",
+      body: {
+        action: "reopened",
+        repository: { clone_url: "https://github.com/owner/repo.git" },
+        pull_request: { number: 13 },
       },
-      { repository: { clone_url: "https://github.com/user/repo.git" } },
-    );
+    });
+    const res = await POST(req);
     expect(res.status).toBe(200);
-    const data = await res.json();
-    expect(data.ignored).toBe(true);
+    expect(mocks.mockGitFetch).toHaveBeenCalled();
+    expect(mocks.mockScanRepoPrs).toHaveBeenCalled();
+    expect(mocks.mockRunPrScan).toHaveBeenCalled();
+  });
+
+  it("enqueues remote fetch for pull_request and triggers AFK scan", async () => {
+    mocks.mockFindRepo.mockResolvedValue({
+      id: "repo-1",
+      localPath: null,
+      webhookSecret: "test-secret",
+      hostedMode: false,
+    });
+    const req = buildRequest({
+      event: "pull_request",
+      body: {
+        action: "opened",
+        repository: { clone_url: "https://github.com/owner/repo.git" },
+        pull_request: { number: 99 },
+      },
+    });
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+    expect(mocks.mockEnqueue).toHaveBeenCalledWith("repo-1");
+    expect(mocks.mockGitFetch).toHaveBeenCalledWith(expect.objectContaining({ id: "repo-1", path: "/tmp/remote-repo" }));
+    expect(mocks.mockScanRepoPrs).toHaveBeenCalledWith(expect.objectContaining({ id: "repo-1", path: "/tmp/remote-repo" }));
+    expect(mocks.mockRunPrScan).toHaveBeenCalledWith("pr-1");
+    const body = await res.json();
+    expect(body.afkScans).toBe(1);
+  });
+
+  it("triggers AFK scan on valid push event", async () => {
+    const req = buildRequest({
+      event: "push",
+      body: {
+        repository: { clone_url: "https://github.com/owner/repo.git" },
+      },
+    });
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+    expect(mocks.mockGitFetch).toHaveBeenCalledWith(expect.objectContaining({ id: "repo-1", path: "/tmp/repo" }));
+    expect(mocks.mockScanRepoPrs).toHaveBeenCalledWith(expect.objectContaining({ id: "repo-1", path: "/tmp/repo" }));
+    expect(mocks.mockRunPrScan).toHaveBeenCalledWith("pr-1");
+  });
+
+  it("enqueues remote fetch on push and triggers AFK scan", async () => {
+    mocks.mockFindRepo.mockResolvedValue({
+      id: "repo-1",
+      localPath: null,
+      path: null,
+      webhookSecret: "test-secret",
+      hostedMode: false,
+    });
+    const req = buildRequest({
+      event: "push",
+      body: {
+        repository: { clone_url: "https://github.com/owner/repo.git" },
+      },
+    });
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+    expect(mocks.mockEnqueue).toHaveBeenCalledWith("repo-1");
+    expect(mocks.mockGitFetch).toHaveBeenCalledWith(expect.objectContaining({ id: "repo-1", path: "/tmp/remote-repo" }));
+    expect(mocks.mockScanRepoPrs).toHaveBeenCalledWith(expect.objectContaining({ id: "repo-1", path: "/tmp/remote-repo" }));
+    expect(mocks.mockRunPrScan).toHaveBeenCalledWith("pr-1");
+    const body = await res.json();
+    expect(body.afkScans).toBe(1);
+  });
+
+  it("handles enqueue failure gracefully (no AFK scan)", async () => {
+    mocks.mockFindRepo.mockResolvedValue({
+      id: "repo-1",
+      localPath: null,
+      path: null,
+      webhookSecret: "test-secret",
+      hostedMode: false,
+    });
+    mocks.mockEnqueue.mockRejectedValue(new Error("network error"));
+    const req = buildRequest({
+      event: "push",
+      body: {
+        repository: { clone_url: "https://github.com/owner/repo.git" },
+      },
+    });
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+    expect(mocks.mockEnqueue).toHaveBeenCalledWith("repo-1");
+    expect(mocks.mockGitFetch).not.toHaveBeenCalled();
+    expect(mocks.mockScanRepoPrs).not.toHaveBeenCalled();
+    expect(mocks.mockRunPrScan).not.toHaveBeenCalled();
+    const body = await res.json();
+    expect(body.afkScans).toBe(0);
+  });
+
+  it("returns ignored for unknown events", async () => {
+    const req = buildRequest({
+      event: "issues",
+      body: {
+        repository: { clone_url: "https://github.com/owner/repo.git" },
+      },
+    });
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.ignored).toBe(true);
+    expect(mocks.mockGitFetch).not.toHaveBeenCalled();
+    expect(mocks.mockScanRepoPrs).not.toHaveBeenCalled();
+    expect(mocks.mockRunPrScan).not.toHaveBeenCalled();
+  });
+
+  it("rejects duplicate x-github-delivery (replay protection)", async () => {
+    mocks.mockCheckDelivery.mockReturnValue(true);
+    const req = buildRequest({
+      body: { repository: { clone_url: "https://github.com/owner/repo.git" } },
+    });
+    const res = await POST(req);
+    expect(res.status).toBe(429);
+    const body = await res.json();
+    expect(body.error).toContain("Duplicate delivery");
+    expect(mocks.mockRunPrScan).not.toHaveBeenCalled();
+  });
+
+  it("triggers no AFK scan when scanRepoPrs returns empty", async () => {
+    mocks.mockScanRepoPrs.mockResolvedValue([]);
+    const req = buildRequest({
+      event: "push",
+      body: {
+        repository: { clone_url: "https://github.com/owner/repo.git" },
+      },
+    });
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+    expect(mocks.mockGitFetch).toHaveBeenCalled();
+    expect(mocks.mockScanRepoPrs).toHaveBeenCalled();
+    expect(mocks.mockRunPrScan).not.toHaveBeenCalled();
+    const body = await res.json();
+    expect(body.afkScans).toBe(0);
+  });
+
+  describe("hosted mode", () => {
+    beforeEach(() => {
+      mocks.mockFindRepo.mockResolvedValue({
+        id: "repo-1",
+        localPath: null,
+        path: null,
+        webhookSecret: "test-secret",
+        hostedMode: true,
+      });
+    });
+
+    it("calls triggerHostedScan for pull_request events on hosted repos", async () => {
+      mocks.mockTriggerHostedScan.mockResolvedValue({ ok: true, prId: "pr-hosted-42" });
+
+      const req = buildRequest({
+        event: "pull_request",
+        body: {
+          action: "opened",
+          repository: { clone_url: "https://github.com/owner/repo.git" },
+          pull_request: {
+            number: 42,
+            title: "My PR",
+            head: { ref: "feature-x", sha: "abc123" },
+            base: { ref: "main" },
+            user: { login: "octocat" },
+            body: "Description here",
+          },
+        },
+      });
+      const res = await POST(req);
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.hosted).toBe(true);
+      expect(body.pr).toBe(42);
+      expect(body.prId).toBe("pr-hosted-42");
+
+      expect(mocks.mockTriggerHostedScan).toHaveBeenCalledWith("repo-1", {
+        prNumber: 42,
+        title: "My PR",
+        headBranch: "feature-x",
+        baseBranch: "main",
+        commitHash: "abc123",
+        author: "octocat",
+        description: "Description here",
+      });
+
+      expect(mocks.mockGitFetch).not.toHaveBeenCalled();
+      expect(mocks.mockScanRepoPrs).not.toHaveBeenCalled();
+      expect(mocks.mockEnqueue).not.toHaveBeenCalled();
+    });
+
+    it("calls triggerHostedScan with defaults for missing pull_request optional fields", async () => {
+      const req = buildRequest({
+        event: "pull_request",
+        body: {
+          action: "opened",
+          repository: { clone_url: "https://github.com/owner/repo.git" },
+          pull_request: {
+            number: 7,
+            head: { ref: "patch-1", sha: "def456" },
+            base: { ref: "main" },
+          },
+        },
+      });
+      const res = await POST(req);
+      expect(res.status).toBe(200);
+      expect(mocks.mockTriggerHostedScan).toHaveBeenCalledWith("repo-1", {
+        prNumber: 7,
+        title: "Untitled",
+        headBranch: "patch-1",
+        baseBranch: "main",
+        commitHash: "def456",
+        author: "webhook",
+        description: undefined,
+      });
+    });
+
+    it("returns 400 when pull_request data is missing head/ref fields", async () => {
+      const req = buildRequest({
+        event: "pull_request",
+        body: {
+          action: "opened",
+          repository: { clone_url: "https://github.com/owner/repo.git" },
+          pull_request: { number: 1 },
+        },
+      });
+      const res = await POST(req);
+      expect(res.status).toBe(400);
+    });
+
+    it("returns 400 when triggerHostedScan fails", async () => {
+      mocks.mockTriggerHostedScan.mockResolvedValue({ ok: false, error: "Scan limit reached" });
+
+      const req = buildRequest({
+        event: "pull_request",
+        body: {
+          action: "synchronize",
+          repository: { clone_url: "https://github.com/owner/repo.git" },
+          pull_request: {
+            number: 99,
+            head: { ref: "bugfix", sha: "ghi789" },
+            base: { ref: "main" },
+          },
+        },
+      });
+      const res = await POST(req);
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.error).toContain("Scan limit reached");
+    });
+
+    it("scans open PRs for push events on hosted repos", async () => {
+      mocks.mockGetOpenPrIds.mockResolvedValue(["pr-open-1", "pr-open-2"]);
+
+      const req = buildRequest({
+        event: "push",
+        body: {
+          repository: { clone_url: "https://github.com/owner/repo.git" },
+          ref: "refs/heads/main",
+        },
+      });
+      const res = await POST(req);
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.hosted).toBe(true);
+      expect(body.afkScans).toBe(2);
+
+      expect(mocks.mockGetOpenPrIds).toHaveBeenCalledWith("repo-1");
+      expect(mocks.mockRunPrScan).toHaveBeenCalledWith("pr-open-1");
+      expect(mocks.mockRunPrScan).toHaveBeenCalledWith("pr-open-2");
+      expect(mocks.mockGitFetch).not.toHaveBeenCalled();
+      expect(mocks.mockScanRepoPrs).not.toHaveBeenCalled();
+    });
+
+    it("returns afkScans 0 for push events when no open PRs exist", async () => {
+      mocks.mockGetOpenPrIds.mockResolvedValue([]);
+
+      const req = buildRequest({
+        event: "push",
+        body: {
+          repository: { clone_url: "https://github.com/owner/repo.git" },
+          ref: "refs/heads/main",
+        },
+      });
+      const res = await POST(req);
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.hosted).toBe(true);
+      expect(body.afkScans).toBe(0);
+      expect(mocks.mockRunPrScan).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("delivery logging", () => {
+    it("creates a delivery log and updates on successful pull_request", async () => {
+      const req = buildRequest({
+        event: "pull_request",
+        body: {
+          action: "opened",
+          repository: { clone_url: "https://github.com/owner/repo.git" },
+          pull_request: { number: 1 },
+        },
+      });
+      await POST(req);
+
+      expect(mocks.mockCreateDeliveryLog).toHaveBeenCalledWith({
+        repoId: "repo-1",
+        provider: "github",
+        eventType: "pull_request",
+        deliveryGuid: "abc-123",
+        hostedMode: false,
+      });
+    });
+
+    it("creates a delivery log for push events", async () => {
+      const req = buildRequest({
+        event: "push",
+        body: {
+          repository: { clone_url: "https://github.com/owner/repo.git" },
+        },
+      });
+      await POST(req);
+
+      expect(mocks.mockCreateDeliveryLog).toHaveBeenCalledWith({
+        repoId: "repo-1",
+        provider: "github",
+        eventType: "push",
+        deliveryGuid: "abc-123",
+        hostedMode: false,
+      });
+    });
+
+    it("creates a delivery log for ignored events", async () => {
+      const req = buildRequest({
+        event: "issues",
+        body: {
+          repository: { clone_url: "https://github.com/owner/repo.git" },
+        },
+      });
+      await POST(req);
+
+      expect(mocks.mockCreateDeliveryLog).toHaveBeenCalled();
+      expect(mocks.mockUpdateDeliveryStatus).toHaveBeenCalledWith("del-1", "ignored");
+    });
   });
 });

@@ -14,6 +14,8 @@ interface ReviewRunSummary {
   triggerReason: string | null;
   commitHash: string;
   forced: boolean;
+  createdByUserId: string | null;
+  createdByUser: { id: string; name: string | null; email: string } | null;
 }
 
 interface LogEntry {
@@ -34,8 +36,11 @@ interface RunFindings {
     diffSuggestion: string | null;
     evidenceChain: string | null;
     confidence: number | null;
+    confidenceReason?: string | null;
     verificationStatus: string | null;
     verificationNote: string | null;
+    skepticVerdict: string | null;
+    skepticNote: string | null;
     source: string | null;
     exploitability?: string | null;
     impact?: string | null;
@@ -47,10 +52,27 @@ interface RunFindings {
     severity: string;
     category: string;
     explanation: string;
+    verificationStatus: string | null;
     verificationNote: string | null;
+    skepticVerdict: string | null;
+    skepticNote: string | null;
     source: string | null;
   }>;
   rejectedCount: number;
+  chunks: Array<{
+    id: string;
+    label: string;
+    filePaths: string[];
+    status: string;
+    skipReason?: string | null;
+    rating?: number | null;
+    summary?: string | null;
+    errorMessage?: string | null;
+    lineCount: number;
+    touchesSecuritySensitive: boolean;
+    startedAt?: string | null;
+    completedAt?: string | null;
+  }>;
 }
 
 interface Props {
@@ -233,6 +255,12 @@ export default function ScanHistory({ prId, currentRunId }: Props) {
                         · {run.triggerReason}
                       </span>
                     )}
+                    <span
+                      className="text-[9px] font-mono text-slate-500 shrink-0"
+                      title={run.createdByUser?.email ?? undefined}
+                    >
+                      · {run.createdByUser ? (run.createdByUser.name || run.createdByUser.email) : "System"}
+                    </span>
                     {run.forced && (
                       <span className="text-[9px] font-mono uppercase text-amber-400/80 shrink-0">· forced</span>
                     )}
@@ -288,6 +316,48 @@ export default function ScanHistory({ prId, currentRunId }: Props) {
                                   ))}
                                 </div>
                               )}
+                            </div>
+                          )}
+
+                          {/* Chunks (large PR mode only) */}
+                          {rf && rf.chunks && rf.chunks.length > 0 && (
+                            <div className="border-t border-white/5">
+                              <div className="px-3 py-1 text-[9px] font-mono uppercase tracking-wider text-slate-600 bg-white/[0.01]">
+                                chunks ({rf.chunks.length})
+                              </div>
+                              <div className="max-h-40 overflow-y-auto">
+                                {rf.chunks.map((chunk) => {
+                                  const chunkRating = ratingChip(
+                                    chunk.rating !== null && chunk.rating !== undefined ? chunk.rating : null,
+                                  );
+                                  return (
+                                    <div
+                                      key={chunk.id}
+                                      className="px-3 py-1.5 border-b border-white/5 last:border-0"
+                                    >
+                                      <div className="flex items-center justify-between gap-2">
+                                        <span
+                                          className="text-[10px] font-mono text-slate-300 truncate"
+                                          title={chunk.filePaths.join("\n")}
+                                        >
+                                          {chunk.label}
+                                        </span>
+                                        <span className={`text-[9px] font-mono uppercase px-1.5 py-0.5 rounded border shrink-0 ${chunkRating.className}`}>
+                                          {chunkRating.label}
+                                        </span>
+                                      </div>
+                                      {chunk.summary && (
+                                        <div className="mt-0.5 text-[9px] font-mono text-slate-500 leading-relaxed">
+                                          {chunk.summary}
+                                        </div>
+                                      )}
+                                      <div className="mt-0.5 text-[8px] font-mono text-slate-600">
+                                        {chunk.lineCount.toLocaleString()} lines · {chunk.filePaths.length} files
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
                             </div>
                           )}
 

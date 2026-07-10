@@ -1,16 +1,45 @@
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import path from "node:path";
+import os from "node:os";
 import { prisma } from "../lib/prisma";
 import { decryptSecret, hasMasterKey } from "../lib/crypto";
-import { cloneRepo, fetchRepo } from "../lib/gitRemote";
+import { ContainerOrchestrator } from "../lib/containerOrchestrator";
+import { buildSshEnv } from "../lib/gitService";
+import { getInstallationToken } from "../lib/githubApp";
 import { IndexingService } from "./indexingService";
+import { shellEscape } from "../lib/shellEscape";
 
 const activeFetches = new Set<string>();
+const GIT_IMAGE = process.env.DRAGNET_GIT_IMAGE ?? "alpine/git";
+
+function volumeName(repoId: string): string {
+  return `dragnet-repo-${repoId}`;
+}
+
+function interpolatePat(cloneUrl: string, pat?: string): string {
+  if (!pat) return cloneUrl;
+  try {
+    const u = new URL(cloneUrl);
+    if (u.protocol !== "https:") {
+      console.warn(`[remoteFetchWorker] PAT only works with HTTPS URLs, got protocol "${u.protocol}" — PAT ignored`);
+      return cloneUrl;
+    }
+    u.username = "x-access-token";
+    u.password = pat;
+    return u.toString();
+  } catch {
+    console.warn(`[remoteFetchWorker] Failed to parse cloneUrl for PAT injection — "${cloneUrl}" is not a valid URL; PAT ignored`);
+    return cloneUrl;
+  }
+}
 
 export function isFetching(repoId: string): boolean {
   return activeFetches.has(repoId);
 }
 
-export async function enqueue(repoId: string): Promise<void> {
-  if (activeFetches.has(repoId)) return;
+export async function enqueue(repoId: string): Promise<string | null> {
+  if (activeFetches.has(repoId)) return null;
   activeFetches.add(repoId);
 
   try {
@@ -22,6 +51,7 @@ export async function enqueue(repoId: string): Promise<void> {
 
     let deployKey: string | undefined;
     let pat: string | undefined;
+    let installationToken: string | undefined;
 
     if (repo.deployKeyCipher && repo.deployKeyIv && repo.deployKeyTag) {
       if (!hasMasterKey()) throw new Error("DRAGNET_MASTER_KEY is not set");
@@ -33,23 +63,110 @@ export async function enqueue(repoId: string): Promise<void> {
       pat = decryptSecret(repo.patCipher, repo.patIv, repo.patTag);
     }
 
-    let localPath = repo.localPath;
-    if (!localPath) {
-      localPath = cloneRepo({ repoId, cloneUrl: repo.cloneUrl, deployKey, pat });
-      await prisma.repository.update({
-        where: { id: repoId },
-        data: { localPath },
-      });
-    } else {
-      fetchRepo({ localPath, cloneUrl: repo.cloneUrl, deployKey, pat });
+    // If neither deployKey nor PAT is configured, try installation token
+    if (!deployKey && !pat && repo.installationId) {
+      try {
+        installationToken = await getInstallationToken(repo.installationId);
+        console.log(`[remoteFetchWorker] using installation token for repo ${repoId}`);
+      } catch (err: any) {
+        console.warn(`[remoteFetchWorker] installation token fetch failed for ${repoId}:`, err.message);
+      }
     }
 
-    await IndexingService.indexFolder(repoId, localPath);
+    const effectivePat = installationToken || pat;
+    const isContainerMode = !repo.localPath || repo.localPath === "/workspace";
+
+    let localPath: string;
+
+    if (isContainerMode) {
+      const orchestrator = ContainerOrchestrator.getInstance();
+      const volName = volumeName(repoId);
+
+      await orchestrator.createVolume(volName);
+
+      const escapedUrl = shellEscape(interpolatePat(repo.cloneUrl, effectivePat));
+
+      // Always update the remote URL on every fetch so credential changes
+      // (PAT rotation, deploy key replacement) take effect even when the
+      // volume's .git/config still has the old URL.
+      const baseBranch = repo.baseBranch || "main";
+      const syncScript = [
+        "set -e",
+        `cd /workspace && (git init 2>/dev/null; git remote add origin '${escapedUrl}' 2>/dev/null || git remote set-url origin '${escapedUrl}')`,
+        "cd /workspace && git fetch origin --prune '+refs/heads/*:refs/heads/*'",
+        `cd /workspace && git checkout --force '${shellEscape(baseBranch)}' 2>/dev/null || git checkout --force master 2>/dev/null || echo "no checkout target — repo may be empty"`,
+      ].join(" && ");
+
+      const extraEnv: Record<string, string> = {};
+      let result: Awaited<ReturnType<typeof orchestrator.runRunner>>;
+
+      // Keep SSH temp files alive during the container run
+      {
+        using ssh = deployKey
+          ? buildSshEnv(deployKey, `clone-${repoId}`)
+          : { env: {} as Record<string, string>, [Symbol.dispose]() {} };
+        Object.assign(extraEnv, ssh.env);
+
+        result = await orchestrator.runRunner({
+          volumeName: volName,
+          image: GIT_IMAGE,
+          commands: [syncScript],
+          networkMode: "bridge",
+          env: extraEnv,
+          timeoutMs: 300_000,
+        });
+      }
+
+      if (result.exitCode !== 0 && !result.timedOut) {
+        throw new Error(
+          `Git sync failed (exit ${result.exitCode}): ${result.stderr || result.stdout}`,
+        );
+      }
+      if (result.timedOut) {
+        throw new Error(`Git sync timed out for repo ${repoId}`);
+      }
+
+      localPath = "/workspace";
+
+      if (!repo.localPath) {
+        await prisma.repository.update({
+          where: { id: repoId },
+          data: { localPath },
+        });
+      }
+
+      // Copy volume to a host temp dir so the code-graph indexer can walk it
+      const tmpDir = mkdtempSync(path.join(os.tmpdir(), `dragnet-idx-${repoId}-`));
+      try {
+        await orchestrator.copyVolumeToHost(volName, tmpDir, GIT_IMAGE);
+        await IndexingService.indexFolder(repoId, tmpDir);
+      } finally {
+        rmSync(tmpDir, { recursive: true, force: true });
+      }
+    } else {
+      // Legacy host-path mode — inline git fetch (no gitRemote dependency)
+      const url = interpolatePat(repo.cloneUrl, effectivePat);
+      using ssh = deployKey
+        ? buildSshEnv(deployKey, `fetch-${repoId}`)
+        : { env: {} as Record<string, string>, [Symbol.dispose]() {} };
+
+      execFileSync("git", ["-C", repo.localPath!, "fetch", "origin", "--prune", "+refs/heads/*:refs/heads/*"], {
+        env: { ...process.env, ...ssh.env },
+        stdio: "pipe",
+        timeout: 120_000,
+      });
+
+      localPath = repo.localPath;
+
+      await IndexingService.indexFolder(repoId, localPath);
+    }
 
     await prisma.repository.update({
       where: { id: repoId },
       data: { lastFetchAt: new Date() },
     });
+
+    return localPath;
   } finally {
     activeFetches.delete(repoId);
   }

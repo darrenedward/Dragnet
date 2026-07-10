@@ -3,7 +3,7 @@ import { prisma } from "@/src/lib/prisma";
 import { encryptSecret, hasMasterKey } from "@/src/lib/crypto";
 import { enqueue } from "@/src/services/remoteFetchWorker";
 import { getProviderFromUrl } from "@/src/lib/webhookSetup";
-import { authenticateSessionOrKey } from "@/src/lib/apiAuth";
+import { authenticateSessionOrKey, enforceRepoScope } from "@/src/lib/apiAuth";
 import { IndexingService } from "@/src/services/indexing";
 import { ContainerOrchestrator } from "@/src/lib/containerOrchestrator";
 
@@ -18,11 +18,25 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: 401 });
   try {
     const { id } = await params;
+
+    const scopeErr = enforceRepoScope(auth, id);
+    if (scopeErr) return NextResponse.json(scopeErr, { status: 403 });
+
     const repo = await prisma.repository.findUnique({ where: { id } });
     if (!repo) {
       return NextResponse.json({ error: "Repository record not found" }, { status: 404 });
     }
-    return NextResponse.json(repo);
+
+    const repoKey = await prisma.apiKey.findFirst({
+      where: { repoId: id, revoked: false },
+      select: { prefix: true },
+      orderBy: { createdAt: "desc" },
+    });
+
+    return NextResponse.json({
+      ...repo,
+      apiKeyPrefix: repoKey?.prefix || null,
+    });
   } catch (err: any) {
     console.error("Error fetching repository:", err);
     return NextResponse.json({ error: err.message }, { status: 500 });
@@ -34,6 +48,8 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: 401 });
   try {
     const { id } = await params;
+    const scopeErr = enforceRepoScope(auth, id);
+    if (scopeErr) return NextResponse.json(scopeErr, { status: 403 });
     const body = await req.json();
     const {
       activeBranch,
@@ -56,6 +72,8 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
       testCommand,
       isPollingEnabled,
       webhookEnabled,
+      skipTier2,
+      hostedMode,
     } = body;
 
     const current = await prisma.repository.findUnique({ where: { id } });
@@ -81,6 +99,8 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
     if (testCommand !== undefined) updateData.testCommand = testCommand;
     if (isPollingEnabled !== undefined) updateData.isPollingEnabled = Boolean(isPollingEnabled);
     if (webhookEnabled !== undefined) updateData.webhookEnabled = Boolean(webhookEnabled);
+    if (skipTier2 !== undefined) updateData.skipTier2 = Boolean(skipTier2);
+    if (hostedMode !== undefined) updateData.hostedMode = Boolean(hostedMode);
 
     const modeChanged = typeof mode === "string" && mode !== current.provider;
     const urlChanged =
@@ -94,16 +114,7 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
 
     if (modeChanged) {
       updateData.provider = mode;
-      if (mode === "local") {
-        updateData.cloneUrl = null;
-        updateData.cloneUrlHttps = null;
-        updateData.deployKeyCipher = null;
-        updateData.deployKeyIv = null;
-        updateData.deployKeyTag = null;
-        updateData.patCipher = null;
-        updateData.patIv = null;
-        updateData.patTag = null;
-      } else if (mode === "ssh") {
+      if (mode === "ssh") {
         updateData.patCipher = null;
         updateData.patIv = null;
         updateData.patTag = null;
@@ -159,7 +170,7 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
       updateData.patTag = tag;
     }
 
-    const targetProvider = (updateData.provider as string) || current.provider || "local";
+    const targetProvider = (updateData.provider as string) || current.provider;
     const remoteTouched =
       targetProvider !== "local" && (modeChanged || urlChanged || writingSecret);
 
@@ -191,6 +202,8 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: 401 });
   try {
     const { id } = await params;
+    const scopeErr = enforceRepoScope(auth, id);
+    if (scopeErr) return NextResponse.json(scopeErr, { status: 403 });
     await IndexingService.clearIndex(id);
     await prisma.repository.deleteMany({ where: { id } });
 

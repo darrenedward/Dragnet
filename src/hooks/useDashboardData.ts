@@ -75,6 +75,21 @@ export function useDashboardData() {
     chunksCompleted?: number;
     chunksFailed?: number;
     chunksSkipped?: number;
+    tokensUsed?: {
+      totalCostUsd: number;
+      totalPromptTokens: number;
+      totalCompletionTokens: number;
+      providers: Array<{
+        name: string;
+        model: string;
+        promptTokens: number;
+        completionTokens: number;
+        costUsd: number;
+        outcome: string;
+        iterationsUsed: number;
+        maxIterations: number;
+      }>;
+    } | null;
   } | null>(null);
   const [reviewChunks, setReviewChunks] = useState<ReviewChunk[]>([]);
   // Currently in-progress scan (null when no scan is active). The findings
@@ -123,7 +138,11 @@ export function useDashboardData() {
   const [rejectedFindings, setRejectedFindings] = useState<Array<{
     id: string; filename: string; line: number | null;
     severity: string; category: string; explanation: string;
+    verificationStatus: string | null;
     verificationNote: string | null;
+    skepticVerdict: string | null;
+    skepticNote: string | null;
+    source: string | null;
   }>>([]);
   const [stale, setStale] = useState(false);
   const [stability, setStability] = useState<import("@/src/lib/stabilityScore").StabilityProp | null>(null);
@@ -145,12 +164,13 @@ export function useDashboardData() {
   // ===== Add-repo modal form state =====
   const [showAddRepoModal, setShowAddRepoModal] = useState(false);
   const [newRepoName, setNewRepoName] = useState("");
-  const [newRepoPath, setNewRepoPath] = useState("");
   const [newRepoMode, setNewRepoMode] = useState<"ssh" | "pat">("ssh");
   const [newCloneUrl, setNewCloneUrl] = useState("");
   const [newCloneUrlHttps, setNewCloneUrlHttps] = useState("");
   const [newDeployKey, setNewDeployKey] = useState("");
   const [newPat, setNewPat] = useState("");
+  const [newGithubRepoId, setNewGithubRepoId] = useState<number | null>(null);
+  const [createdApiKey, setCreatedApiKey] = useState<{ repoId: string; raw: string; prefix: string } | null>(null);
   const [newBaseBranch, setNewBaseBranch] = useState("main");
   const [newTriggerMode, setNewTriggerMode] = useState<"auto" | "mention">("auto");
   const [newQuietPeriod, setNewQuietPeriod] = useState(10);
@@ -626,13 +646,20 @@ export function useDashboardData() {
         await fetchRepos();
         await fetchLogs();
         console.log(`[scan] handleTriggerPrScan: refetch complete`);
+      } else if (res.status === 409 && result.error === "INDEXING_IN_PROGRESS") {
+        setPrs((prev) =>
+          prev.map((p) => (p.id === targetPrId ? { ...p, status: "Pending" } : p)),
+        );
+        toast.warn(
+          result.message || "Indexing is currently running. Please wait for it to complete before reviewing.",
+        );
       } else if (res.status === 409 && result.error === "INDEX_REQUIRED") {
         setPrs((prev) =>
           prev.map((p) => (p.id === targetPrId ? { ...p, status: "Pending" } : p)),
         );
         toast.warn(
           result.message ||
-            "Codebase not indexed. Open the Codebase AST graph tab and run the indexer before reviewing.",
+            "Codebase not indexed. Click \"Index Now\" above to build the codebase index, then retry the review.",
         );
       } else if (res.status === 409 && result.error === "SCAN_IN_PROGRESS") {
         // Active or stale-but-not-yet-reaped scan is holding the lock.
@@ -733,6 +760,39 @@ export function useDashboardData() {
     }
   };
 
+  const handleStopScan = async () => {
+    if (!selectedPrId) return;
+    const targetPrId = selectedPrId;
+    console.log(`[scan] handleStopScan: stopping scan for prId=${targetPrId}`);
+    try {
+      const res = await fetchJson(`/api/prs/${targetPrId}/scan/stop`, {
+        method: "POST",
+      });
+      const result = await res.json();
+      if (res.ok) {
+        setIsScanning(false);
+        setActiveScan(null);
+        setActiveScanChunks([]);
+        setActiveFindings([]);
+        setActiveIterations({});
+        setPrs((prev) =>
+          prev.map((p) => (p.id === targetPrId ? { ...p, status: "Pending" } : p)),
+        );
+        toast.info(result.message || "Scan stopped.");
+        await fetchPrDetails(targetPrId, false);
+        if (selectedRepoId) await fetchPrsForSelectedRepo(selectedRepoId, true);
+      } else {
+        toast.error("Failed to stop scan: " + (result.error || "unknown error"));
+      }
+    } catch (e: any) {
+      if (e instanceof NetworkError) {
+        toast.networkError();
+      } else {
+        toast.error("Failed to stop scan: " + (e?.message ?? "unknown error"));
+      }
+    }
+  };
+
   // Phase 7 — Discard the interrupted checkpoint and start a brand-new
   // scan. Backend deletes every checkpoint file for the run and marks
   // the old ReviewRun as failed before createReviewRun flips a new row
@@ -796,12 +856,18 @@ export function useDashboardData() {
       return;
     }
 
-    if (!newRepoPath.trim() && !newCloneUrl.trim()) {
-      setErrorFeedback("Either Directory Path or Clone URL is required.");
-      return;
+    // Determine mode based on which fields are populated
+    let mode: "ssh" | "pat" | "github";
+    if (newGithubRepoId) {
+      mode = "github";
+    } else {
+      mode = newRepoMode;
     }
 
-    const mode = newRepoPath.trim() ? "local" : newRepoMode;
+    if (mode !== "github" && !newCloneUrl.trim()) {
+      setErrorFeedback("Clone URL is required.");
+      return;
+    }
 
     try {
       const res = await fetchJson("/api/repos", {
@@ -810,11 +876,11 @@ export function useDashboardData() {
         body: JSON.stringify({
           mode,
           name: newRepoName.trim(),
-          path: newRepoPath.trim() || undefined,
           cloneUrl: newCloneUrl.trim() || undefined,
           cloneUrlHttps: newCloneUrlHttps.trim() || undefined,
           deployKey: newDeployKey || undefined,
           pat: newPat || undefined,
+          githubRepoId: newGithubRepoId || undefined,
           baseBranch: newBaseBranch,
           triggerMode: newTriggerMode,
           quietPeriodSeconds: Number(newQuietPeriod),
@@ -824,22 +890,26 @@ export function useDashboardData() {
 
       const data = await res.json();
       if (res.ok) {
-        setShowAddRepoModal(false);
         setErrorFeedback(null);
         await fetchRepos();
         setSelectedRepoId(data.id);
         await fetchPrsForSelectedRepo(data.id, false);
 
-        if (mode !== "local") {
-          setLastRegisteredRepo({ id: data.id, name: newRepoName.trim(), hasPat: !!newPat });
-          setNewRepoMode("ssh");
-          setNewCloneUrl("");
-          setNewCloneUrlHttps("");
-          setNewDeployKey("");
-          setNewPat("");
+        if (data.apiKey) {
+          // Keep modal open — it transitions to success state showing the key.
+          setCreatedApiKey({ repoId: data.id, raw: data.apiKey, prefix: data.apiKeyPrefix });
+        } else {
+          setShowAddRepoModal(false);
         }
+
+        setLastRegisteredRepo({ id: data.id, name: newRepoName.trim(), hasPat: !!newPat });
+        setNewRepoMode("ssh");
+        setNewCloneUrl("");
+        setNewCloneUrlHttps("");
+        setNewDeployKey("");
+        setNewPat("");
+        setNewGithubRepoId(null);
         setNewRepoName("");
-        setNewRepoPath("");
       } else {
         setErrorFeedback(data.error || "Failed linking project.");
       }
@@ -984,6 +1054,7 @@ export function useDashboardData() {
     scanResult,
     setScanResult,
     handleTriggerPrScan,
+    handleStopScan,
     handleRetryFailedChunks,
     handleExportMarkdown,
     exportStatus,
@@ -998,8 +1069,6 @@ export function useDashboardData() {
     setShowAddRepoModal,
     newRepoName,
     setNewRepoName,
-    newRepoPath,
-    setNewRepoPath,
     newRepoMode,
     setNewRepoMode,
     newCloneUrl,
@@ -1010,6 +1079,8 @@ export function useDashboardData() {
     setNewDeployKey,
     newPat,
     setNewPat,
+    newGithubRepoId,
+    setNewGithubRepoId,
     newBaseBranch,
     setNewBaseBranch,
     newBranchPattern,
@@ -1023,6 +1094,8 @@ export function useDashboardData() {
     handleAddRepo,
     lastRegisteredRepo,
     setLastRegisteredRepo,
+    createdApiKey,
+    setCreatedApiKey,
     // daemon callback
     handleTriggerReviewPass,
   };

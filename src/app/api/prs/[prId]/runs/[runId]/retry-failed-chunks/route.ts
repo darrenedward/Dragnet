@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/src/lib/prisma";
-import { authenticateSessionOrKey } from "@/src/lib/apiAuth";
+import { authenticateSessionOrKey, enforcePrRepoScope } from "@/src/lib/apiAuth";
 import { acquireReviewLock, endReview } from "@/src/lib/reviewLocks";
 import { retryFailedChunks } from "@/src/services/largePrReview";
 
@@ -14,6 +14,8 @@ export async function POST(
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: 401 });
 
   const { prId, runId } = await params;
+  const prScopeErr = await enforcePrRepoScope(auth, prId);
+  if (prScopeErr) return NextResponse.json(prScopeErr, { status: 403 });
   let acquired = false;
   try {
     const run = await prisma.reviewRun.findUnique({
