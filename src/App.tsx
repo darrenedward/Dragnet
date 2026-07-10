@@ -322,6 +322,7 @@ export default function App() {
               d.setShowAddRepoModal(false);
               d.setCreatedApiKey(null);
               d.setErrorFeedback(null);
+              d.setAddRepoSuccess(null);
             }}
             onSubmit={d.handleAddRepo}
             errorFeedback={d.errorFeedback}
@@ -348,6 +349,8 @@ export default function App() {
             setNewPat={d.setNewPat}
             newGithubRepoId={d.newGithubRepoId}
             setNewGithubRepoId={d.setNewGithubRepoId}
+            addRepoSuccess={d.addRepoSuccess}
+            setAddRepoSuccess={d.setAddRepoSuccess}
           />
         )}
       </AnimatePresence>

@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { motion } from "motion/react";
-import { Check, Copy, Eye, EyeOff, Key, Plus, Trash2 } from "lucide-react";
+import { Key, Plus, Trash2 } from "lucide-react";
+import ApiKeyManager from "../../apiKey/ApiKeyManager";
 
 interface ApiKeyView {
   id: string;
@@ -21,8 +22,7 @@ export default function ApiKeysPanel() {
   const [newKeyName, setNewKeyName] = useState("");
   const [creating, setCreating] = useState(false);
   const [newKeyValue, setNewKeyValue] = useState<string | null>(null);
-  const [showKey, setShowKey] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const [newKeyPrefix, setNewKeyPrefix] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const fetchKeys = async () => {
@@ -55,6 +55,7 @@ export default function ApiKeysPanel() {
       const data = await res.json();
       if (res.ok) {
         setNewKeyValue(data.key);
+        setNewKeyPrefix(data.prefix);
         setNewKeyName("");
         await fetchKeys();
       } else {
@@ -148,40 +149,20 @@ export default function ApiKeysPanel() {
           </div>
         )}
 
-        {newKeyValue ? (
-          <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4 space-y-3">
-            <div className="flex items-center gap-2">
-              <div className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
-              <p className="text-xs text-amber-300 font-mono font-bold">Save this key — it won't be shown again</p>
-            </div>
-            <div className="bg-black/60 rounded-lg p-3 text-xs font-mono text-amber-200 break-all select-all leading-relaxed flex items-center justify-between gap-2">
-              <span className="min-w-0 truncate">
-                {showKey ? newKeyValue : newKeyValue!.replace(/.(?=.{4})/g, "*")}
-              </span>
-              <div className="flex items-center gap-1 shrink-0">
-                <button
-                  onClick={() => setShowKey((v) => !v)}
-                  className="p-1.5 hover:bg-amber-500/10 rounded-lg text-amber-400 hover:text-amber-300 transition-colors cursor-pointer"
-                  title={showKey ? "Hide key" : "Show key"}
-                >
-                  {showKey ? <EyeOff size={14} /> : <Eye size={14} />}
-                </button>
-                <button
-                  onClick={() => { try { navigator.clipboard.writeText(newKeyValue!); } catch { const ta = document.createElement("textarea"); ta.value = newKeyValue!; ta.style.position = "fixed"; ta.style.opacity = "0"; document.body.appendChild(ta); ta.select(); document.execCommand("copy"); document.body.removeChild(ta); } setCopied(true); setTimeout(() => setCopied(false), 2000); }}
-                  className="p-1.5 hover:bg-amber-500/10 rounded-lg text-amber-400 hover:text-amber-300 transition-colors cursor-pointer"
-                  title="Copy to clipboard"
-                >
-                  {copied ? <Check size={14} /> : <Copy size={14} />}
-                </button>
-              </div>
-            </div>
-            <div className="bg-black/40 rounded-lg p-2.5 text-[10px] font-mono text-slate-400 leading-relaxed">
-              <div className="text-slate-500 mb-1 uppercase tracking-wider text-[9px]">Use in your shell:</div>
-              <div className="text-cyan-400">export DRAGNET_API_KEY={showKey ? newKeyValue : "dr_…"}</div>
-              <div className="text-cyan-400">export DRAGNET_URL=http://localhost:3300</div>
-            </div>
-          </div>
-        ) : (
+        {newKeyValue && newKeyPrefix && (
+          <ApiKeyManager
+            mode="reveal"
+            repoId={null}
+            initialApiKey={newKeyValue}
+            initialPrefix={newKeyPrefix}
+            onClose={() => {
+              setNewKeyValue(null);
+              setNewKeyPrefix(null);
+            }}
+          />
+        )}
+
+        {(!newKeyValue || !newKeyPrefix) && (
           <div className="space-y-3">
             <h4 className="text-[10px] uppercase tracking-[0.2em] text-slate-500 font-mono font-bold">Generate New Key</h4>
             <div className="flex items-center gap-3">

@@ -171,6 +171,12 @@ export function useDashboardData() {
   const [newPat, setNewPat] = useState("");
   const [newGithubRepoId, setNewGithubRepoId] = useState<number | null>(null);
   const [createdApiKey, setCreatedApiKey] = useState<{ repoId: string; raw: string; prefix: string } | null>(null);
+  const [addRepoSuccess, setAddRepoSuccess] = useState<{
+    apiKey: string;
+    apiKeyPrefix: string;
+    repoId: string;
+    repoName: string;
+  } | null>(null);
   const [newBaseBranch, setNewBaseBranch] = useState("main");
   const [newTriggerMode, setNewTriggerMode] = useState<"auto" | "mention">("auto");
   const [newQuietPeriod, setNewQuietPeriod] = useState(10);
@@ -896,7 +902,12 @@ export function useDashboardData() {
         await fetchPrsForSelectedRepo(data.id, false);
 
         if (data.apiKey) {
-          // Keep modal open — it transitions to success state showing the key.
+          setAddRepoSuccess({
+            apiKey: data.apiKey,
+            apiKeyPrefix: data.apiKeyPrefix,
+            repoId: data.id,
+            repoName: newRepoName.trim(),
+          });
           setCreatedApiKey({ repoId: data.id, raw: data.apiKey, prefix: data.apiKeyPrefix });
         } else {
           setShowAddRepoModal(false);
@@ -1096,6 +1107,8 @@ export function useDashboardData() {
     setLastRegisteredRepo,
     createdApiKey,
     setCreatedApiKey,
+    addRepoSuccess,
+    setAddRepoSuccess,
     // daemon callback
     handleTriggerReviewPass,
   };
