@@ -117,6 +117,14 @@ export default function FindingsList({ findings, onCopySuggestion, copyFeedback,
                             {finding.impact}
                           </span>
                         )}
+                        {finding.isRegression && (
+                          <span
+                            title={finding.regressedFromRunId ? `Previously resolved in run ${finding.regressedFromRunId}, now reappeared` : "Finding regressed after previous resolution"}
+                            className="text-[9px] font-mono uppercase px-1.5 py-0.5 rounded font-bold border bg-orange-500/15 text-orange-400 border-orange-500/30"
+                          >
+                            Regression
+                          </span>
+                        )}
                         {finding.source && finding.source !== "llm" && (
                           <span
                             title={`Found by ${finding.source} (deterministic check) — not the LLM`}

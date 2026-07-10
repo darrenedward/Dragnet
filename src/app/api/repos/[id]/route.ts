@@ -71,6 +71,7 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
       installCommand,
       testCommand,
       isPollingEnabled,
+      webhookEnabled,
       skipTier2,
       hostedMode,
     } = body;
@@ -97,6 +98,7 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
     if (installCommand !== undefined) updateData.installCommand = installCommand;
     if (testCommand !== undefined) updateData.testCommand = testCommand;
     if (isPollingEnabled !== undefined) updateData.isPollingEnabled = Boolean(isPollingEnabled);
+    if (webhookEnabled !== undefined) updateData.webhookEnabled = Boolean(webhookEnabled);
     if (skipTier2 !== undefined) updateData.skipTier2 = Boolean(skipTier2);
     if (hostedMode !== undefined) updateData.hostedMode = Boolean(hostedMode);
 

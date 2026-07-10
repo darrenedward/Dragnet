@@ -168,9 +168,6 @@ export function planReconcile(
         id: prior.id,
         sourceHashAtInsert: match.sourceHashAtInsert,
       });
-      // Consume the match so a second prior with the same fingerprint can't
-      // re-grab it. Defense-in-depth: intra-run dedup should already prevent
-      // two priors from sharing a fingerprint, but legacy rows may not.
       currentByFp.delete(prior.fingerprint);
     } else {
       unmatchedPriorIds.push(prior.id);
@@ -246,13 +243,13 @@ export function detectRegressions(
 /**
  * Cross-run finding reconciliation. After a scan (and intra-run dedup), match
  * the current run's findings against prior OPEN findings for the same PR by
- * fingerprint. Preserves `firstSeenRunId` on match (so "open since R1" works
- * in the skill UI) and distinguishes "fixed" from "detection regression" using
- * the `sourceHashAtInsert` snapshot.
+ * fingerprint. Then check genuinely new findings against prior RESOLVED findings
+ * to detect regressions.
  *
- *   Match by fingerprint  → bump prior.lastSeenRunId + snapshot, delete the new duplicate.
- *   No match (new)        → leave the new finding as-is.
- *   Prior with no match   → compare current symbol.sourceHash to snapshot:
+ *   Match by fingerprint      → bump prior.lastSeenRunId + snapshot, delete the new duplicate.
+ *   No match, resolved prior  → detectRegression: flag isRegression or false-positive recovery.
+ *   No match, no prior        → leave the new finding as-is.
+ *   Prior with no match       → compare current symbol.sourceHash to snapshot:
  *     changed  → mark resolved (code at the anchor shifted — likely the fix landed).
  *     unchanged → leave open, log warning (LLM missed it this round; will retry next scan).
  *
@@ -274,7 +271,7 @@ export async function reconcileFindingsAcrossRuns(
     select: { id: true, fingerprint: true, sourceHashAtInsert: true },
   });
 
-  const priorFindings = await prisma.reviewFinding.findMany({
+  const priorOpenFindings = await prisma.reviewFinding.findMany({
     where: {
       prId,
       status: "open",
@@ -305,11 +302,12 @@ export async function reconcileFindingsAcrossRuns(
     },
   });
 
-  if (currentFindings.length === 0 && priorFindings.length === 0 && resolvedFindings.length === 0) {
+  if (currentFindings.length === 0 && priorOpenFindings.length === 0 && resolvedFindings.length === 0) {
     return result;
   }
 
-  const plan = planReconcile(currentFindings, priorFindings);
+  // Phase 1: match current vs prior OPEN findings by fingerprint
+  const plan = planReconcile(currentFindings, priorOpenFindings);
   result.matched = plan.matchedPriorUpdates.length;
   result.newFindings = currentFindings.length - plan.matchedNewIds.length;
 
@@ -328,11 +326,12 @@ export async function reconcileFindingsAcrossRuns(
     });
   }
 
+  // Phase 2: handle unmatched prior OPEN findings — resolve or warn
   if (plan.unmatchedPriorIds.length > 0) {
-    const unmatchedPriors = priorFindings.filter((p) =>
+    const unmatchedPriors = priorOpenFindings.filter((p) =>
       plan.unmatchedPriorIds.includes(p.id),
     );
-    const repoId = unmatchedPriors[0].repoId;
+    const repoId = unmatchedPriors[0]!.repoId;
     const symbols = await resolveSymbolsBatch(
       repoId,
       unmatchedPriors.map((p) => ({ filePath: p.filename, line: p.line })),

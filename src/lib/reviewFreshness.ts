@@ -26,6 +26,7 @@ import crypto from "node:crypto";
 import { randomUUID } from "node:crypto";
 import { prisma } from "./prisma";
 import type { ReviewLimits } from "./prSizeConfig";
+import type { RatingTrendEntry } from "./stabilityScore";
 
 /**
  * Max wall-clock time a scan is allowed to run before being treated as
@@ -124,6 +125,8 @@ export interface LatestReviewResult {
     skepticNote: string | null;
     source: string | null;
     timestamp: string;
+    isRegression: boolean | null;
+    regressedFromRunId: string | null;
   }>;
   regressions: Array<{
     id: string;
@@ -653,7 +656,17 @@ export async function getLatestCompletedReview(
   const currentDiffHash = computeDiffHash(prFiles);
   const stale = latestRun.diffHash !== "" && latestRun.diffHash !== currentDiffHash;
 
-  const [findings, rejectedFindings, regressions] = await Promise.all([
+  const reviewFindingSelect = {
+    id: true, prId: true, reviewRunId: true, repoId: true,
+    category: true, severity: true, exploitability: true, impact: true,
+    filename: true, line: true, explanation: true, diffSuggestion: true,
+    evidenceChain: true, confidence: true, confidenceReason: true,
+    verificationStatus: true, verificationNote: true, source: true, timestamp: true,
+    isRegression: true, regressedFromRunId: true,
+    skepticVerdict: true, skepticNote: true,
+  } as const;
+
+  const [findings, rejectedFindings, regressionRows] = await Promise.all([
     prisma.reviewFinding.findMany({
       where: {
         reviewRunId: latestRun.id,
@@ -674,6 +687,7 @@ export async function getLatestCompletedReview(
         isRegression: false, // exclude regressions from main findings list
       },
       orderBy: { line: "asc" },
+      select: reviewFindingSelect,
     }),
     prisma.reviewFinding.findMany({
       where: {
@@ -698,13 +712,14 @@ export async function getLatestCompletedReview(
         isRegression: true,
       },
       orderBy: { line: "asc" },
+      select: reviewFindingSelect,
     }),
   ]);
 
   return {
     reviewRun: latestRun,
     findings,
-    regressions,
+    regressions: regressionRows,
     rejectedFindings,
     rejectedCount: rejectedFindings.length,
     stale,
@@ -887,14 +902,8 @@ export function parseIterationLogs(
   return out;
 }
 
-export type RatingTrendEntry = {
-  runId: string;
-  rating: number | null;
-  completedAt: Date | null;
-  commitHash: string;
-  newFindingsCount: number;
-  model: string | null;
-};
+export type { RatingTrendEntry } from "./stabilityScore";
+
 
 /**
  * Recent completed runs for a PR, ascending order (oldest first, current last).
@@ -930,7 +939,7 @@ export async function getRecentRuns(
       rating: r.rating,
       completedAt: r.completedAt,
       commitHash: r.commitHash,
-      newFindingsCount: countMap.get(r.id) ?? 0,
       model: r.model,
+      newFindingsCount: countMap.get(r.id) ?? 0,
     }));
 }

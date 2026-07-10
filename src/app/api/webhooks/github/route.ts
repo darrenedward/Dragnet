@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { prisma } from "@/src/lib/prisma";
 import { verifyGithubSignature, findRepoByCloneUrl, gitFetch, scanRepoPrs, getOpenPrIds } from "../../../../lib/webhook";
 import { enqueue } from "@/src/services/remoteFetchWorker";
 import { checkDelivery } from "../../../../lib/webhookReplay";
@@ -42,6 +43,10 @@ export async function POST(request: Request) {
   const matched = await findRepoByCloneUrl(repo.clone_url);
   if (!matched) {
     return NextResponse.json({ error: "No matching repository found" }, { status: 404 });
+  }
+
+  if (matched.webhookEnabled === false) {
+    return NextResponse.json({ error: "Webhook processing is disabled for this repository" }, { status: 403 });
   }
 
   if (!matched.webhookSecret) {
@@ -95,6 +100,10 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: (result as { error: string }).error }, { status: 400 });
       }
       if (logDelivery) await updateDeliveryStatus(logDelivery, "completed");
+      await prisma.repository.update({
+        where: { id: matched.id },
+        data: { lastWebhookEventAt: new Date() },
+      }).catch((err) => console.error("[webhook] failed to update lastWebhookEventAt:", err));
       return NextResponse.json({ ok: true, repo: matched.id, pr: pr.number, hosted: true, prId: result.prId });
     }
 
@@ -116,6 +125,10 @@ export async function POST(request: Request) {
     }
     triggerAfkScans(prIds);
     if (logDelivery) await updateDeliveryStatus(logDelivery, "completed");
+    await prisma.repository.update({
+      where: { id: matched.id },
+      data: { lastWebhookEventAt: new Date() },
+    }).catch((err) => console.error("[webhook] failed to update lastWebhookEventAt:", err));
     return NextResponse.json({ ok: true, repo: matched.id, pr: payload.pull_request?.number, afkScans: prIds.length });
   }
 
@@ -128,6 +141,10 @@ export async function POST(request: Request) {
         );
       }
       if (logDelivery) await updateDeliveryStatus(logDelivery, prIds.length > 0 ? "completed" : "ignored");
+      await prisma.repository.update({
+        where: { id: matched.id },
+        data: { lastWebhookEventAt: new Date() },
+      }).catch((err) => console.error("[webhook] failed to update lastWebhookEventAt:", err));
       return NextResponse.json({ ok: true, repo: matched.id, hosted: true, afkScans: prIds.length });
     }
 
@@ -149,6 +166,10 @@ export async function POST(request: Request) {
     }
     triggerAfkScans(prIds);
     if (logDelivery) await updateDeliveryStatus(logDelivery, "completed");
+    await prisma.repository.update({
+      where: { id: matched.id },
+      data: { lastWebhookEventAt: new Date() },
+    }).catch((err) => console.error("[webhook] failed to update lastWebhookEventAt:", err));
     return NextResponse.json({ ok: true, repo: matched.id, afkScans: prIds.length });
   }
 

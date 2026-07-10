@@ -230,6 +230,10 @@ The `<arg>` is a PR `id` (preferred) or `branch` — both accepted. Numeric ordi
   },
   "stale": false,            // true if diff has changed since this run
   "rejectedCount": 0,        // findings filtered by verifier
+  "regressionsCount": 0,     // findings flagged as regressions (resolved but reappeared)
+  "regressions": [           // pre-formatted strings; empty array when none
+    "[Security|blocker] src/auth.ts:42 — auth bypass reoccurred (regressed from run-3)",
+  ],
   "findingsCount": 4,
   "findings": [              // pre-formatted strings, NOT objects
     "[Correctness|warning|moderate] src/proxy.ts:40 — <explanation>",

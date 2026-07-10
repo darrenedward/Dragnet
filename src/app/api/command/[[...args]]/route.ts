@@ -24,7 +24,8 @@ import {
   getRecentRuns,
   getActiveScan,
 } from "@/src/lib/reviewFreshness";
-import { computeStability } from "@/src/lib/stabilityScore";
+import { computeStability, computeWeightedStability } from "@/src/lib/stabilityScore";
+import { lookupTrustWeight } from "@/src/lib/modelTrustWeights";
 
 /**
  * Start a tracked review: refresh files, create an in_progress ReviewRun,
@@ -315,6 +316,12 @@ async function formatLatestFindings(pr: any): Promise<string> {
     out += `\n_Reviewed commit ${latest.reviewRun.commitHash.slice(0, 7)}${latest.stale ? " (stale)" : ""}._\n`;
     if (latest.rejectedCount > 0) {
       out += `_Verifier filtered ${latest.rejectedCount} finding${latest.rejectedCount === 1 ? "" : "s"}._\n`;
+    }
+    if (latest.regressions.length > 0) {
+      out += `_Regressions detected: ${latest.regressions.length} finding${latest.regressions.length === 1 ? "" : "s"} previously resolved but now reappeared._\n`;
+      for (const r of latest.regressions) {
+        out += `  ⚠ [${r.category}|${r.severity}] ${r.filename}:${r.line} — ${r.explanation}\n`;
+      }
     }
     if (latest.reviewRun.refused) {
       out += `\n> ⚠ **Reviewer flagged incomplete coverage.** ${latest.reviewRun.refusalNote ?? "Parts of the PR were skipped or not fully analyzed."} Re-scan recommended after addressing the underlying cause.\n`;
@@ -648,6 +655,7 @@ const started = await startTrackedReview(pr, repo, userId);
       const latest = await getLatestCompletedReview(pr.id);
       const ratingTrend = await getRecentRuns(pr.id, 5);
       const stability = computeStability(ratingTrend);
+      const weighted = computeWeightedStability(ratingTrend, lookupTrustWeight);
       return NextResponse.json({
         status: latest.reviewRun ? "Success" : (freshPr?.rating != null ? "Success" : "Pending"),
         type: "status",
@@ -655,16 +663,17 @@ const started = await startTrackedReview(pr, repo, userId);
         reviewRun: latest.reviewRun,
         ratingTrend,
         stability,
+        weightedStability: weighted.weightedStability,
+        weightedReadyToMerge: weighted.readyToMerge,
         stale: latest.stale,
         rejectedCount: latest.rejectedCount,
+        regressionsCount: latest.regressions.length,
+        regressions: latest.regressions.map((r: any) =>
+          `[${r.category} | ${r.severity}] ${r.filename}:${r.line} - ${r.explanation} (regressed from ${r.regressedFromRunId ?? "unknown"})`,
+        ),
         sizeProfile,
         findingsCount: latest.findings.filter((f: any) => f.status !== "resolved").length,
         findings: latest.findings
-          .filter((f: any) => f.status !== "resolved")
-          .map((f: any) =>
-            `[${f.category} | ${f.severity}${f.exploitability ? ` | ${f.exploitability}` : ""}] ${f.filename}:${f.line} - ${f.explanation}`,
-          ),
-        regressions: latest.regressions
           .filter((f: any) => f.status !== "resolved")
           .map((f: any) =>
             `[${f.category} | ${f.severity}${f.exploitability ? ` | ${f.exploitability}` : ""}] ${f.filename}:${f.line} - ${f.explanation}`,

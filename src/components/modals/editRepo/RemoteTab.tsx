@@ -13,6 +13,20 @@ interface Props {
   setNewDeployKey: (v: string) => void;
   newPat: string;
   setNewPat: (v: string) => void;
+  webhookEnabled: boolean;
+  onWebhookEnabledChange: (v: boolean) => void;
+  lastWebhookEventAt: string | null;
+}
+
+function formatLastWebhook(iso: string | null): string {
+  if (!iso) return "No deliveries yet";
+  const d = new Date(iso);
+  const now = Date.now();
+  const diff = now - d.getTime();
+  if (diff < 60_000) return "Just now";
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
+  return d.toLocaleDateString();
 }
 
 export default function RemoteTab({
@@ -21,6 +35,8 @@ export default function RemoteTab({
   newCloneUrlHttps, setNewCloneUrlHttps,
   newDeployKey, setNewDeployKey,
   newPat, setNewPat,
+  webhookEnabled, onWebhookEnabledChange,
+  lastWebhookEventAt,
 }: Props) {
   return (
     <>
@@ -98,6 +114,39 @@ export default function RemoteTab({
           </p>
         </Field>
       )}
+
+      <div className="border-t border-white/10 pt-4 mt-2">
+        <Field label="Webhook Processing">
+          <div className="flex items-center justify-between">
+            <div className="flex flex-col gap-0.5">
+              <span className="text-[11px] text-slate-400">
+                {webhookEnabled ? "Active" : "Inactive"}
+              </span>
+              <span className="text-[9px] text-slate-600">
+                Last delivery: {formatLastWebhook(lastWebhookEventAt)}
+              </span>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={webhookEnabled}
+              onClick={() => onWebhookEnabledChange(!webhookEnabled)}
+              className={`relative w-10 h-5 rounded-full transition-all cursor-pointer ${
+                webhookEnabled ? "bg-cyan-500" : "bg-slate-700"
+              }`}
+            >
+              <span
+                className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-all ${
+                  webhookEnabled ? "translate-x-5" : "translate-x-0"
+                }`}
+              />
+            </button>
+          </div>
+          <p className="text-[9px] text-slate-600 mt-1">
+            When enabled, GitHub push and pull_request events trigger auto-scanning.
+          </p>
+        </Field>
+      </div>
     </>
   );
 }

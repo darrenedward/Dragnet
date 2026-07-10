@@ -26,6 +26,8 @@ export interface Repository {
   patCipher?: string | null;
   deployKeyCipher?: string | null;
   localPath?: string | null;
+  webhookEnabled?: boolean;
+  lastWebhookEventAt?: string | null;
   runnerImage?: string | null;
   installCommand?: string | null;
   testCommand?: string | null;
@@ -92,6 +94,8 @@ export interface ReviewFinding {
   skepticVerdict?: "confirmed" | "downgraded" | "rejected" | null;
   skepticNote?: string | null;
   source?: string | null;
+  isRegression?: boolean;
+  regressedFromRunId?: string | null;
 }
 
 export interface ReviewChunk {

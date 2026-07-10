@@ -36,6 +36,8 @@ model Repository {
   patTag          String?
   webhookSecret   String? // HMAC secret (plaintext — needed to verify inbound webhooks)
   webhookId       String?
+  webhookEnabled  Boolean @default(false)
+  lastWebhookEventAt DateTime?
   githubRepoId    Int? // GitHub numeric repo ID (for API calls)
   installationId  String? // GitHub App installation ID for this repo
   lastFetchAt     DateTime?

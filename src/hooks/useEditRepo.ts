@@ -25,6 +25,7 @@ export function useEditRepo({ onUpdated, onWebhookPrompt }: Options) {
   const [editCloneUrlHttps, setEditCloneUrlHttps] = useState("");
   const [editDeployKey, setEditDeployKey] = useState("");
   const [editPat, setEditPat] = useState("");
+  const [editWebhookEnabled, setEditWebhookEnabled] = useState(false);
   const [editSkipTier2, setEditSkipTier2] = useState(false);
   const [editHostedMode, setEditHostedMode] = useState(false);
 
@@ -36,6 +37,7 @@ export function useEditRepo({ onUpdated, onWebhookPrompt }: Options) {
     setEditCloneUrlHttps(repo.cloneUrlHttps || "");
     setEditDeployKey("");
     setEditPat("");
+    setEditWebhookEnabled(repo.webhookEnabled ?? false);
     setEditSkipTier2(repo.skipTier2 ?? false);
     setEditHostedMode(repo.hostedMode ?? false);
     setErrorFeedback(null);
@@ -72,6 +74,7 @@ export function useEditRepo({ onUpdated, onWebhookPrompt }: Options) {
           cloneUrlHttps: editCloneUrlHttps.trim() || undefined,
           deployKey: editMode === "ssh" && editDeployKey ? editDeployKey : undefined,
           pat: editMode === "pat" && editPat ? editPat : undefined,
+          webhookEnabled: editWebhookEnabled,
           skipTier2: editSkipTier2,
           hostedMode: editHostedMode,
         }),
@@ -116,6 +119,8 @@ export function useEditRepo({ onUpdated, onWebhookPrompt }: Options) {
     setEditDeployKey,
     editPat,
     setEditPat,
+    editWebhookEnabled,
+    setEditWebhookEnabled,
     editSkipTier2,
     setEditSkipTier2,
     editHostedMode,

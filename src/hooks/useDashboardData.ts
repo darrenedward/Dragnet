@@ -351,7 +351,7 @@ export function useDashboardData() {
         setRejectedCount(findingsData.rejectedCount ?? 0);
         setRejectedFindings(findingsData.rejectedFindings ?? []);
         setStale(Boolean(findingsData.stale));
-        setStability(findingsData.stability ?? null);
+        setStability(findingsData.stability ? { ...findingsData.stability, weightedStability: findingsData.weightedStability ?? undefined } : null);
         if (findingsData.sizeProfile) {
           setPrs((prev) =>
             prev.map((p) => (p.id === prId ? { ...p, sizeProfile: findingsData.sizeProfile } : p)),

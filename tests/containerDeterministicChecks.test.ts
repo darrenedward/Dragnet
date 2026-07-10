@@ -291,4 +291,23 @@ describe("runContainerizedChecks", () => {
       expect.objectContaining({ image: "python:3.12-slim", commands: ["pytest"] }),
     );
   });
+
+  it("parseGenericErrors uses source 'runner' not 'tsc' for non-tsc/eslint output", async () => {
+    mockRunRunner
+      .mockResolvedValueOnce({ exitCode: 0, stdout: "", stderr: "", timedOut: false })
+      .mockResolvedValueOnce({
+        exitCode: 1,
+        stdout: "",
+        stderr: "Error: npm ERR! command failed\nError: Cannot find module 'foo'\n  at require (internal/modules/cjs/helpers.js)",
+        timedOut: false,
+      });
+
+    const findings = await runContainerizedChecks(baseOpts);
+    expect(findings).toHaveLength(2);
+    for (const f of findings) {
+      expect(f.source).toBe("runner");
+    }
+    expect(findings[0].explanation).toContain("npm ERR!");
+    expect(findings[1].explanation).toContain("Cannot find module");
+  });
 });

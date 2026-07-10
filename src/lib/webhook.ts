@@ -3,6 +3,44 @@ import { createHmac, timingSafeEqual } from "crypto";
 import { prisma } from "./prisma";
 import { runGitInRepo, type RepoLike } from "./repoAccess";
 
+const recentDeliveries = new Map<string, number>();
+const REPLAY_WINDOW_MS = 5 * 60 * 1000; // 5 minutes
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, ts] of recentDeliveries) {
+    if (now - ts > REPLAY_WINDOW_MS) recentDeliveries.delete(key);
+  }
+}, 60_000).unref();
+
+/**
+ * Track a delivery GUID for replay attack prevention. Returns true if the
+ * GUID has not been seen within the replay window, false if it's a replay.
+ * Periodically prunes entries older than 5 minutes.
+ *
+ * Trade-off: the GUID cache is in-memory only. A server restart within the
+ * 5-minute window resets the cache, so a replayed delivery GUID from before
+ * the restart would be accepted once. This is acceptable for v1 because:
+ *   - The webhook handler is idempotent (upserts PRs, tolerates re-scans).
+ *   - GitHub rotates delivery GUIDs per attempt; a real attacker would need
+ *     to capture a delivery before the server went down and replay it after
+ *     restart — a narrow window requiring both network access and crash timing.
+ *   - For production hardening, swap this Map for a Redis-backed or DB-backed
+ *     nonce store with TTL.
+ */
+export function verifyReplayAttack(deliveryGuid: string): boolean {
+  if (!deliveryGuid) return false;
+  const now = Date.now();
+  if (recentDeliveries.has(deliveryGuid)) return false;
+  recentDeliveries.set(deliveryGuid, now);
+  return true;
+}
+
+/** Exported for test cleanup only — resets the in-memory delivery GUID cache. */
+export function resetRecentDeliveries(): void {
+  recentDeliveries.clear();
+}
+
 export function verifyGithubSignature(payload: string, signature: string, secret: string): boolean {
   if (!secret || !signature) return false;
   const hmac = createHmac("sha256", secret);
@@ -36,6 +74,7 @@ export async function findRepoByCloneUrl(cloneUrl: string): Promise<{
   cloneUrl: string | null;
   cloneUrlHttps: string | null;
   webhookSecret: string | null;
+  webhookEnabled: boolean;
   hostedMode: boolean;
   deployKeyCipher: string | null;
   deployKeyIv: string | null;
@@ -63,6 +102,7 @@ export async function findRepoByCloneUrl(cloneUrl: string): Promise<{
     cloneUrl: true,
     cloneUrlHttps: true,
     webhookSecret: true,
+    webhookEnabled: true,
     hostedMode: true,
     deployKeyCipher: true,
     deployKeyIv: true,

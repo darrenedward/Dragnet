@@ -20,6 +20,8 @@ interface Props {
   setNewDeployKey: (v: string) => void;
   newPat: string;
   setNewPat: (v: string) => void;
+  webhookEnabled: boolean;
+  onWebhookEnabledChange: (v: boolean) => void;
   editSkipTier2: boolean;
   setEditSkipTier2: (v: boolean) => void;
   editHostedMode: boolean;
@@ -31,6 +33,7 @@ export default function EditRepoModal(props: Props) {
     repo,
     onClose, onSubmit, errorFeedback,
     newRepoMode, setNewRepoMode,
+    webhookEnabled, onWebhookEnabledChange,
     ...rest
   } = props;
 
@@ -69,6 +72,9 @@ export default function EditRepoModal(props: Props) {
             {...rest}
             newRepoMode={newRepoMode}
             setNewRepoMode={setNewRepoMode}
+            webhookEnabled={webhookEnabled}
+            onWebhookEnabledChange={onWebhookEnabledChange}
+            lastWebhookEventAt={repo.lastWebhookEventAt ?? null}
           />
 
           <div className="flex flex-col gap-2 p-3 bg-slate-900/40 border border-white/10 rounded">

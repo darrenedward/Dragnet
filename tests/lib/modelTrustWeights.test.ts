@@ -1,11 +1,12 @@
 import { describe, expect, it, beforeEach } from "vitest";
-import { lookupModelTrustWeight, TRUST_WEIGHTS } from "../../src/lib/modelTrustWeights";
+import { lookupModelTrustWeight, TRUST_WEIGHTS, clearWeightCache } from "../../src/lib/modelTrustWeights";
 
 describe("modelTrustWeights", () => {
   beforeEach(() => {
     // Clear env vars before each test
     delete process.env.DRAGNET_MODEL_TRUST_GPT_5;
     delete process.env.DRAGNET_MODEL_TRUST_CLAUDE_OPUS;
+    clearWeightCache();
   });
 
   describe("lookupModelTrustWeight", () => {

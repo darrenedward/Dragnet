@@ -373,6 +373,8 @@ export default function App() {
             setNewDeployKey={ed.setEditDeployKey}
             newPat={ed.editPat}
             setNewPat={ed.setEditPat}
+            webhookEnabled={ed.editWebhookEnabled}
+            onWebhookEnabledChange={ed.setEditWebhookEnabled}
             editSkipTier2={ed.editSkipTier2}
             setEditSkipTier2={ed.setEditSkipTier2}
             editHostedMode={ed.editHostedMode}

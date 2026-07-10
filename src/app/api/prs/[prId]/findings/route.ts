@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getActiveScan, getLatestCompletedReview, getRecentRuns } from "@/src/lib/reviewFreshness";
-import { computeStability } from "@/src/lib/stabilityScore";
+import { computeStability, computeWeightedStability } from "@/src/lib/stabilityScore";
+import { lookupTrustWeight } from "@/src/lib/modelTrustWeights";
 import { authenticateSessionOrKey, enforcePrRepoScope } from "@/src/lib/apiAuth";
 import { prisma } from "@/src/lib/prisma";
 import { computePrSizeProfile } from "@/src/lib/prSizeProfile";
@@ -133,9 +134,11 @@ export async function GET(req: Request, { params }: { params: Promise<{ prId: st
         findings: [],
         rejectedFindings: [],
         rejectedCount: 0,
+        regressions: [],
         stale: false,
         sizeProfile,
         stability: null,
+        weightedStability: null,
         chunks,
         activeScan: activeScanView,
         activeChunks,
@@ -147,8 +150,11 @@ export async function GET(req: Request, { params }: { params: Promise<{ prId: st
 
     const ratingTrend = await getRecentRuns(prId, 5);
     const stability = computeStability(ratingTrend);
+    const weighted = computeWeightedStability(ratingTrend, lookupTrustWeight);
 
     return NextResponse.json({
+      weightedStability: weighted.weightedStability,
+      weightedReadyToMerge: weighted.readyToMerge,
       reviewRun: {
         id: latest.reviewRun.id,
         commitHash: latest.reviewRun.commitHash,
@@ -169,6 +175,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ prId: st
       findings: latest.findings,
       rejectedFindings: latest.rejectedFindings,
       rejectedCount: latest.rejectedCount,
+      regressions: latest.regressions,
       stale: latest.stale,
       stability,
       sizeProfile,

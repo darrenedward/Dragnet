@@ -240,21 +240,33 @@ export default function ReviewCard({
             </span>
           )}
           {stability && !isScanning && (
-            <span
-              title={
-                stability.readyToMerge
-                  ? `${stability.consecutiveCleanRounds} consecutive clean rounds — ready to merge`
-                  : stability.consecutiveCleanRounds > 0
-                    ? `${stability.consecutiveCleanRounds} clean round${stability.consecutiveCleanRounds === 1 ? "" : "s"}, still fluctuating`
-                    : "Not enough data for stability score"
-              }
-              className={`px-2 py-0.5 rounded uppercase font-mono text-[9px] font-bold border flex items-center gap-1 ${
-                stability.readyToMerge
-                  ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/25"
-                  : "bg-amber-500/10 text-amber-400 border-amber-500/25"
-              }`}
-            >
-              {stability.readyToMerge ? "✓" : "◐"} {stability.consecutiveCleanRounds}
+            <span className="flex items-center gap-1">
+              <span
+                title={
+                  stability.readyToMerge
+                    ? `${stability.consecutiveCleanRounds} consecutive clean rounds — ready to merge`
+                    : stability.consecutiveCleanRounds > 0
+                      ? `${stability.consecutiveCleanRounds} clean round${stability.consecutiveCleanRounds === 1 ? "" : "s"}, still fluctuating`
+                      : "Not enough data — only 1 scan completed"
+                }
+                className={`px-2 py-0.5 rounded uppercase font-mono text-[9px] font-bold border flex items-center gap-1 ${
+                  stability.readyToMerge
+                    ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/25"
+                    : stability.consecutiveCleanRounds > 0
+                      ? "bg-amber-500/10 text-amber-400 border-amber-500/25"
+                      : "bg-slate-500/10 text-slate-400 border-slate-500/25"
+                }`}
+              >
+                {stability.readyToMerge ? "✓" : stability.consecutiveCleanRounds > 0 ? "◐" : "○"} {stability.consecutiveCleanRounds || "—"}
+              </span>
+              {stability.weightedStability !== undefined && (
+                <span
+                  title={`Trust-weighted stability: ${stability.weightedStability.toFixed(1)} (threshold: 2.5)`}
+                  className="px-2 py-0.5 rounded uppercase font-mono text-[9px] font-bold border bg-indigo-500/10 text-indigo-400 border-indigo-500/25 flex items-center gap-1"
+                >
+                  w{stability.weightedStability.toFixed(1)}
+                </span>
+              )}
             </span>
           )}
           {activePR?.sizeProfile && !isScanning && (
