@@ -124,10 +124,26 @@ async function main() {
     process.exit(1);
   }
   const wantsStrictSsl = Boolean(cs.match(/sslmode\s*=\s*(verify-full|verify-ca)/i));
+  // Local Postgres (dev container, system cluster) doesn't speak TLS by
+  // default. Match src/lib/prisma.ts: detect loopback hosts OR explicit
+  // `sslmode=disable|allow|prefer` and pass `ssl: false` so pg opens plain
+  // TCP. Without this, the prior code always set `ssl: { ... }` and
+  // STARTTLS failed on every local connection.
+  const wantsNoSsl =
+    Boolean(cs.match(/sslmode\s*=\s*(disable|allow|prefer)/i)) ||
+    Boolean(
+      cs.match(
+        /@(localhost|127\.[\d.]+|::1|\[::1\]|[a-z0-9.-]+\.local)(:\d+)?\//i,
+      ),
+    );
   const stripped = cs.replace(/&?sslmode=[^&]*/gi, "").replace(/\?&/, "?").replace(/\?$/, "").replace(/&&/g, "&");
   const pool = new pg.Pool({
     connectionString: stripped,
-    ssl: wantsStrictSsl ? { rejectUnauthorized: true } : { rejectUnauthorized: false },
+    ssl: wantsNoSsl
+      ? false
+      : wantsStrictSsl
+        ? { rejectUnauthorized: true }
+        : { rejectUnauthorized: false },
   });
   const prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
 

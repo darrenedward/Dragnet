@@ -201,7 +201,19 @@ class RealGitService implements GitServiceInterface {
     //      `git diff base...branch` resolves against local refs.
     const escapedUrl = shellEscape(cloneUrl);
     const escapedBranch = shellEscape(opts.branch);
-    const fetchTargets = [opts.branch, ...(opts.alsoFetch ?? [])].join(" ");
+    // Fetch with explicit refspec mappings so BOTH the PR branch AND any
+    // alsoFetch branches (e.g. the base branch) get their local refs
+    // updated to match origin. Without this, `git fetch origin <branch>
+    // <base>` writes commits to FETCH_HEAD but leaves refs/heads/<base>
+    // stale — so `git diff <base>...<pr>` later runs against an out-of-date
+    // base (or fails entirely on a fresh clone where refs/heads/<base>
+    // was never created). Mirrors remoteFetchWorker.ts:96's
+    // '+refs/heads/*:refs/heads/*' refspec, scoped to just the branches we
+    // need. The leading '+' allows non-fast-forward (e.g. force-pushes).
+    const allBranches = [opts.branch, ...(opts.alsoFetch ?? [])];
+    const refspecs = allBranches
+      .map((b) => `'+refs/heads/${shellEscape(b)}:refs/heads/${shellEscape(b)}'`)
+      .join(" ");
     const syncScript = [
       "set -e",
       "[ -d /workspace/.git ] || git init /workspace",
@@ -209,11 +221,11 @@ class RealGitService implements GitServiceInterface {
       `git remote get-url origin 2>/dev/null && git remote set-url origin '${escapedUrl}' || git remote add origin '${escapedUrl}'`,
       // Prune so branches deleted on remote disappear locally too;
       // depth=100 is plenty for review use cases.
-      `git fetch origin --prune --depth=100 ${shellEscape(opts.branch)} ${(opts.alsoFetch ?? []).map(shellEscape).join(" ")}`.trim(),
-      // If the branch exists remotely, create-or-checkout the local ref.
-      // `git switch -C` creates the branch pointing at FETCH_HEAD iff
-      // missing; if it already exists, `git switch` just moves to it.
-      `git switch -C '${escapedBranch}' FETCH_HEAD`,
+      `git fetch origin --prune --depth=100 ${refspecs}`.trim(),
+      // Checkout the PR branch from the just-updated local ref. Using the
+      // explicit ref (not FETCH_HEAD) avoids ambiguity when multiple
+      // refspecs are fetched in one go.
+      `git switch -C '${escapedBranch}' 'refs/heads/${escapedBranch}'`,
     ].join(" && ");
 
     const extraEnv: Record<string, string> = {};
