@@ -10,6 +10,7 @@ interface ApiKeyView {
   name: string;
   prefix: string;
   repoId: string | null;
+  user: { id: string; name: string | null; email: string } | null;
   createdAt: string;
   lastUsedAt: string | null;
   revoked: boolean;
@@ -27,7 +28,13 @@ export default function ApiKeysPanel() {
   const fetchKeys = async () => {
     try {
       const res = await fetch("/api/keys");
-      if (res.ok) setKeys(await res.json());
+      if (res.ok) {
+        const all = (await res.json()) as ApiKeyView[];
+        // Project-scoped keys (repoId !== null) are managed per-project via
+        // RepoSettingsModal → API Key section. This panel is for global /
+        // standalone keys only (CI, admin automation, multi-project tooling).
+        setKeys(all.filter((k) => k.repoId === null));
+      }
     } catch { /* ignore */ }
   };
 
@@ -40,13 +47,6 @@ export default function ApiKeysPanel() {
     setError(null);
     setNewKeyValue(null);
     try {
-      const existing = (await (await fetch("/api/keys")).json()) as ApiKeyView[];
-      const globalKeys = existing.filter((k) => !k.repoId);
-      await Promise.all(
-        globalKeys.map((k) =>
-          fetch(`/api/keys/${k.id}`, { method: "DELETE" })
-        )
-      );
       const res = await fetch("/api/keys", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -104,7 +104,7 @@ export default function ApiKeysPanel() {
               API Keys
             </h3>
             <p className="text-xs text-slate-400">
-              API keys for remote clients (Claude Code, Cursor, etc.). Set the <code className="text-cyan-400">Authorization: Bearer</code> header when calling Dragnet's endpoints.
+              Global keys for CI, automation, and multi-project tooling. Set <code className="text-cyan-400">Authorization: Bearer</code> on requests. Per-project keys live in each project&apos;s Settings → API Key.
             </p>
           </div>
         </div>
@@ -121,6 +121,16 @@ export default function ApiKeysPanel() {
                       <span className="text-[9px] text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20 font-mono uppercase">Active</span>
                     </div>
                     <div className="text-[10px] text-slate-500 font-mono mt-0.5">{k.prefix}</div>
+                    {k.user && (
+                      <div className="text-[10px] text-slate-400 font-mono mt-0.5">
+                        Owner: <span className="text-slate-300">{k.user.name || k.user.email}</span>
+                      </div>
+                    )}
+                    {!k.user && (
+                      <div className="text-[9px] text-amber-400/80 font-mono mt-0.5">
+                        Legacy key — no owner assigned
+                      </div>
+                    )}
                     <div className="text-[9px] text-slate-600 font-mono">
                       Created {new Date(k.createdAt).toLocaleDateString()}
                       {k.lastUsedAt ? ` · Last used ${new Date(k.lastUsedAt).toLocaleDateString()}` : " · Never used"}

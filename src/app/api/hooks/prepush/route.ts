@@ -4,7 +4,7 @@ import { runPrScan, SYSTEM_INSTRUCTION } from "@/reviewService";
 import { authenticateApiRequest } from "@/src/lib/apiAuth";
 import { IndexingService } from "@/src/services/indexingService";
 import { assertIndexFresh } from "@/src/lib/indexFreshness";
-import { refreshPrFiles, isBranchMerged } from "@/src/lib/getRealLocalPrs";
+import { refreshPrFiles, isBranchMerged } from "@/src/lib/getRealPrs";
 import { getChatChain } from "@/src/lib/llmClient";
 import { acquireReviewLock, endReview } from "@/src/lib/reviewLocks";
 import { computePrSizeProfile } from "@/src/lib/prSizeProfile";
@@ -55,7 +55,7 @@ export async function POST(req: Request) {
       );
     }
 
-    const freshness = assertIndexFresh(repo);
+    const freshness = await assertIndexFresh(repo);
     if (freshness.ok === false) {
       if (freshness.kind === "INDEX_REQUIRED") {
         return NextResponse.json(
@@ -88,9 +88,9 @@ export async function POST(req: Request) {
     // review (the dev may have fixed the issue locally without re-scanning).
     const chatChain = getChatChain();
     let files: any[] = [];
-    if (repo.path && pr.sourceBranch) {
+    if ((repo.path || repo.cloneUrl) && pr.sourceBranch) {
       try {
-        files = await refreshPrFiles(repo.path, repo.baseBranch || "main", pr.sourceBranch, pr.id);
+        files = await refreshPrFiles(repo, pr.sourceBranch, pr.id);
       } catch (e) {
         console.warn("[prepush] refreshPrFiles failed, using cached PrFiles:", e);
       }
@@ -98,7 +98,7 @@ export async function POST(req: Request) {
     const baseBranch = pr.targetBranch || repo.baseBranch || "main";
     const sizeProfile = computePrSizeProfile(
       files,
-      readPrCommitCount(repo.path, baseBranch, pr.sourceBranch),
+      await readPrCommitCount(repo, baseBranch, pr.sourceBranch),
     );
     const limits = readLimits();
     const manifest = buildDiffManifest(files, sizeProfile.commitCount, {
@@ -112,7 +112,7 @@ export async function POST(req: Request) {
     // Merged-branch short-circuit. Pre-push shouldn't fire for a merged
     // branch in normal flow (you don't push to a branch that's already
     // merged), but if it does, exit clean — no point gating an empty diff.
-    if (repo.path && pr.sourceBranch && files.length === 0 && await isBranchMerged(repo.path, baseBranch, pr.sourceBranch)) {
+    if ((repo.path || repo.cloneUrl) && pr.sourceBranch && files.length === 0 && await isBranchMerged(repo, baseBranch, pr.sourceBranch)) {
       return NextResponse.json({
         passed: true,
         merged: true,
@@ -152,6 +152,7 @@ export async function POST(req: Request) {
       reviewConfigHash: configHash,
       model: chatChain[0]?.model ?? null,
       triggerReason: "prepush",
+      createdByUserId: auth.userId,
     });
 
     const result = tier.tier === "normal"

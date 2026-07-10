@@ -103,6 +103,7 @@ vi.mock("../src/services/largePrReview/fingerprint", () => ({
 
 vi.mock("../src/services/largePrReview/reconcile", () => ({
   reconcileFindingsAcrossRuns: vi.fn().mockResolvedValue([]),
+  dedupFindingsWithinRun: vi.fn().mockResolvedValue(0),
 }));
 
 beforeEach(() => {
@@ -272,7 +273,12 @@ describe("Phase 6 — loop writes and clears checkpoints", () => {
 
     const result = await scanPromise;
 
-    expect(result.interrupted).toBe(true);
+    // The current contract (post-pipeline refactor): when an in-flight
+    // create() rejects with AbortError, runPrScan returns
+    // `success: false, infrastructureFailure: true` — the old
+    // `interrupted: true` field is gone.
+    expect(result.success).toBe(false);
+    expect(result.infrastructureFailure).toBe(true);
     // The checkpoint from iteration 1 MUST persist so Phase 7 resume
     // can pick it up.
     expect(fs.existsSync(checkpointPath())).toBe(true);

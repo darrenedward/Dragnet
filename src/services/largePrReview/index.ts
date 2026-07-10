@@ -1,6 +1,7 @@
 export * from "./aggregator";
 export * from "./chunker";
 export * from "./fingerprint";
+export * from "./globalDeterministicChecks";
 export * from "./manifest";
 export * from "./orchestrator";
 export * from "./reconcile";

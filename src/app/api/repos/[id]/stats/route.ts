@@ -14,7 +14,21 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     if (scopeErr) return NextResponse.json(scopeErr, { status: 403 });
     const repo = await prisma.repository.findUnique({
       where: { id },
-      select: { id: true, name: true, path: true, indexedAt: true, lastCommitHash: true },
+      select: {
+        id: true,
+        name: true,
+        path: true,
+        indexedAt: true,
+        lastCommitHash: true,
+        cloneUrl: true,
+        cloneUrlHttps: true,
+        deployKeyCipher: true,
+        deployKeyIv: true,
+        deployKeyTag: true,
+        patCipher: true,
+        patIv: true,
+        patTag: true,
+      },
     });
     if (!repo) {
       return NextResponse.json({ error: "Repository not found" }, { status: 404 });
@@ -26,7 +40,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
       prisma.edge.count({ where: { repoId: id } }),
     ]);
 
-    const headCommit = repo.path ? currentHeadCommit(repo.path) : null;
+    const headCommit = repo.path || repo.cloneUrl ? await currentHeadCommit(repo) : null;
 
     const { embeddingCoveragePct, fileCountWithEmbeddings } = await getEmbeddingStats(id);
 

@@ -24,26 +24,19 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       );
     }
 
-    await prisma.repository.updateMany({ where: { id }, data: { status: "stabilizing" } });
+    await IndexingService.clearIndex(id);
+    await prisma.repository.update({
+      where: { id },
+      data: { indexedAt: null, status: "idle" },
+    });
 
-    IndexingService.clearIndex(id)
-      .then(() => IndexingService.indexFolder(id, repo.path))
-      .then(async (stats) => {
-        console.log(`[reindex] completed for ${id}:`, stats);
-      })
-      .catch(async (err) => {
-        console.error(`[reindex] failed for ${id}:`, err);
-        try {
-          await prisma.repository.updateMany({ where: { id }, data: { status: "idle" } });
-        } catch {}
-      });
-
-    return NextResponse.json(
-      { accepted: true, status: "stabilizing", message: "Reindex dispatched. Poll GET /api/repos/[id]/stats for completion." },
-      { status: 202 },
-    );
+    console.log(`[reindex] index cleared for ${id}`);
+    return NextResponse.json({
+      success: true,
+      message: "Index cleared. Use Index Now to rebuild.",
+    });
   } catch (err: any) {
-    console.error("Failed dispatching reindex:", err);
+    console.error("Failed clearing index:", err);
     return NextResponse.json({ error: err.message }, { status: 500 });
   }
 }

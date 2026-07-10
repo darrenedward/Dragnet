@@ -32,7 +32,16 @@ export interface Repository {
   isPollingEnabled?: boolean | null;
   skipTier2?: boolean | null;
   apiKeyPrefix?: string | null;
+  hostedMode?: boolean | null;
   webhookId?: string | null;
+  /**
+   * User who created the repo, recorded by `POST /api/repos`. The
+   * sidebar splits "Your projects" (where this equals the current
+   * user's id) from "Shared with you" (where the current user has a
+   * `UserRepo` row but is not the owner). Null for legacy repos that
+   * predate #69; the backfill script populates it on first migration.
+   */
+  ownerId?: string | null;
 }
 
 export interface PullRequest {
@@ -76,9 +85,12 @@ export interface ReviewFinding {
   diffSuggestion: string;
   evidenceChain?: string;
   confidence?: number;
+  confidenceReason?: string;
   timestamp: string;
   verificationStatus?: "verified" | "downgraded" | "rejected" | "unverified" | null;
   verificationNote?: string | null;
+  skepticVerdict?: "confirmed" | "downgraded" | "rejected" | null;
+  skepticNote?: string | null;
   source?: string | null;
 }
 
@@ -159,7 +171,7 @@ export interface LlmPresetsState {
   fallbackEmbeddingPresetId: string;
 }
 
-export type ActiveTab = "prs" | "watcher" | "roadmap" | "db_config" | "llm_config" | "codebase";
+export type ActiveTab = "prs" | "watcher" | "roadmap" | "db_config" | "llm_config" | "codebase" | "team";
 
 export const getStatusBadgeStyle = (status: string): string => {
   switch (status) {

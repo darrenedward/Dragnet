@@ -2,6 +2,57 @@ import { prisma } from "./prisma";
 import crypto from "crypto";
 import { requireSession } from "./api-auth";
 
+export async function verifyUserCanCreateRepoKey(
+  userId: string,
+  repoId: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const assignment = await prisma.userRepo.findUnique({
+    where: { userId_repoId: { userId, repoId } },
+  });
+  if (!assignment) {
+    return { ok: false, error: "You are not assigned to this repository. Contact an admin." };
+  }
+  return { ok: true };
+}
+
+/**
+ * Returns `ok` when the given user is allowed to invite teammates to
+ * the given repo. The gate is satisfied by EITHER being the repo's
+ * `ownerId` OR holding a `UserRepo` row with `role = "admin"`.
+ *
+ * This is the new unified access model from #69: there is no separate
+ * "implicit owner" or org-membership check — the `ownerId` on
+ * `Repository` is the source of truth, and a self-inviting `UserRepo`
+ * admin row makes the owner indistinguishable from any other admin at
+ * the query layer.
+ */
+export async function verifyInviterIsOwnerOrAdmin(
+  userId: string,
+  repoId: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const repo = await prisma.repository.findUnique({
+    where: { id: repoId },
+    select: { id: true, ownerId: true },
+  });
+  if (!repo) {
+    return { ok: false, error: "Repository not found." };
+  }
+  if (repo.ownerId === userId) {
+    return { ok: true };
+  }
+  const assignment = await prisma.userRepo.findUnique({
+    where: { userId_repoId: { userId, repoId } },
+    select: { role: true },
+  });
+  if (assignment?.role === "admin") {
+    return { ok: true };
+  }
+  return {
+    ok: false,
+    error: "Only the repo owner or an admin can invite teammates to this repository.",
+  };
+}
+
 const KEY_PREFIX = "dr_";
 
 export function generateApiKey(): { raw: string; prefix: string; hash: string } {
@@ -16,23 +67,28 @@ function hashKey(raw: string): string | null {
   return crypto.createHash("sha256").update(raw).digest("hex");
 }
 
-export type AuthResult = { ok: boolean; error?: string; repoId: string | null };
+export type AuthResult = {
+  ok: boolean;
+  error?: string;
+  repoId: string | null;
+  userId: string | null;
+};
 
 export async function authenticateApiRequest(req: Request): Promise<AuthResult> {
   const auth = req.headers.get("authorization");
   if (!auth || !auth.startsWith("Bearer ")) {
-    return { ok: false, error: "Missing or invalid Authorization header. Use: Authorization: Bearer dr_<key>", repoId: null };
+    return { ok: false, error: "Missing or invalid Authorization header. Use: Authorization: Bearer dr_<key>", repoId: null, userId: null };
   }
 
   const raw = auth.slice("Bearer ".length).trim();
   const hash = hashKey(raw);
   if (!hash) {
-    return { ok: false, error: "Invalid API key format. Keys start with 'dr_'.", repoId: null };
+    return { ok: false, error: "Invalid API key format. Keys start with 'dr_'.", repoId: null, userId: null };
   }
 
   const key = await prisma.apiKey.findUnique({ where: { hash } });
   if (!key || key.revoked) {
-    return { ok: false, error: "API key not found or has been revoked.", repoId: null };
+    return { ok: false, error: "API key not found or has been revoked.", repoId: null, userId: null };
   }
 
   // Throttle lastUsedAt updates to once per 5 min per key — high-traffic
@@ -45,7 +101,21 @@ export async function authenticateApiRequest(req: Request): Promise<AuthResult> 
       .catch(() => {});
   }
 
-  return { ok: true, repoId: key.repoId ?? null };
+  // Audit trail: one ApiKeyUsage row per authenticated action.
+  // Fire-and-forget — request latency must not depend on this write.
+  prisma.apiKeyUsage
+    .create({
+      data: {
+        keyId: key.id,
+        userId: key.userId ?? null,
+        repoId: key.repoId ?? null,
+        action: "api_request",
+        ip: req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || null,
+      },
+    })
+    .catch(() => {});
+
+  return { ok: true, repoId: key.repoId ?? null, userId: key.userId ?? null };
 }
 
 /**
@@ -109,13 +179,15 @@ export async function authenticateSessionOrKey(req: Request): Promise<AuthResult
     return authenticateApiRequest(req);
   }
   try {
-    await requireSession(req);
-    return { ok: true, repoId: null };
+    const session = await requireSession(req);
+    const userId = session?.user?.id ?? null;
+    return { ok: true, repoId: null, userId };
   } catch {
     return {
       ok: false,
       error: "Authentication required. Send a Bearer API key (Authorization: Bearer dr_…) or a valid session cookie.",
       repoId: null,
+      userId: null,
     };
   }
 }

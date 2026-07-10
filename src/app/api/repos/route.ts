@@ -1,14 +1,14 @@
 import crypto from "node:crypto";
 import { NextResponse } from "next/server";
 import { prisma } from "@/src/lib/prisma";
-import { getRealLocalPrs } from "@/src/lib/getRealLocalPrs";
 import { encryptSecret, hasMasterKey } from "@/src/lib/crypto";
 import { enqueue } from "@/src/services/remoteFetchWorker";
 import { getProviderFromUrl } from "@/src/lib/webhookSetup";
 import { authenticateSessionOrKey, generateApiKey } from "@/src/lib/apiAuth";
 import { requireSession } from "@/src/lib/api-auth";
-import { computeRepoId, computeLocalRepoId, canonicalizeUrl } from "@/src/lib/repoIdentity";
+import { computeRepoId, canonicalizeUrl } from "@/src/lib/repoIdentity";
 import { getInstallationToken } from "@/src/lib/githubApp";
+import { captureRepoOwnership } from "@/src/lib/repoOwnership";
 
 export async function GET(req: Request) {
   const auth = await authenticateSessionOrKey(req);
@@ -35,121 +35,15 @@ export async function POST(req: Request) {
   try {
     const body = await req.json();
     const {
-      id, name, path: repoPath,
+      id, name,
       baseBranch, activeBranch, triggerMode, quietPeriodSeconds, branchPattern,
-      mode = "local",
+      mode = "remote",
       cloneUrl, cloneUrlHttps, deployKey, pat,
       githubRepoId,
     } = body;
 
     if (!name || typeof name !== "string") {
       return NextResponse.json({ error: "Name is required." }, { status: 400 });
-    }
-
-    if (mode === "local") {
-      if (!repoPath || typeof repoPath !== "string") {
-        return NextResponse.json({ error: "Path is required for local repos." }, { status: 400 });
-      }
-
-      const existing = await prisma.repository.findFirst({
-        where: { path: repoPath },
-        select: { id: true, name: true },
-      });
-      if (existing) {
-        return NextResponse.json(
-          {
-            error: `Directory "${repoPath}" is already linked as project "${existing.name}".`,
-            existingId: existing.id,
-            existingName: existing.name,
-          },
-          { status: 409 },
-        );
-      }
-
-      const cleanId = id || name.toLowerCase().replace(/[^a-z0-9]/g, "-") + "-" + Date.now();
-
-      try {
-        const { execSync } = require('child_process');
-        try {
-          execSync('git --version', { stdio: 'ignore' });
-        } catch {
-          return NextResponse.json({ error: "Git is not installed or not available in the system PATH. Please install Git to use local repositories." }, { status: 400 });
-        }
-        
-        const fs = require('fs');
-        if (!fs.existsSync(repoPath) || !fs.statSync(repoPath).isDirectory()) {
-          return NextResponse.json({ error: `Directory "${repoPath}" does not exist on disk.` }, { status: 400 });
-        }
-
-        try {
-          execSync('git rev-parse --is-inside-work-tree', { cwd: repoPath, stdio: 'ignore' });
-        } catch {
-          return NextResponse.json({ error: `Directory "${repoPath}" is not a valid git repository. Please run 'git init' inside the directory first.` }, { status: 400 });
-        }
-      } catch (err: any) {
-        return NextResponse.json({ error: "Failed to validate git repository: " + err.message }, { status: 500 });
-      }
-
-      const localRepoId = computeLocalRepoId(repoPath);
-
-      try {
-        await prisma.repository.create({
-          data: {
-            id: cleanId,
-            name,
-            path: repoPath,
-            repoId: localRepoId,
-            canonicalRemote: null,
-            provider: "local",
-            baseBranch: baseBranch || "main",
-            activeBranch: activeBranch || baseBranch || "main",
-            triggerMode: triggerMode || "auto",
-            quietPeriodSeconds: quietPeriodSeconds || 10,
-            branchPattern: branchPattern || "*",
-            status: "idle",
-            lastCommitHash: "a1b2c3d",
-            lastCommitMessage: "initial repository watch link",
-            lastActivityTime: new Date().toISOString(),
-            stabilizationTimer: 0,
-            reviewsCount: 0,
-          },
-        });
-      } catch (createErr: any) {
-        if (createErr?.code === "P2002") {
-          const racer = await prisma.repository.findFirst({
-            where: { path: repoPath },
-            select: { id: true, name: true },
-          });
-          return NextResponse.json(
-            {
-              error: `Directory "${repoPath}" was just linked as project "${racer?.name || "unknown"}" — duplicate prevented.`,
-              existingId: racer?.id,
-              existingName: racer?.name,
-            },
-            { status: 409 },
-          );
-        }
-        throw createErr;
-      }
-
-      await getRealLocalPrs(repoPath, cleanId);
-
-      const localKey = generateApiKey();
-      await prisma.apiKey.create({
-        data: {
-          name: `project:${name}`,
-          prefix: localKey.prefix,
-          hash: localKey.hash,
-          repoId: cleanId,
-        },
-      });
-
-      return NextResponse.json({
-        success: true,
-        id: cleanId,
-        apiKey: localKey.raw,
-        apiKeyPrefix: localKey.prefix,
-      }, { status: 201 });
     }
 
     // --- GitHub App repo (imported from installation) ---
@@ -277,6 +171,8 @@ export async function POST(req: Request) {
         },
       });
 
+      await captureRepoOwnership(cleanId, session.user.id);
+
       return NextResponse.json({
         success: true,
         id: cleanId,
@@ -304,8 +200,8 @@ export async function POST(req: Request) {
         { status: 400 },
       );
     }
-    if (/[\0-\x1f]/.test(cloneUrl) || (typeof repoPath === "string" && /[\0-\x1f]/.test(repoPath))) {
-      return NextResponse.json({ error: "Invalid characters in cloneUrl or repoPath." }, { status: 400 });
+    if (/[\0-\x1f]/.test(cloneUrl)) {
+      return NextResponse.json({ error: "Invalid characters in cloneUrl." }, { status: 400 });
     }
 
     if (mode === "ssh" && (!deployKey || typeof deployKey !== "string")) {
@@ -393,6 +289,8 @@ export async function POST(req: Request) {
         repoId: cleanId,
       },
     });
+
+    await captureRepoOwnership(cleanId, auth.userId);
 
     return NextResponse.json({
       success: true,

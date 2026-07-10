@@ -1,5 +1,4 @@
 import { execSync } from "child_process";
-import { writeFileSync, readFileSync, existsSync, appendFileSync, mkdirSync } from "fs";
 
 export function canonicalizeUrl(remoteUrl) {
   const sshMatch = remoteUrl.match(/^([a-zA-Z0-9._-]+)@([a-zA-Z0-9.-]+):(.+)$/);
@@ -34,74 +33,52 @@ export function canonicalizeUrl(remoteUrl) {
   throw new Error(`Cannot parse git remote URL: ${remoteUrl}`);
 }
 
-export function shouldAddGitignore(content, line) {
-  return !content.split("\n").some(l => l.trim() === line.trim());
-}
-
+/**
+ * Resolve a project's API key + URL by hitting the Dragnet lookup endpoint.
+ * Returns `{ repoId, apiKey, apiBase }` for the caller to print as env vars.
+ *
+ * Previously this wrote `.dragnet/repo.json` + updated `.gitignore`. Per the
+ * Per-Project API Keys PRD (#33), the agent skill and pre-push hook now read
+ * `$DRAGNET_API_KEY` + `$DRAGNET_URL` directly from the environment — no
+ * filesystem config. This CLI just resolves the values; the bin script prints
+ * the `export ...` lines for the user to paste into their shell.
+ */
 export async function runInit({
   cwd = process.cwd(),
   apiBase = process.env.DRAGNET_URL || "http://localhost:3300",
   prompt,
   local = false,
   execSync: exec = execSync,
-  writeFile: write = writeFileSync,
-  readFile: read = readFileSync,
-  exists: exists = existsSync,
-  appendFile: append = appendFileSync,
-  mkdir: mkdir = mkdirSync,
   fetch: fetchFn = globalThis.fetch,
 } = {}) {
-  let repoId, apiKey, configApiBase;
-
   if (local) {
-    repoId = await prompt("Paste the repository ID from the Dragnet dashboard: ");
-    apiKey = "";
-    configApiBase = apiBase;
-  } else {
-    let remoteUrl;
-    try {
-      remoteUrl = exec("git remote get-url origin", { encoding: "utf8", cwd }).trim();
-    } catch {
-      throw new Error("No git remote 'origin' found. Use --local for pure-local repos.");
-    }
-
-    const canonical = canonicalizeUrl(remoteUrl);
-    const lookupUrl = `${apiBase}/api/repos/lookup?remoteUrl=${encodeURIComponent(canonical)}`;
-    const res = await fetchFn(lookupUrl);
-    const data = await res.json();
-
-    if (!data.exists) {
-      throw new Error(`Repository not found at ${apiBase}. Register it first in the Dragnet dashboard, or use --local for a local-only repo.`);
-    }
-
-    repoId = data.repoId;
-    apiKey = data.apiKey;
-    configApiBase = data.apiBase || apiBase;
+    const repoId = await prompt("Paste the repository ID from the Dragnet dashboard: ");
+    return {
+      repoId,
+      apiKey: null,
+      apiBase,
+    };
   }
 
-  const dragnetDir = `${cwd}/.dragnet`;
-  mkdir(dragnetDir, { recursive: true, mode: 0o700 });
-
-  const config = { repoId, apiKey, apiBase: configApiBase };
-  write(`${dragnetDir}/repo.json`, JSON.stringify(config, null, 2), { mode: 0o600 });
-
-  const gitignoreLine = ".dragnet/repo.json";
-  const gitignorePath = `${cwd}/.gitignore`;
-
-  if (exists(gitignorePath)) {
-    const content = read(gitignorePath, "utf8");
-    if (shouldAddGitignore(content, gitignoreLine)) {
-      const answer = await prompt(`Add "${gitignoreLine}" to .gitignore? [Y/n] `);
-      if (answer.toLowerCase() !== "n") {
-        append(gitignorePath, `\n# Dragnet local state\n${gitignoreLine}\n`);
-      }
-    }
-  } else {
-    const answer = await prompt(`Create .gitignore with "${gitignoreLine}"? [Y/n] `);
-    if (answer.toLowerCase() !== "n") {
-      write(gitignorePath, `# Dragnet local state\n${gitignoreLine}\n`);
-    }
+  let remoteUrl;
+  try {
+    remoteUrl = exec("git remote get-url origin", { encoding: "utf8", cwd }).trim();
+  } catch {
+    throw new Error("No git remote 'origin' found. Register the repo in the Dragnet dashboard first, or use --local to paste a repoId manually.");
   }
 
-  return config;
+  const canonical = canonicalizeUrl(remoteUrl);
+  const lookupUrl = `${apiBase}/api/repos/lookup?remoteUrl=${encodeURIComponent(canonical)}`;
+  const res = await fetchFn(lookupUrl);
+  const data = await res.json();
+
+  if (!data.exists) {
+    throw new Error(`Repository not found at ${apiBase}. Register it first in the Dragnet dashboard, or use --local for a local-only repo.`);
+  }
+
+  return {
+    repoId: data.repoId,
+    apiKey: data.apiKey,
+    apiBase: data.apiBase || apiBase,
+  };
 }

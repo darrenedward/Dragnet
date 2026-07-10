@@ -2,11 +2,15 @@ import { randomUUID } from "node:crypto";
 import { prisma } from "@/src/lib/prisma";
 import { readLimits } from "@/src/lib/prSizeConfig";
 import { runPrScan, type ScanResult, type PrManifestEntry, type RunPrScanOptions } from "@/reviewService";
+import type { DeterministicFinding } from "@/src/services/deterministicChecks";
 import { aggregateResults } from "./aggregator";
 import { chunkDiff } from "./chunker";
 import { assertTier, buildDiffManifest } from "./manifest";
+import { runGlobalDeterministicChecks } from "./globalDeterministicChecks";
 import { appendReport, formatReportLine } from "./reportLogger";
 import { getInstallationToken } from "@/src/lib/githubApp";
+import { resolveSymbolsBatch, buildFindingFingerprint } from "./fingerprint";
+import { persistGlobalDeterministicFindings } from "./persistence/globalDeterministicFindings";
 import type {
   ChunkPlan,
   DiffManifest,
@@ -103,6 +107,13 @@ export async function runLargePrReview({
   const repoPath = repo?.path ?? "";
   const installationId = repo?.installationId;
   const limits = readLimits();
+  // Derive the effective chunk cap from the user's limits so a
+  // normal-tier PR (≤ normalMaxLines) fits in a single chunk. The
+  // raw chunkLineCap from the file is a floor — the engine never
+  // splits at a finer granularity than normalMaxLines, preventing
+  // the counter-intuitive outcome where a "normal" PR is already
+  // split across 2+ chunks.
+  const effectiveChunkLineCap = Math.max(limits.chunkLineCap, limits.normalMaxLines);
   let manifest = buildDiffManifest(files, undefined, {
     normalMaxLines: limits.normalMaxLines,
     normalMaxCodeFiles: limits.normalMaxCodeFiles,
@@ -127,7 +138,7 @@ export async function runLargePrReview({
   const plans = chunkDiff(
     manifest,
     repo?.securitySensitivePaths ?? [],
-    { chunkLineCap: limits.chunkLineCap, minUsefulChunkLines: limits.minUsefulChunkLines },
+    { chunkLineCap: effectiveChunkLineCap, minUsefulChunkLines: limits.minUsefulChunkLines },
   );
 
   await logRun(prId, reviewRunId, repoPath, `Large PR Mode activated: ${plans.length} chunk${plans.length === 1 ? "" : "s"} (${manifest.codeLines.toLocaleString()} code lines)`, "info");
@@ -155,7 +166,7 @@ export async function runLargePrReview({
       data: {
         status: "completed",
         completedAt: new Date(),
-        rating: 10,
+        rating: null,
         reliability: "complete",
         chunksTotal: 0,
         chunksCompleted: 0,
@@ -163,12 +174,13 @@ export async function runLargePrReview({
         chunksSkipped: 0,
       },
     });
-    await prisma.pullRequest.updateMany({ where: { id: prId }, data: { status: "Completed", rating: 10 } });
+    await prisma.pullRequest.updateMany({ where: { id: prId }, data: { status: "Completed", rating: null } });
     return {
       success: true,
-      rating: 10,
+      rating: null,
       findings: [],
       usedModel: "large-pr-mode",
+      systemWarn: "No code files to review — all changes are documentation, generated, or lockfile changes",
       largePrMode: true,
       tier: effectiveTier,
       reliability: "complete",
@@ -179,6 +191,60 @@ export async function runLargePrReview({
       warning: effectiveWarning,
     };
   }
+
+  // Run Tier 1 (tsc/eslint) + Tier 2 (containerized checks) ONCE before the
+  // chunk loop. Each chunk receives these pre-computed findings and skips
+  // its own deterministic scan — avoiding N redundant runs of the same
+  // compiler/linter/container tests. Infrastructure failure aborts the
+  // entire large-PR scan (no chunks run), matching existing behaviour in
+  // normal-sized PR scans (AC: "Infrastructure failure stops the scan").
+  const globalChecks = await runGlobalDeterministicChecks(reviewRunId, prId);
+  if (globalChecks.abort) {
+    await logRun(
+      prId,
+      reviewRunId,
+      repoPath,
+      `Global deterministic checks failed with infrastructure error: ${globalChecks.errorMessage ?? "unknown"}`,
+      "error",
+    );
+    await prisma.reviewRun.update({
+      where: { id: reviewRunId },
+      data: { status: "failed", completedAt: new Date(), reliability: "partial" },
+    });
+    await prisma.pullRequest.updateMany({ where: { id: prId }, data: { status: "Failed" } });
+    return {
+      success: false,
+      rating: null,
+      findings: globalChecks.findings,
+      usedModel: "none",
+      systemWarn: `Global deterministic checks failed: ${globalChecks.errorMessage ?? "infrastructure failure"}`,
+      largePrMode: true,
+      tier: effectiveTier,
+      reliability: "partial",
+      chunksTotal: plans.length,
+      chunksCompleted: 0,
+      chunksFailed: 0,
+      chunksSkipped: 0,
+      warning: effectiveWarning,
+    };
+  }
+  await logRun(
+    prId,
+    reviewRunId,
+    repoPath,
+    `Global deterministic checks: ${globalChecks.findings.length} finding(s) — results shared across ${plans.length} chunk(s)`,
+    "info",
+  );
+
+  // Persist global deterministic findings ONCE with reviewChunkId: null.
+  // Each chunk will receive these via precomputedFindings but they will NOT
+  // be re-persisted per-chunk — avoiding N redundant DB writes.
+  await persistGlobalDeterministicFindings(
+    reviewRunId,
+    prId,
+    run.repoId,
+    globalChecks.findings,
+  );
 
   let consecutiveErrorKey: string | null = null;
   let consecutiveErrorCount = 0;
@@ -237,6 +303,7 @@ export async function runLargePrReview({
       prManifest: buildPrManifest(files),
       signal,
       checkpointMetadata,
+      precomputedFindings: globalChecks.findings,
     });
     if (result.ok === true) {
       // Phase 4: if a chunk returned the typed interrupted variant, stop
@@ -283,7 +350,7 @@ export async function runLargePrReview({
           status: "completed",
           completedAt: new Date(),
           rating: result.scan.rating,
-          summary: `${result.scan.findings.length} finding${result.scan.findings.length === 1 ? "" : "s"}`,
+          summary: result.scan.summary || `${result.scan.findings.length} finding${result.scan.findings.length === 1 ? "" : "s"}`,
           errorMessage: null,
         },
       });
@@ -444,7 +511,7 @@ export async function retryFailedChunks(
           status: "completed",
           completedAt: new Date(),
           rating: result.scan.rating,
-          summary: `${result.scan.findings.length} finding${result.scan.findings.length === 1 ? "" : "s"}`,
+          summary: result.scan.summary || `${result.scan.findings.length} finding${result.scan.findings.length === 1 ? "" : "s"}`,
           errorMessage: null,
         },
       });
@@ -487,6 +554,7 @@ async function runChunkWithRetry({
   prManifest,
   signal,
   checkpointMetadata,
+  precomputedFindings,
 }: {
   prId: string;
   reviewRunId: string;
@@ -497,11 +565,16 @@ async function runChunkWithRetry({
   prManifest?: PrManifestEntry[];
   signal?: AbortSignal;
   checkpointMetadata?: { commitHash: string; diffHash: string; reviewConfigHash: string };
+  precomputedFindings?: DeterministicFinding[];
 }): Promise<{ ok: true; scan: ScanResult } | { ok: false; error: Error }> {
   let lastError: Error | null = null;
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
-      const scan = await runner(prId, plan.files, reviewRunId, chunkId, prManifest, { signal, checkpointMetadata });
+      const scan = await runner(prId, plan.files, reviewRunId, chunkId, prManifest, {
+        signal,
+        checkpointMetadata,
+        precomputedFindings,
+      });
       return { ok: true, scan };
     } catch (err: any) {
       lastError = err instanceof Error ? err : new Error(String(err));

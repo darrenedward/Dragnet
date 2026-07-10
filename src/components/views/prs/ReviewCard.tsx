@@ -58,7 +58,11 @@ interface Props {
   rejectedFindings?: Array<{
     id: string; filename: string; line: number | null;
     severity: string; category: string; explanation: string;
+    verificationStatus: string | null;
     verificationNote: string | null;
+    skepticVerdict: string | null;
+    skepticNote: string | null;
+    source: string | null;
   }>;
   stale?: boolean;
   stability?: StabilityProp | null;
@@ -104,7 +108,8 @@ function formatFindings(activePR: PullRequest | undefined, findings: ReviewFindi
       lines.push(`### ${f.filename}:${f.line}`);
       lines.push(`**Category:** ${f.category}`);
       if (f.confidence !== undefined && f.confidence !== null) {
-        lines.push(`**Confidence:** ${(f.confidence * 100).toFixed(0)}%`);
+        const confidenceLine = `**Confidence:** ${(f.confidence * 100).toFixed(0)}%`;
+        lines.push(f.confidenceReason ? `${confidenceLine} — ${f.confidenceReason}` : confidenceLine);
       }
       lines.push("");
       lines.push(f.explanation);
@@ -404,10 +409,15 @@ export default function ReviewCard({
                     <span className="text-[8px] uppercase tracking-wider bg-amber-500/10 text-amber-400 border border-amber-500/25 px-1 py-0.5 rounded">
                       rejected
                     </span>
+                    {f.skepticVerdict === "rejected" && (
+                      <span className="text-[8px] uppercase tracking-wider bg-fuchsia-500/10 text-fuchsia-400 border border-fuchsia-500/25 px-1 py-0.5 rounded">
+                        skeptic
+                      </span>
+                    )}
                     <span className="text-[8px] uppercase tracking-wider text-slate-600">{f.severity}/{f.category}</span>
                   </div>
                   <div className="text-[10px] text-amber-300/70 italic font-mono mb-1">
-                    {f.verificationNote || "no verifier note"}
+                    {f.verificationNote || f.skepticNote || "no note"}
                   </div>
                   <div className="text-[10px] text-slate-500 font-mono leading-relaxed">
                     {f.explanation.slice(0, 280)}{f.explanation.length > 280 ? "…" : ""}

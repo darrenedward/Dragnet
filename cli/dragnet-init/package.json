@@ -1,7 +1,7 @@
 {
   "name": "dragnet-init",
   "version": "0.1.0",
-  "description": "Initialize a Dragnet repo identity — establishes local repo .dragnet/repo.json",
+  "description": "Resolve a Dragnet project API key + URL and print export commands for your shell",
   "type": "module",
   "bin": {
     "dragnet-init": "bin/dragnet-init.mjs"

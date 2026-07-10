@@ -5,8 +5,15 @@ import {
   MAX_ITERATIONS_BOUNDS,
   resolveMaxIterations,
   validatePresetsInput,
+  encryptApiKey,
+  decryptApiKey,
+  apiKeyHash,
+  fetchRemoteModels,
   type Preset,
   type PresetsFile,
+  type PresetView,
+  type RemoteModel,
+  type RemoteModelsResult,
 } from "../src/lib/llmPresets";
 
 function basePreset(overrides: Partial<Preset> = {}): Preset {
@@ -61,6 +68,29 @@ describe("resolveMaxIterations", () => {
     expect(MAX_ITERATIONS_BOUNDS).toEqual({ min: 1, max: 32 });
     expect(resolveMaxIterations({ maxIterations: 1 })).toBe(1);
     expect(resolveMaxIterations({ maxIterations: 32 })).toBe(32);
+  });
+});
+
+describe("barrel exports", () => {
+  it("re-exports types and functions from the module directory", () => {
+    expect(DEFAULT_MAX_ITERATIONS).toBe(16);
+    expect(typeof resolveMaxIterations).toBe("function");
+    expect(typeof validatePresetsInput).toBe("function");
+    expect(typeof encryptApiKey).toBe("function");
+    expect(typeof decryptApiKey).toBe("function");
+    expect(typeof apiKeyHash).toBe("function");
+    expect(typeof fetchRemoteModels).toBe("function");
+  });
+
+  it("apiKeyHash produces a stable hash", () => {
+    const h1 = apiKeyHash("sk-abc123");
+    const h2 = apiKeyHash("sk-abc123");
+    expect(h1).toBe(h2);
+    expect(h1.length).toBe(16);
+  });
+
+  it("apiKeyHash differs for different keys", () => {
+    expect(apiKeyHash("sk-one")).not.toBe(apiKeyHash("sk-two"));
   });
 });
 

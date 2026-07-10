@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/src/lib/prisma";
-import { generateApiKey } from "@/src/lib/apiAuth";
+import { generateApiKey, verifyUserCanCreateRepoKey } from "@/src/lib/apiAuth";
 import { requireSession } from "@/src/lib/api-auth";
 
 export async function GET(req: Request) {
@@ -11,14 +11,29 @@ export async function GET(req: Request) {
   }
   const keys = await prisma.apiKey.findMany({
     orderBy: { createdAt: "desc" },
-    select: { id: true, name: true, prefix: true, repoId: true, createdAt: true, lastUsedAt: true, revoked: true },
+    include: {
+      user: { select: { id: true, name: true, email: true } },
+    },
   });
-  return NextResponse.json(keys);
+  return NextResponse.json(
+    keys.map((k) => ({
+      id: k.id,
+      name: k.name,
+      prefix: k.prefix,
+      repoId: k.repoId,
+      userId: k.userId,
+      user: k.user,
+      createdAt: k.createdAt,
+      lastUsedAt: k.lastUsedAt,
+      revoked: k.revoked,
+    })),
+  );
 }
 
 export async function POST(req: Request) {
+  let session;
   try {
-    await requireSession(req);
+    session = await requireSession(req);
   } catch {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
@@ -30,8 +45,22 @@ export async function POST(req: Request) {
 
   const { raw, prefix, hash } = generateApiKey();
 
-  const data: { name: string; prefix: string; hash: string; repoId?: string } = { name, prefix, hash };
+  const userId = session.user?.id;
+  if (!userId) {
+    return NextResponse.json({ error: "Session has no associated user." }, { status: 401 });
+  }
+
+  const data: { name: string; prefix: string; hash: string; repoId?: string; userId: string } = {
+    name,
+    prefix,
+    hash,
+    userId,
+  };
   if (body.repoId && typeof body.repoId === "string") {
+    const repoCheck = await verifyUserCanCreateRepoKey(userId, body.repoId);
+    if (!repoCheck.ok) {
+      return NextResponse.json({ error: repoCheck.error }, { status: 403 });
+    }
     data.repoId = body.repoId;
   }
 

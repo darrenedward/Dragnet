@@ -1,20 +1,17 @@
-import { execFileSync } from "child_process";
+import { runGitInRepo, type RepoLike } from "./repoAccess";
 
-export function readPrCommitCount(
-  repoPath: string | null | undefined,
+export async function readPrCommitCount(
+  repo: RepoLike,
   baseBranch: string | null | undefined,
   sourceBranch: string | null | undefined,
-): number | null {
-  if (!repoPath || !baseBranch || !sourceBranch) return null;
-  try {
-    const output = execFileSync(
-      "git",
-      ["rev-list", "--count", `${baseBranch}...${sourceBranch}`],
-      { cwd: repoPath, stdio: ["ignore", "pipe", "ignore"] },
-    ).toString().trim();
-    const parsed = Number.parseInt(output, 10);
-    return Number.isFinite(parsed) ? parsed : null;
-  } catch {
-    return null;
-  }
+): Promise<number | null> {
+  if ((!repo.path && !repo.cloneUrl) || !baseBranch || !sourceBranch) return null;
+  const { stdout, exitCode } = await runGitInRepo(repo, [
+    "rev-list",
+    "--count",
+    `${baseBranch}...${sourceBranch}`,
+  ]);
+  if (exitCode !== 0) return null;
+  const parsed = Number.parseInt(stdout.trim(), 10);
+  return Number.isFinite(parsed) ? parsed : null;
 }

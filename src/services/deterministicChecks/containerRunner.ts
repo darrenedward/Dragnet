@@ -50,6 +50,14 @@ export async function runContainerizedChecks(
   const findings: DeterministicFinding[] = [];
   const logs: string[] = [];
 
+  void logReview(
+    opts.prId,
+    `Containerized checks: syncing repository to commit ${opts.commitHash.slice(0, 12)}...`,
+    "info",
+    opts.reviewRunId,
+    opts.reviewChunkId,
+  );
+
   try {
     await gitService.syncToCommit({
       repoId: opts.repoId,
@@ -75,6 +83,13 @@ export async function runContainerizedChecks(
   const runInstall = async (): Promise<boolean> => {
     const cmd = opts.installCommand.trim();
     if (!cmd) return true;
+    void logReview(
+      opts.prId,
+      `Containerized checks: installing dependencies (${opts.installCommand})...`,
+      "info",
+      opts.reviewRunId,
+      opts.reviewChunkId,
+    );
     const result = await orchestrator.runRunner({
       volumeName: vn,
       image: opts.runnerImage,
@@ -99,6 +114,13 @@ export async function runContainerizedChecks(
   const runTest = async (): Promise<DeterministicFinding[]> => {
     const cmd = opts.testCommand.trim();
     if (!cmd) return [];
+    void logReview(
+      opts.prId,
+      `Containerized checks: running tests (${opts.testCommand})...`,
+      "info",
+      opts.reviewRunId,
+      opts.reviewChunkId,
+    );
     const result = await orchestrator.runRunner({
       volumeName: vn,
       image: opts.runnerImage,

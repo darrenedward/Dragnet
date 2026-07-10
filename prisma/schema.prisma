@@ -61,12 +61,18 @@ model Repository {
   skipTier2              Boolean         @default(false)
   repoId                 String?         @unique
   canonicalRemote        String?
+  hostedMode             Boolean         @default(false)
+  ownerId                String?
+  owner                  User?           @relation("RepositoryOwner", fields: [ownerId], references: [id], onDelete: SetNull)
   reviewHistory          ReviewHistory[]
   pullRequests           PullRequest[]
   symbols                Symbol[]
   edges                  Edge[]
   files                  File[]
+  scanTokens             ScanToken[]
+  userRepos              UserRepo[]
 
+  @@index([ownerId])
   @@map("repositories")
 }
 
@@ -141,12 +147,15 @@ model ReviewRun {
   forced           Boolean         @default(false)
   tokensUsed       Json? // Phase 2 cost telemetry: { totalCostUsd, totalPromptTokens, totalCompletionTokens, providers[] }
   lastCheckpointAt DateTime? // Phase 5 resume: last successful checkpoint write for an in-progress run
+  createdByUserId  String?
+  createdByUser    User?           @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
   pullRequest      PullRequest     @relation(fields: [prId], references: [id], onDelete: Cascade)
   reviewFindings   ReviewFinding[]
   reviewChunks     ReviewChunk[]
 
   @@index([prId, status, completedAt])
   @@index([repoId, status, completedAt])
+  @@index([createdByUserId])
   @@map("review_runs")
 }
 
@@ -223,8 +232,11 @@ model ReviewFinding {
   diffSuggestion     String?
   evidenceChain      String?
   confidence         Float?
+  confidenceReason   String? // LLM's justification for the confidence score
   verificationStatus String?
   verificationNote   String?
+  skepticVerdict     String? // "confirmed" | "downgraded" | "rejected" — set by the fallback-model adjudication pass
+  skepticNote        String? // human-readable reason; on downgrade includes "downgraded X→Y: <reason>"
   source             String?
   timestamp          String
   fingerprint        String? // symbol-anchored hash; stable across line shifts
@@ -314,6 +326,10 @@ model User {
   members          Member[]
   organizations    Organization[]
   oauthConnections OAuthConnection[]
+  apiKeys          ApiKey[]
+  reviewRuns       ReviewRun[]
+  userRepos        UserRepo[]
+  ownedRepositories Repository[] @relation("RepositoryOwner")
 
   @@map("users")
 }
@@ -391,13 +407,17 @@ model Member {
 
 model Invitation {
   id             String       @id @default(cuid())
-  organizationId String
+  // Nullable from #69: the new invite flow is per-repo (verified
+  // via `verifyInviterIsOwnerOrAdmin`), not org-scoped. Legacy rows
+  // created before #69 still link to an Organization and continue
+  // to work.
+  organizationId String?
   email          String
   role           String
   status         String       @default("pending")
   expiresAt      DateTime
   inviterId      String?
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
   @@map("invitations")
 }
@@ -408,9 +428,112 @@ model ApiKey {
   prefix     String
   hash       String    @unique
   repoId     String? // optional: scoped to a specific repo (dragnet-init flow)
+  userId     String?
+  user       User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
   createdAt  DateTime  @default(now())
   lastUsedAt DateTime?
   revoked    Boolean   @default(false)
 
+  @@index([userId])
   @@map("api_keys")
+}
+
+model ScanToken {
+  id         String     @id @default(cuid())
+  repoId     String
+  label      String
+  prefix     String
+  hash       String     @unique
+  createdAt  DateTime   @default(now())
+  lastUsedAt DateTime?
+  revoked    Boolean    @default(false)
+  repository Repository @relation(fields: [repoId], references: [id], onDelete: Cascade)
+
+  @@index([repoId])
+  @@map("scan_tokens")
+}
+
+model WebhookDelivery {
+  id           String    @id
+  repoId       String
+  provider     String    // "github" | "gitlab"
+  eventType    String    // e.g. "pull_request", "push", "Merge Request Hook"
+  deliveryGuid String
+  status       String    // "received" | "completed" | "failed" | "ignored"
+  hostedMode   Boolean   @default(false)
+  prNumber     Int?
+  error        String?
+  createdAt    DateTime  @default(now())
+  completedAt  DateTime?
+
+  @@index([repoId, createdAt])
+  @@index([deliveryGuid])
+  @@index([status])
+  @@map("webhook_deliveries")
+}
+
+/// Join table linking a teammate to a repo they've been invited to.
+/// Created after the teammate accepts an org-level invitation.
+model UserRepo {
+  id          String     @id @default(cuid())
+  userId      String
+  repoId      String
+  role        String     @default("member") // "member" | "admin"
+  invitedById String?
+  invitedAt   DateTime   @default(now())
+  user        User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  repository  Repository @relation(fields: [repoId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, repoId])
+  @@index([userId])
+  @@index([repoId])
+  @@map("user_repos")
+}
+
+/// Links a pending invitation to the repos the inviter selected.
+/// Cleaned up after acceptance or when invitation expires.
+model PendingRepoAssignment {
+  id           String   @id @default(cuid())
+  invitationId String
+  repoId       String
+  createdAt    DateTime @default(now())
+
+  @@unique([invitationId, repoId])
+  @@index([invitationId])
+  @@map("pending_repo_assignments")
+}
+
+/// Audit trail for API key usage — one row per authenticated action.
+model ApiKeyUsage {
+  id        String   @id @default(cuid())
+  keyId     String
+  userId    String?
+  repoId    String?
+  action    String   // e.g. "scan", "prcheck", "command", "prcomments"
+  ip        String?
+  timestamp DateTime @default(now())
+
+  @@index([keyId, timestamp])
+  @@index([repoId, timestamp])
+  @@map("api_key_usage")
+}
+
+model LLMPreset {
+  id                 String   @id @default(cuid())
+  name               String
+  endpoint           String
+  apiKeyCipher       String?
+  apiKeyIv           String?
+  apiKeyTag          String?
+  chatModel          String
+  embeddingModel     String
+  maxIterations      Int      @default(16)
+  isChatPrimary      Boolean  @default(false)
+  isEmbeddingPrimary Boolean  @default(false)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([isChatPrimary])
+  @@index([isEmbeddingPrimary])
+  @@map("llm_presets")
 }

@@ -276,6 +276,60 @@ describe("verifyChunkPlan — invariant enforcement", () => {
   });
 });
 
+describe("chunk labels are unique and readable", () => {
+  it("single-file chunk shows just the filename", () => {
+    const files: ReviewFileInput[] = [file("src/lib/a.ts", 100)];
+    const plans = chunkDiff(manifestOf(files));
+    expect(plans).toHaveLength(1);
+    expect(plans[0].label).toBe("src/lib/a.ts");
+  });
+
+  it("multi-file chunk includes dominant key, file count, and first filename", () => {
+    const files: ReviewFileInput[] = [
+      file("src/lib/a.ts", 100),
+      file("src/lib/b.ts", 100),
+      file("src/lib/c.ts", 100),
+    ];
+    const plans = chunkDiff(manifestOf(files));
+    expect(plans).toHaveLength(1);
+    expect(plans[0].label).toMatch(/^src\/ts-js \(\d+\): .+ \+\d+$/);
+    expect(plans[0].label).toContain("src/lib/a.ts");
+    expect(plans[0].label).toContain("(3)");
+  });
+
+  it("two chunks from the same package have different labels", () => {
+    // 4 files × 200 lines each — 800 total, exceeds 600 cap, split.
+    // First chunk: a+b+c (600). Second: d (200, single-file remainder).
+    const files: ReviewFileInput[] = [
+      file("src/lib/a.ts", 200),
+      file("src/lib/b.ts", 200),
+      file("src/lib/c.ts", 200),
+      file("src/lib/d.ts", 200),
+    ];
+    const plans = chunkDiff(manifestOf(files));
+    expect(plans).toHaveLength(2);
+    expect(plans[0].label).toMatch(/^src\/ts-js/);
+    expect(plans[0].label).not.toBe(plans[1].label);
+  });
+
+  it("all labels in a multi-chunk plan are unique", () => {
+    // 5 files × 250 lines each — 1250 total, split across multiple chunks
+    // under the 600-line cap.
+    const files: ReviewFileInput[] = [
+      file("src/lib/a.ts", 250),
+      file("src/lib/b.ts", 250),
+      file("src/lib/c.ts", 250),
+      file("src/lib/d.ts", 250),
+      file("src/lib/e.ts", 250),
+    ];
+    const plans = chunkDiff(manifestOf(files));
+    expect(plans.length).toBeGreaterThanOrEqual(2);
+    const labels = plans.map((p) => p.label);
+    const uniqueLabels = new Set(labels);
+    expect(uniqueLabels.size).toBe(labels.length);
+  });
+});
+
 // Reference the constants so unused-import lint doesn't fire if tests
 // above don't directly use them — also documents the values.
 describe("chunker constants", () => {

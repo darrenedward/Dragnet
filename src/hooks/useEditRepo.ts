@@ -20,26 +20,24 @@ export function useEditRepo({ onUpdated, onWebhookPrompt }: Options) {
   const [showEditRepoModal, setShowEditRepoModal] = useState(false);
   const [errorFeedback, setErrorFeedback] = useState<string | null>(null);
 
-  const [editMode, setEditMode] = useState<"local" | "ssh" | "pat">("local");
-  const [editPath, setEditPath] = useState("");
+  const [editMode, setEditMode] = useState<"ssh" | "pat">("ssh");
   const [editCloneUrl, setEditCloneUrl] = useState("");
   const [editCloneUrlHttps, setEditCloneUrlHttps] = useState("");
   const [editDeployKey, setEditDeployKey] = useState("");
   const [editPat, setEditPat] = useState("");
   const [editSkipTier2, setEditSkipTier2] = useState(false);
+  const [editHostedMode, setEditHostedMode] = useState(false);
 
   const openEditor = (repo: Repository) => {
     setEditingRepo(repo);
-    const provider = (repo.provider || "local") as "local" | "github" | "gitlab";
-    const mode: "local" | "ssh" | "pat" =
-      provider === "local" ? "local" : repo.patCipher ? "pat" : "ssh";
+    const mode: "ssh" | "pat" = repo.patCipher ? "pat" : "ssh";
     setEditMode(mode);
-    setEditPath(repo.path || "");
     setEditCloneUrl(repo.cloneUrl || "");
     setEditCloneUrlHttps(repo.cloneUrlHttps || "");
     setEditDeployKey("");
     setEditPat("");
     setEditSkipTier2(repo.skipTier2 ?? false);
+    setEditHostedMode(repo.hostedMode ?? false);
     setErrorFeedback(null);
     setShowEditRepoModal(true);
   };
@@ -60,18 +58,22 @@ export function useEditRepo({ onUpdated, onWebhookPrompt }: Options) {
       editCloneUrlHttps !== (editingRepo.cloneUrlHttps || "");
     const modeChanged = editMode !== prevProvider;
 
+    // For existing local repos, only send mode if a cloneUrl is provided
+    // so the repo transitions to remote; otherwise omit mode to leave it untouched.
+    const isExistingLocal = prevProvider === "local";
+
     try {
       const res = await fetch(`/api/repos/${editingRepo.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          mode: editMode,
-          path: editMode === "local" ? editPath.trim() : undefined,
-          cloneUrl: editMode !== "local" ? editCloneUrl.trim() || undefined : undefined,
-          cloneUrlHttps: editMode !== "local" ? editCloneUrlHttps.trim() || undefined : undefined,
+          mode: isExistingLocal && !editCloneUrl.trim() ? undefined : editMode,
+          cloneUrl: editCloneUrl.trim() || undefined,
+          cloneUrlHttps: editCloneUrlHttps.trim() || undefined,
           deployKey: editMode === "ssh" && editDeployKey ? editDeployKey : undefined,
           pat: editMode === "pat" && editPat ? editPat : undefined,
           skipTier2: editSkipTier2,
+          hostedMode: editHostedMode,
         }),
       });
 
@@ -85,7 +87,7 @@ export function useEditRepo({ onUpdated, onWebhookPrompt }: Options) {
       await onUpdated();
       closeEditor();
 
-      if (webhookTouched && editMode !== "local") {
+      if (webhookTouched) {
         onWebhookPrompt({
           id: editingRepo.id,
           name: editingRepo.name,
@@ -106,8 +108,6 @@ export function useEditRepo({ onUpdated, onWebhookPrompt }: Options) {
     editErrorFeedback: errorFeedback,
     editMode,
     setEditMode,
-    editPath,
-    setEditPath,
     editCloneUrl,
     setEditCloneUrl,
     editCloneUrlHttps,
@@ -118,5 +118,7 @@ export function useEditRepo({ onUpdated, onWebhookPrompt }: Options) {
     setEditPat,
     editSkipTier2,
     setEditSkipTier2,
+    editHostedMode,
+    setEditHostedMode,
   };
 }

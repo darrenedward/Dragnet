@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { Check, Copy, Eye, EyeOff, Key, RefreshCw, X } from "lucide-react";
+import { motion } from "motion/react";
+import { AlertCircle, Check, Copy, Eye, EyeOff, Key, RefreshCw, X } from "lucide-react";
 
 type Mode = "reveal" | "manage";
 
@@ -13,6 +14,37 @@ interface Props {
   onClose?: () => void;
   repoName?: string;
   onRefresh?: () => void;
+}
+
+interface ExistingKey {
+  id: string;
+  repoId: string | null;
+  name: string;
+}
+
+async function copyToClipboard(text: string): Promise<boolean> {
+  if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      // fall through to legacy path (non-secure context, older browser)
+    }
+  }
+  try {
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.setAttribute("readonly", "");
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    document.body.appendChild(textarea);
+    textarea.select();
+    const ok = document.execCommand("copy");
+    document.body.removeChild(textarea);
+    return ok;
+  } catch {
+    return false;
+  }
 }
 
 export default function ApiKeyManager({
@@ -29,58 +61,64 @@ export default function ApiKeyManager({
   const [showKey, setShowKey] = useState(false);
   const [copied, setCopied] = useState(false);
   const [regenerating, setRegenerating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [hasRegenerated, setHasRegenerated] = useState(mode === "reveal");
 
-  const handleCopy = () => {
-    try {
-      navigator.clipboard.writeText(apiKey);
-    } catch {
-      const ta = document.createElement("textarea");
-      ta.value = apiKey;
-      ta.style.position = "fixed";
-      ta.style.opacity = "0";
-      document.body.appendChild(ta);
-      ta.select();
-      document.execCommand("copy");
-      document.body.removeChild(ta);
+  const handleCopy = async () => {
+    const ok = await copyToClipboard(apiKey);
+    if (ok) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } else {
+      setError("Copy failed — select the key text manually and copy.");
     }
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
   };
 
   const handleRegenerate = async () => {
     setRegenerating(true);
+    setError(null);
     try {
-      // Fetch existing keys
       const existingRes = await fetch("/api/keys");
-      if (existingRes.ok) {
-        const existingKeys: { id: string; repoId: string | null }[] = await existingRes.json();
-        // Filter and revoke keys: global when repoId is null, otherwise repo-scoped
-        const keysToRevoke = repoId === null
+      if (!existingRes.ok) {
+        throw new Error(`Failed to fetch keys (${existingRes.status})`);
+      }
+      const existingKeys: ExistingKey[] = await existingRes.json();
+      // Global keys (repoId null) vs repo-scoped — regenerate the matching set.
+      const keysToRevoke =
+        repoId === null
           ? existingKeys.filter((k) => !k.repoId)
           : existingKeys.filter((k) => k.repoId === repoId);
-        await Promise.all(
-          keysToRevoke.map((k) => fetch(`/api/keys/${k.id}`, { method: "DELETE" })),
-        );
-      }
-      // Create new key: global when repoId is null (no repoId field in body), otherwise repo-scoped
-      const body = repoId === null
-        ? { name: "Global" }
-        : { name: repoName ? `project:${repoName}` : "Project", repoId };
+      await Promise.all(
+        keysToRevoke.map((k) => fetch(`/api/keys/${k.id}`, { method: "DELETE" })),
+      );
+
+      // Reuse the prior key's label if present; fall back to a sensible name.
+      const keyName =
+        keysToRevoke[0]?.name ??
+        (repoId === null
+          ? "Global"
+          : repoName
+            ? `project:${repoName}`
+            : `project:${repoId}`);
+
+      const body =
+        repoId === null ? { name: keyName } : { name: keyName, repoId };
       const res = await fetch("/api/keys", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-      const data = await res.json();
-      if (res.ok) {
-        setApiKey(data.key);
-        setPrefix(data.prefix);
-        setHasRegenerated(true);
-        onRefresh?.();
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data?.error || `Failed to regenerate (${res.status})`);
       }
-    } catch {
-      // Ignore regeneration errors
+      setApiKey(data.key);
+      setPrefix(data.prefix);
+      setHasRegenerated(true);
+      setCopied(false);
+      onRefresh?.();
+    } catch (err: any) {
+      setError(err?.message || "Failed to regenerate key");
     } finally {
       setRegenerating(false);
     }
@@ -88,7 +126,11 @@ export default function ApiKeyManager({
 
   if (mode === "reveal") {
     return (
-      <div className="p-5 bg-[#0F1219] border border-white/15 w-full max-w-md rounded-xl overflow-hidden shadow-2xl">
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        className="p-5 bg-[#0F1219] border border-white/15 w-full max-w-md rounded-xl overflow-hidden shadow-2xl"
+      >
         <div className="px-0 py-0 mb-4 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <div className="p-1.5 bg-amber-500/10 text-amber-400 rounded-lg">
@@ -101,7 +143,7 @@ export default function ApiKeyManager({
           {onClose && (
             <button
               onClick={onClose}
-              className="p-1 text-slate-400 hover:text-white rounded-lg hover:bg-white/5 transition-all"
+              className="p-1 text-slate-400 hover:text-white rounded-lg hover:bg-white/5 transition-all cursor-pointer"
               title="Close"
             >
               <X size={16} />
@@ -148,9 +190,16 @@ export default function ApiKeyManager({
             </div>
 
             <p className="text-[9px] text-amber-400/70 font-mono leading-snug">
-              You won't see this key again. Set it as <code className="text-amber-300">DRAGNET_API_KEY</code> in your client environment.
+              You won&apos;t see this key again. Set it as <code className="text-amber-300">DRAGNET_API_KEY</code> in your client environment.
             </p>
           </div>
+
+          {error && (
+            <div className="p-2 bg-rose-950/30 border border-rose-800/20 text-rose-400 rounded text-xs flex items-center gap-1.5 leading-snug">
+              <AlertCircle size={14} className="shrink-0" />
+              <span>{error}</span>
+            </div>
+          )}
 
           <div className="flex gap-2.5">
             <button
@@ -178,7 +227,7 @@ export default function ApiKeyManager({
             </button>
           </div>
         </div>
-      </div>
+      </motion.div>
     );
   }
 
@@ -193,12 +242,18 @@ export default function ApiKeyManager({
             <span className="font-bold">New API key — save it now</span>
             <button
               onClick={handleCopy}
-              className="ml-auto p-1 hover:bg-amber-500/10 rounded text-amber-400 hover:text-amber-300 transition-colors"
+              className="ml-auto p-1 hover:bg-amber-500/10 rounded text-amber-400 hover:text-amber-300 transition-colors cursor-pointer"
+              aria-label="Copy API key"
             >
               {copied ? <Check size={12} /> : <Copy size={12} />}
             </button>
           </div>
           <code className="block bg-black/60 p-2 rounded text-[11px] break-all select-all">{apiKey}</code>
+          {error && (
+            <div className="text-[10px] text-rose-400 flex items-center gap-1 mt-1">
+              <AlertCircle size={10} /> {error}
+            </div>
+          )}
         </div>
       );
     }

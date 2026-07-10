@@ -1,4 +1,5 @@
 import { execFile as cpExecFile, spawn, execSync } from "node:child_process";
+import { mkdirSync } from "node:fs";
 import { type RunOptions, type RunResult } from "./containerOrchestratorTypes";
 
 function asyncExecFile(file: string, args: string[], options: { encoding: string; signal: AbortSignal }): Promise<{ stdout: string; stderr: string }> {
@@ -169,12 +170,16 @@ export class ContainerOrchestrator {
       }
     }
 
+    // Override entrypoint to sh — images like alpine/git have git as
+    // their ENTRYPOINT, which would turn `sh -c "..."` into
+    // `git sh -c "..."` and fail. The shell script handles everything.
+    args.push("--entrypoint", "sh");
     args.push(options.image);
 
     // Combine commands into a single shell execution
     // e.g. sh -c "npm install && npm test"
     const shellScript = options.commands.join(" && ");
-    args.push("sh", "-c", shellScript);
+    args.push("-c", shellScript);
 
     let stdout = "";
     let stderr = "";
@@ -203,5 +208,70 @@ export class ContainerOrchestrator {
       stderr,
       timedOut,
     };
+  }
+
+  /**
+   * Copies the contents of a Docker volume to a host directory using a
+   * tar pipe. Creates hostDir if it doesn't exist.
+   *
+   * Uses a tar pipe instead of `cp -a` with a bind mount because the bind
+   * mount path resolves on the HOST filesystem, not the Dragnet container's
+   * filesystem. The tar pipe writes data through stdout so files land in
+   * the Dragnet container with the correct ownership.
+   *
+   * Uses `alpine/git` (already pulled for git operations) by default.
+   */
+  public async copyVolumeToHost(
+    volumeName: string,
+    hostDir: string,
+    image: string = "alpine/git",
+  ): Promise<void> {
+    const engine = detectContainerEngine();
+    mkdirSync(hostDir, { recursive: true });
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const dockerProc = spawn(engine, [
+          "run", "--rm",
+          "-v", `${volumeName}:/src:ro`,
+          "--entrypoint", "sh",
+          image,
+          "-c", "tar cf - -C /src .",
+        ], { stdio: ["ignore", "pipe", "pipe"] });
+
+        const tarProc = spawn("tar", ["xf", "-", "-C", hostDir], {
+          stdio: ["pipe", "inherit", "inherit"],
+        });
+
+        dockerProc.stdout!.pipe(tarProc.stdin!);
+
+        let settled = false;
+        const settle = (err?: Error) => {
+          if (settled) return;
+          settled = true;
+          if (err) reject(err);
+          else resolve();
+        };
+
+        dockerProc.on("error", (err) => {
+          tarProc.kill();
+          settle(new Error(`docker run failed: ${err.message}`));
+        });
+
+        tarProc.on("error", (err) => {
+          dockerProc.kill();
+          settle(new Error(`tar extraction failed: ${err.message}`));
+        });
+
+        tarProc.on("close", (code) => {
+          if (code === 0) settle();
+          else settle(new Error(`tar extraction exited with code ${code}`));
+        });
+      });
+    } catch (err: any) {
+      throw new Error(
+        `Failed to copy volume ${volumeName} to ${hostDir} via ${engine}: ${err.message}`,
+      );
+    }
   }
 }

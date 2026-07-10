@@ -72,6 +72,7 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
       testCommand,
       isPollingEnabled,
       skipTier2,
+      hostedMode,
     } = body;
 
     const current = await prisma.repository.findUnique({ where: { id } });
@@ -97,6 +98,7 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
     if (testCommand !== undefined) updateData.testCommand = testCommand;
     if (isPollingEnabled !== undefined) updateData.isPollingEnabled = Boolean(isPollingEnabled);
     if (skipTier2 !== undefined) updateData.skipTier2 = Boolean(skipTier2);
+    if (hostedMode !== undefined) updateData.hostedMode = Boolean(hostedMode);
 
     const modeChanged = typeof mode === "string" && mode !== current.provider;
     const urlChanged =
@@ -110,16 +112,7 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
 
     if (modeChanged) {
       updateData.provider = mode;
-      if (mode === "local") {
-        updateData.cloneUrl = null;
-        updateData.cloneUrlHttps = null;
-        updateData.deployKeyCipher = null;
-        updateData.deployKeyIv = null;
-        updateData.deployKeyTag = null;
-        updateData.patCipher = null;
-        updateData.patIv = null;
-        updateData.patTag = null;
-      } else if (mode === "ssh") {
+      if (mode === "ssh") {
         updateData.patCipher = null;
         updateData.patIv = null;
         updateData.patTag = null;
@@ -175,7 +168,7 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
       updateData.patTag = tag;
     }
 
-    const targetProvider = (updateData.provider as string) || current.provider || "local";
+    const targetProvider = (updateData.provider as string) || current.provider;
     const remoteTouched =
       targetProvider !== "local" && (modeChanged || urlChanged || writingSecret);
 

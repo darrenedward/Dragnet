@@ -82,11 +82,13 @@ export async function GET(req: Request) {
           diffSuggestion: true,
           evidenceChain: true,
           confidence: true,
+          confidenceReason: true,
           verificationStatus: true,
           verificationNote: true,
           source: true,
         },
       }),
+
       prisma.reviewFinding.findMany({
         where: { reviewRunId: run.id, verificationStatus: "rejected" },
         orderBy: { line: "asc" },

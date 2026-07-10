@@ -57,7 +57,21 @@ export async function GET(req: Request, { params }: { params: Promise<{ prId: st
         select: {
           sourceBranch: true,
           targetBranch: true,
-          repository: { select: { path: true, baseBranch: true } },
+          repository: {
+            select: {
+              id: true,
+              path: true,
+              baseBranch: true,
+              cloneUrl: true,
+              cloneUrlHttps: true,
+              deployKeyCipher: true,
+              deployKeyIv: true,
+              deployKeyTag: true,
+              patCipher: true,
+              patIv: true,
+              patTag: true,
+            },
+          },
         },
       }),
       prisma.prFile.findMany({
@@ -67,8 +81,8 @@ export async function GET(req: Request, { params }: { params: Promise<{ prId: st
       getActiveScan(prId),
     ]);
     const commitCount = pr
-      ? readPrCommitCount(
-          pr.repository.path,
+      ? await readPrCommitCount(
+          pr.repository,
           pr.targetBranch || pr.repository.baseBranch || "main",
           pr.sourceBranch,
         )

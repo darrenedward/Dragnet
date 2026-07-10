@@ -188,9 +188,11 @@ describe("ContainerOrchestrator.runRunner", () => {
     const orc = ContainerOrchestrator.getInstance();
     await orc.runRunner(baseOpts);
     const args: string[] = mockSpawn.mock.calls[0][1] as string[];
-    // Last three args should be: sh -c "npm install && npm test"
+    // Last three args should be: <image> -c "npm install && npm test"
+    // (the orchestrator pushes --entrypoint sh <image> earlier in the
+    // arg list, so the image sits before the -c flag in slice(-3)).
     expect(args.slice(-3)).toEqual([
-      "sh",
+      "node:22-alpine",
       "-c",
       "npm install && npm test",
     ]);

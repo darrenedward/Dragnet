@@ -111,6 +111,7 @@ vi.mock("../src/services/largePrReview/fingerprint", () => ({
 }));
 vi.mock("../src/services/largePrReview/reconcile", () => ({
   reconcileFindingsAcrossRuns: vi.fn().mockResolvedValue([]),
+  dedupFindingsWithinRun: vi.fn().mockResolvedValue(0),
 }));
 
 /**
@@ -143,12 +144,17 @@ function nvidiaResponse(body: any) {
           },
         },
       ],
+      // Token telemetry — reviewService reads `response.usage` to
+      // track cost. The shape is intentionally tiny (zero tokens)
+      // so the test isn't sensitive to the LLM-call volume.
+      usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
     };
   }
   // Finalizer call (no tools) — return text that won't parse as a
   // valid review JSON shape.
   return {
     choices: [{ message: { role: "assistant", content: "I cannot produce a review." } }],
+    usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
   };
 }
 
@@ -162,23 +168,23 @@ describe("runPrScan fallback regression — NVIDIA 4/4 must not invoke Minimax",
   it("primary provider loop exhaustion does NOT fall through to next provider", async () => {
     const { runPrScan } = await import("../reviewService");
 
-    // runPrScan throws when no provider produces a review (line 1176).
-    // That throw is incidental to what we're testing — the load-bearing
-    // assertion is that Minimax was never invoked. We expect the
-    // reject, then check call counts.
-    await expect(
-      runPrScan("pr-1", [
-        {
-          filename: "src/test.ts",
-          status: "modified",
-          additions: 1,
-          deletions: 1,
-          originalContent: "",
-          modifiedContent: "export const x = 1;\n",
-          diff: "+export const x = 1;\n",
-        },
-      ]),
-    ).rejects.toThrow(/ended the agentic loop without calling submitReview/);
+    // runPrScan no longer throws when no provider produces a review —
+    // it resolves with success=false and a systemWarn describing the
+    // failure. The load-bearing assertion is still: Minimax was
+    // never invoked. We resolve the promise and check call counts.
+    const result = await runPrScan("pr-1", [
+      {
+        filename: "src/test.ts",
+        status: "modified",
+        additions: 1,
+        deletions: 1,
+        originalContent: "",
+        modifiedContent: "export const x = 1;\n",
+        diff: "+export const x = 1;\n",
+      },
+    ]);
+    expect(result.success).toBe(false);
+    expect(result.systemWarn ?? "").toMatch(/ended the agentic loop without calling submitReview/);
 
     // Minimax must never have been invoked. This is the regression
     // assertion: a model-quality failure on the primary MUST NOT fall

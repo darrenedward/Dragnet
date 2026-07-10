@@ -1,20 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
 const mockExecSync = vi.hoisted(() => vi.fn());
-const mockWriteFileSync = vi.hoisted(() => vi.fn());
-const mockExistsSync = vi.hoisted(() => vi.fn());
-const mockMkdirSync = vi.hoisted(() => vi.fn());
-const mockAppendFileSync = vi.hoisted(() => vi.fn());
-const mockReadFileSync = vi.hoisted(() => vi.fn());
 
 vi.mock("child_process", () => ({ execSync: mockExecSync }));
-vi.mock("fs", () => ({
-  writeFileSync: mockWriteFileSync,
-  existsSync: mockExistsSync,
-  mkdirSync: mockMkdirSync,
-  appendFileSync: mockAppendFileSync,
-  readFileSync: mockReadFileSync,
-}));
 
 async function importInit() {
   return import("../cli/dragnet-init/src/init.mjs");
@@ -45,36 +33,12 @@ describe("canonicalizeUrl (vendored)", () => {
   });
 });
 
-describe("shouldAddGitignore", () => {
-  it("returns true when line not in gitignore", async () => {
-    const { shouldAddGitignore } = await importInit();
-    expect(shouldAddGitignore("node_modules/\n", ".dragnet/repo.json")).toBe(true);
-  });
-
-  it("returns false when line already in gitignore", async () => {
-    const { shouldAddGitignore } = await importInit();
-    expect(shouldAddGitignore(".dragnet/repo.json\n", ".dragnet/repo.json")).toBe(false);
-  });
-
-  it("returns true for empty gitignore", async () => {
-    const { shouldAddGitignore } = await importInit();
-    expect(shouldAddGitignore("", ".dragnet/repo.json")).toBe(true);
-  });
-
-  it("returns false when line is in gitignore without trailing newline", async () => {
-    const { shouldAddGitignore } = await importInit();
-    expect(shouldAddGitignore(".dragnet/repo.json", ".dragnet/repo.json")).toBe(false);
-  });
-});
-
 describe("runInit", () => {
   let mockFetch;
 
   beforeEach(() => {
     vi.clearAllMocks();
     mockExecSync.mockReturnValue("git@github.com:owner/repo.git");
-    mockExistsSync.mockReturnValue(true);
-    mockReadFileSync.mockReturnValue("node_modules/\n");
     mockFetch = vi.fn().mockResolvedValue({
       json: () => Promise.resolve({
         exists: true,
@@ -95,7 +59,7 @@ describe("runInit", () => {
     };
   }
 
-  it("reads git remote and writes repo.json for remote repo", async () => {
+  it("resolves repoId + apiKey via lookup for remote repo", async () => {
     const { runInit } = await importInit();
     const result = await runInit(defaultOpts());
 
@@ -104,17 +68,18 @@ describe("runInit", () => {
       apiKey: "dr_abc123",
       apiBase: "http://localhost:3300",
     });
+  });
 
-    expect(mockMkdirSync).toHaveBeenCalledWith(
-      "/tmp/test-repo/.dragnet",
-      { recursive: true, mode: 0o700 },
-    );
+  it("does NOT write any .dragnet/ files (PRD #33 — env vars replace filesystem config)", async () => {
+    const { runInit } = await importInit();
+    const result = await runInit(defaultOpts());
 
-    expect(mockWriteFileSync).toHaveBeenCalledWith(
-      "/tmp/test-repo/.dragnet/repo.json",
-      expect.stringContaining("github.com/owner/repo"),
-      { mode: 0o600 },
-    );
+    // Result is just data for the caller to print — no filesystem side effects.
+    expect(result).toEqual({
+      repoId: expect.any(String),
+      apiKey: expect.any(String),
+      apiBase: expect.any(String),
+    });
   });
 
   it("throws when no remote origin and not in local mode", async () => {
@@ -125,25 +90,18 @@ describe("runInit", () => {
       .rejects.toThrow("No git remote 'origin' found");
   });
 
-  it("prompts for repoId in local mode", async () => {
+  it("prompts for repoId in local mode and returns null apiKey (user fetches via UI)", async () => {
     const { runInit } = await importInit();
     const mockPrompt = vi.fn().mockResolvedValue("repo-manual-123");
-    mockExistsSync.mockReturnValue(false);
 
     const result = await runInit(defaultOpts({ prompt: mockPrompt, local: true }));
 
+    expect(mockPrompt).toHaveBeenCalled();
     expect(result).toEqual({
       repoId: "repo-manual-123",
-      apiKey: "",
+      apiKey: null,
       apiBase: "http://localhost:3300",
     });
-
-    expect(mockMkdirSync).toHaveBeenCalled();
-    expect(mockWriteFileSync).toHaveBeenCalledWith(
-      "/tmp/test-repo/.dragnet/repo.json",
-      expect.stringContaining("repo-manual-123"),
-      expect.anything(),
-    );
   });
 
   it("calls lookup API with canonical URL", async () => {
@@ -153,42 +111,6 @@ describe("runInit", () => {
     const fetchUrl = mockFetch.mock.calls[0][0];
     expect(fetchUrl).toContain("/api/repos/lookup?remoteUrl=");
     expect(fetchUrl).toContain(encodeURIComponent("https://github.com/owner/repo"));
-  });
-
-  it("writes apiKey from API response", async () => {
-    const { runInit } = await importInit();
-    await runInit(defaultOpts());
-
-    const writeArg = mockWriteFileSync.mock.calls[0][1];
-    const config = JSON.parse(writeArg);
-    expect(config.apiKey).toBe("dr_abc123");
-  });
-
-  it("adds .dragnet/repo.json to gitignore on user confirmation", async () => {
-    const { runInit } = await importInit();
-    mockReadFileSync.mockReturnValue("node_modules/\n");
-    await runInit(defaultOpts());
-
-    expect(mockAppendFileSync).toHaveBeenCalledWith(
-      "/tmp/test-repo/.gitignore",
-      expect.stringContaining(".dragnet/repo.json"),
-    );
-  });
-
-  it("skips gitignore update when user declines", async () => {
-    const { runInit } = await importInit();
-    mockReadFileSync.mockReturnValue("node_modules/\n");
-    await runInit(defaultOpts({ prompt: vi.fn().mockResolvedValue("n") }));
-
-    expect(mockAppendFileSync).not.toHaveBeenCalled();
-  });
-
-  it("skips gitignore update when already present", async () => {
-    const { runInit } = await importInit();
-    mockReadFileSync.mockReturnValue(".dragnet/repo.json\n");
-    await runInit(defaultOpts());
-
-    expect(mockAppendFileSync).not.toHaveBeenCalled();
   });
 
   it("throws gracefully when Dragnet is unreachable", async () => {

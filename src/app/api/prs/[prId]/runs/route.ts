@@ -33,6 +33,8 @@ export async function GET(req: Request, { params }: { params: Promise<{ prId: st
         triggerReason: true,
         commitHash: true,
         forced: true,
+        createdByUserId: true,
+        createdByUser: { select: { id: true, name: true, email: true } },
       },
     });
 

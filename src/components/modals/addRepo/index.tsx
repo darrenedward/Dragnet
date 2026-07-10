@@ -2,16 +2,22 @@
 
 import { useState } from "react";
 import { motion } from "motion/react";
-import { AlertCircle, Database, Globe, Github, X } from "lucide-react";
-import LocalTab from "./LocalTab";
+import { AlertCircle, CheckCircle2, Globe, Github, X } from "lucide-react";
 import RemoteTab from "./RemoteTab";
 import GitHubTab from "./GitHubTab";
 import ApiKeyManager from "../../apiKey/ApiKeyManager";
+
+export interface CreatedApiKey {
+  repoId: string;
+  raw: string;
+  prefix: string;
+}
 
 interface Props {
   onClose: () => void;
   onSubmit: (e: React.FormEvent) => void;
   errorFeedback: string | null;
+  createdApiKey: CreatedApiKey | null;
   // shared fields
   newRepoName: string;
   setNewRepoName: (v: string) => void;
@@ -23,9 +29,6 @@ interface Props {
   setNewTriggerMode: (v: "auto" | "mention") => void;
   newQuietPeriod: number;
   setNewQuietPeriod: (n: number) => void;
-  // local fields
-  newRepoPath: string;
-  setNewRepoPath: (v: string) => void;
   // remote fields
   newRepoMode: "ssh" | "pat";
   setNewRepoMode: (v: "ssh" | "pat") => void;
@@ -55,19 +58,18 @@ interface Props {
   } | null) => void;
 }
 
-type Tab = "local" | "remote" | "github";
+type Tab = "remote" | "github";
 
 export default function AddRepoModal(props: Props) {
-  const [tab, setTab] = useState<Tab>("local");
+  const [tab, setTab] = useState<Tab>("remote");
 
   const {
-    onClose, onSubmit, errorFeedback,
+    onClose, onSubmit, errorFeedback, createdApiKey,
     newRepoName, setNewRepoName,
     newBaseBranch, setNewBaseBranch,
     newBranchPattern, setNewBranchPattern,
     newTriggerMode, setNewTriggerMode,
     newQuietPeriod, setNewQuietPeriod,
-    newRepoPath, setNewRepoPath,
     newRepoMode, setNewRepoMode,
     newCloneUrl, setNewCloneUrl,
     newCloneUrlHttps, setNewCloneUrlHttps,
@@ -77,6 +79,8 @@ export default function AddRepoModal(props: Props) {
     addRepoSuccess,
     setAddRepoSuccess,
   } = props;
+
+  const isSuccessState = !!createdApiKey;
 
   const handleDone = () => {
     setAddRepoSuccess(null);
@@ -115,16 +119,16 @@ export default function AddRepoModal(props: Props) {
       >
         <div className="px-5 py-4 bg-slate-950/70 border-b border-white/10 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            {tab === "local" ? (
-              <Database size={16} className="text-cyan-400 animate-pulse" />
+            {isSuccessState ? (
+              <CheckCircle2 size={16} className="text-emerald-400" />
             ) : tab === "github" ? (
               <Github size={16} className="text-cyan-400 animate-pulse" />
             ) : (
               <Globe size={16} className="text-cyan-400 animate-pulse" />
             )}
             <span className="text-sm font-bold text-white tracking-tight uppercase font-mono">
-              {tab === "local"
-                ? "Link Local Repo Directory"
+              {isSuccessState
+                ? "Project Created"
                 : tab === "github"
                   ? "Import from GitHub"
                   : "Register Remote Repository"}
@@ -132,25 +136,15 @@ export default function AddRepoModal(props: Props) {
           </div>
           <button
             onClick={onClose}
-            className="p-1 text-slate-400 hover:text-white rounded-lg hover:bg-white/5 transition-all"
+            className="p-1 text-slate-400 hover:text-white rounded-lg hover:bg-white/5 transition-all cursor-pointer"
           >
             <X size={16} />
           </button>
         </div>
 
-        {/* Tab bar */}
+        {/* Tab bar (hidden in success state) */}
+        {!isSuccessState && (
         <div className="flex border-b border-white/10">
-          <button
-            type="button"
-            onClick={() => setTab("local")}
-            className={`flex-1 py-2.5 text-xs font-bold uppercase tracking-wider transition-all cursor-pointer ${
-              tab === "local"
-                ? "text-cyan-400 border-b-2 border-cyan-400 bg-cyan-400/5"
-                : "text-slate-500 hover:text-slate-300"
-            }`}
-          >
-            Local Directory
-          </button>
           <button
             type="button"
             onClick={() => setTab("remote")}
@@ -175,7 +169,19 @@ export default function AddRepoModal(props: Props) {
             <span>GitHub</span>
           </button>
         </div>
+        )}
 
+        {isSuccessState && createdApiKey ? (
+          <div className="p-5">
+            <ApiKeyManager
+              repoId={createdApiKey.repoId}
+              mode="reveal"
+              initialApiKey={createdApiKey.raw}
+              initialPrefix={createdApiKey.prefix}
+              onClose={onClose}
+            />
+          </div>
+        ) : (
         <form onSubmit={onSubmit} className="p-5 flex flex-col gap-4 text-xs font-mono">
           {errorFeedback && (
             <div className="p-2 bg-rose-950/30 border border-rose-800/20 text-rose-400 rounded text-xs flex items-center gap-1.5 leading-snug">
@@ -195,20 +201,7 @@ export default function AddRepoModal(props: Props) {
             />
           </Field>
 
-          {tab === "local" ? (
-            <LocalTab
-              newRepoPath={newRepoPath}
-              setNewRepoPath={setNewRepoPath}
-              newBaseBranch={newBaseBranch}
-              setNewBaseBranch={setNewBaseBranch}
-              newBranchPattern={newBranchPattern}
-              setNewBranchPattern={setNewBranchPattern}
-              newTriggerMode={newTriggerMode}
-              setNewTriggerMode={setNewTriggerMode}
-              newQuietPeriod={newQuietPeriod}
-              setNewQuietPeriod={setNewQuietPeriod}
-            />
-          ) : tab === "github" ? (
+          {tab === "github" ? (
             <GitHubTab
               onRepoSelect={(repoId, defaultBranch) => {
                 setNewGithubRepoId(repoId);
@@ -260,10 +253,11 @@ export default function AddRepoModal(props: Props) {
               type="submit"
               className="flex-1 bg-cyan-500 hover:bg-cyan-400 hover:shadow-[0_0_12px_rgba(6,182,212,0.3)] text-black py-2.5 rounded font-bold transition-all cursor-pointer text-center block"
             >
-              {tab === "local" ? "Register Link" : tab === "github" ? "Import Repository" : "Register Remote"}
+              {tab === "github" ? "Import Repository" : "Register Remote"}
             </button>
           </div>
         </form>
+        )}
       </motion.div>
     </div>
   );
