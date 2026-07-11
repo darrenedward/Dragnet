@@ -34,12 +34,16 @@ describe("lookupTrustWeight", () => {
     expect(lookupTrustWeight("minimax-m3-123b")).toBe(0.7);
   });
 
-  it("returns 0.4 for Ollama local models", () => {
-    expect(lookupTrustWeight("ollama/llama3.2")).toBe(0.4);
+  it("returns 0.4 for plain \"ollama\" identifier (exact seeded-table match)", () => {
+    expect(lookupTrustWeight("ollama")).toBe(0.4);
   });
 
-  it("returns 0.4 for local (Ollama) models", () => {
-    expect(lookupTrustWeight("ollama")).toBe(0.4);
+  it("returns 0.4 for plain \"lm-studio\" identifier (exact seeded-table match)", () => {
+    expect(lookupTrustWeight("lm-studio")).toBe(0.4);
+  });
+
+  it("returns 0.6 for ollama/llama3.2 (capability-based via llama prefix)", () => {
+    expect(lookupTrustWeight("ollama/llama3.2")).toBe(0.6);
   });
 
   it("returns 0.5 for unknown models", () => {
@@ -94,5 +98,31 @@ describe("lookupTrustWeight", () => {
 
   it("exports STABILITY_WEIGHT_THRESHOLD with default 2.5", () => {
     expect(STABILITY_WEIGHT_THRESHOLD).toBe(2.5);
+  });
+
+  it("env override wins for Ollama model name", () => {
+    const prev = process.env.DRAGNET_MODEL_TRUST_OLLAMA;
+    process.env.DRAGNET_MODEL_TRUST_OLLAMA = "0.9";
+    clearWeightCache();
+    expect(lookupTrustWeight("ollama/llama-3.1")).toBe(0.9);
+    if (prev === undefined) {
+      delete process.env.DRAGNET_MODEL_TRUST_OLLAMA;
+    } else {
+      process.env.DRAGNET_MODEL_TRUST_OLLAMA = prev;
+    }
+    clearWeightCache();
+  });
+
+  it("env override wins for LM Studio model name", () => {
+    const prev = process.env.DRAGNET_MODEL_TRUST_LMSTUDIO;
+    process.env.DRAGNET_MODEL_TRUST_LMSTUDIO = "0.7";
+    clearWeightCache();
+    expect(lookupTrustWeight("lmstudio/llama")).toBe(0.7);
+    if (prev === undefined) {
+      delete process.env.DRAGNET_MODEL_TRUST_LMSTUDIO;
+    } else {
+      process.env.DRAGNET_MODEL_TRUST_LMSTUDIO = prev;
+    }
+    clearWeightCache();
   });
 });
