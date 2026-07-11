@@ -193,20 +193,39 @@ export const REVIEW_ENGINE_CACHE_VERSION = "review-engine-v2-finalizer-safe-tran
  * sorts by filename for stability, concatenates with a separator,
  * sha256, first 16 hex chars.
  *
+ * `commitHint` is mixed into the seed so two pushes of the same PR to
+ * different commits CANNOT produce the same hash even if the resulting
+ * patch text is byte-identical (e.g. cherry-picked to a new HEAD, or
+ * a force-push that leaves the diff unchanged but moves the commit).
+ * Without this, the cache would silently treat a different commit as
+ * a cache hit; #13 reproduced exactly that — same diffHash, different
+ * commits, stale findings reused.
+ *
+ * Pass `commitHint = ""` when no commit context is available — the
+ * hash still works, just without the cross-commit collision guard.
+ *
  * Returns "" on empty input (no files / no diffs) — callers should
  * treat this as "can't compute, don't cache" since it will never
  * match a stored hash.
  */
-export function computeDiffHash(files: DiffHashInput[]): string {
+export function computeDiffHash(
+  files: DiffHashInput[],
+  commitHint: string = "",
+): string {
   const withDiff = files
     .filter((f) => f.diff && f.diff.trim().length > 0)
     .sort((a, b) => (a.filename < b.filename ? -1 : a.filename > b.filename ? 1 : 0));
 
   if (withDiff.length === 0) return "";
 
-  const seed = withDiff
+  const diffSeed = withDiff
     .map((f) => `--- ${f.filename} ---\n${f.diff!.trim()}`)
     .join("\n\n");
+
+  // Prefix the commit hint so any subsequent diff-text change after the
+  // commit hint is part of the same hash space. Kept in a single update()
+  // call so the hash is computed once.
+  const seed = commitHint ? `commit:${commitHint}\n${diffSeed}` : diffSeed;
 
   return crypto.createHash("sha256").update(seed).digest("hex").slice(0, 16);
 }
@@ -624,30 +643,36 @@ export async function setReviewChunkLastCheckpointAt(
 export async function getLatestCompletedReview(
   prId: string,
 ): Promise<LatestReviewResult> {
-  const latestRun = await prisma.reviewRun.findFirst({
-    where: { prId, status: "completed" },
-    orderBy: { completedAt: "desc" },
-    select: {
-      id: true,
-      commitHash: true,
-      diffHash: true,
-      reviewConfigHash: true,
-      completedAt: true,
-      rating: true,
-      model: true,
-      triggerReason: true,
-      reliability: true,
-      refused: true,
-      refusalNote: true,
-      outcome: true,
-      status: true,
-      chunksTotal: true,
-      chunksCompleted: true,
-      chunksFailed: true,
-      chunksSkipped: true,
-      tokensUsed: true,
-    },
-  });
+  const [latestRun, prRow] = await Promise.all([
+    prisma.reviewRun.findFirst({
+      where: { prId, status: "completed" },
+      orderBy: { completedAt: "desc" },
+      select: {
+        id: true,
+        commitHash: true,
+        diffHash: true,
+        reviewConfigHash: true,
+        completedAt: true,
+        rating: true,
+        model: true,
+        triggerReason: true,
+        reliability: true,
+        refused: true,
+        refusalNote: true,
+        outcome: true,
+        status: true,
+        chunksTotal: true,
+        chunksCompleted: true,
+        chunksFailed: true,
+        chunksSkipped: true,
+        tokensUsed: true,
+      },
+    }),
+    prisma.pullRequest.findUnique({
+      where: { id: prId },
+      select: { commitHash: true },
+    }),
+  ]);
 
   if (!latestRun) {
     return {
@@ -664,7 +689,7 @@ export async function getLatestCompletedReview(
     where: { prId },
     select: { filename: true, diff: true },
   });
-  const currentDiffHash = computeDiffHash(prFiles);
+  const currentDiffHash = computeDiffHash(prFiles, prRow?.commitHash ?? "");
   const stale = latestRun.diffHash !== "" && latestRun.diffHash !== currentDiffHash;
 
   const reviewFindingSelect = {

@@ -120,7 +120,7 @@ export async function POST(req: Request) {
         sizeProfile,
       });
     }
-    const diffHash = computeDiffHash(files);
+    const diffHash = computeDiffHash(files, pr.commitHash);
     const configHash = chatChain.length > 0
       ? computeReviewConfigHash(chatChain, shortHash(SYSTEM_INSTRUCTION), limits)
       : "";

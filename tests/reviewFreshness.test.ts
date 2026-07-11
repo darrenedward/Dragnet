@@ -67,6 +67,24 @@ describe("reviewFreshness", () => {
       const hash = computeDiffHash([{ filename: "a.ts", diff: "+x" }]);
       expect(hash).toMatch(/^[a-f0-9]{16}$/);
     });
+
+    it("treats different commit hints as different hashes even when the diff is byte-identical (issue #13)", () => {
+      // Reproduces the #13 scenario: a force-push that moves the PR commit
+      // but leaves the resulting diff text byte-identical (e.g. cherry-pick
+      // to a new HEAD). Without the commit hint, both pushes hash the same
+      // and the second scan silently reuses the first scan's findings.
+      const files = [{ filename: "src/foo.ts", diff: "@@ -1 +1 @@\n-x\n+y" }];
+      const hashA = computeDiffHash(files, "aaa111");
+      const hashB = computeDiffHash(files, "bbb222");
+      expect(hashA).not.toBe(hashB);
+      expect(hashA).toMatch(/^[a-f0-9]{16}$/);
+      expect(hashB).toMatch(/^[a-f0-9]{16}$/);
+    });
+
+    it("treats the empty commit-hint the same as a missing one (back-compat)", () => {
+      const files = [{ filename: "a.ts", diff: "+x" }];
+      expect(computeDiffHash(files, "")).toBe(computeDiffHash(files));
+    });
   });
 
   describe("computeReviewConfigHash", () => {

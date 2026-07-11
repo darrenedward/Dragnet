@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   mockPrUpdate: vi.fn(),
   mockPrFileDeleteMany: vi.fn(),
   mockPrFileCreateMany: vi.fn(),
+  mockPrFileFindMany: vi.fn(),
 }));
 
 vi.mock("../../src/lib/repoAccess", () => ({
@@ -37,6 +38,7 @@ vi.mock("../../src/lib/prisma", () => ({
     prFile: {
       deleteMany: mocks.mockPrFileDeleteMany,
       createMany: mocks.mockPrFileCreateMany,
+      findMany: mocks.mockPrFileFindMany,
     },
   },
 }));
@@ -299,5 +301,94 @@ describe("isBranchMerged", () => {
     mocks.mockRunGitInRepo.mockResolvedValue({ stdout: "", stderr: "fatal", exitCode: 1 });
     const result = await isBranchMerged({ id: "r1", path: "/x" }, "main", "feat");
     expect(result).toBe(false);
+  });
+});
+
+describe("refreshPrFiles — concurrent call chaining (issue #13)", () => {
+  // Reproduces the failure mode from issue #13: two concurrent scans
+  // arrive, the in-flight deleteMany/createMany of caller A races with
+  // caller B's prisma.prFile.findMany, B reads stale (or empty) rows and
+  // computes a diffHash that's identical to the prior scan's. The fix
+  // chains B onto A's promise so both see the same final state.
+  it("chains a second concurrent caller onto the in-flight refresh — only one underlying diff cycle", async () => {
+    const repo = { id: "r1", path: tmpDir };
+    // Pre-populate a stale row to make sure the second caller doesn't
+    // pick it up mid-refresh.
+    mocks.mockPrFileFindMany.mockResolvedValue([
+      {
+        filename: "stale.ts",
+        status: "M",
+        additions: 1,
+        deletions: 1,
+        originalContent: "STALE",
+        modifiedContent: "STALE",
+        diff: "@@ -1 +1 @@\n-old\n+STALE",
+      },
+    ]);
+
+    // Make the DB writes slow enough to leave a real window between
+    // deleteMany and createMany. Specifically: deleteMany returns
+    // immediately, createMany awaits a controllable signal so the
+    // first call's promise is mid-air when the second call arrives.
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    mocks.mockPrFileDeleteMany.mockResolvedValue({ count: 1 });
+    mocks.mockPrFileCreateMany.mockImplementation(async () => {
+      await gate;
+      return { count: 1 };
+    });
+    mocks.mockRepoFindUnique.mockResolvedValue({ id: "r1", baseBranch: "main" });
+
+    // The local path branch skips runGitInRepo, so we don't bother
+    // mocking it for collectBranchFiles — instead we short-circuit via
+    // a fresh tmp repo. Patch collectBranchFiles indirectly by using a
+    // real local-path repo with a known commit history.
+    execFileSync("git", ["-C", tmpDir, "checkout", "-q", "-b", "feature/q"]);
+    execFileSync("git", ["-C", tmpDir, "checkout", "-q", "main"]);
+
+    // Fill in the remaining prisma mocks expected by collectBranchFiles.
+    mocks.mockPrFindMany.mockResolvedValue([]);
+    mocks.mockPrFindUnique.mockResolvedValue(null);
+    mocks.mockRunGitInRepo.mockImplementation(async (_r, args) => {
+      if (args[0] === "show-ref" && args[2] === "refs/heads/main") {
+        return { stdout: "", stderr: "", exitCode: 0 };
+      }
+      if (args[0] === "diff" && args[1] === "--name-status") {
+        return { stdout: "M\tq.ts\n", stderr: "", exitCode: 0 };
+      }
+      if (args[0] === "diff" && args.includes("--")) {
+        return { stdout: "@@ -1 +1 @@\n-old\n+new\n", stderr: "", exitCode: 0 };
+      }
+      if (args[0] === "show") {
+        return { stdout: "new", stderr: "", exitCode: 0 };
+      }
+      return { stdout: "", stderr: "", exitCode: 0 };
+    });
+
+    const { refreshPrFiles, isRefreshInFlight } = await getMod();
+
+    const repo1 = { id: "r1", path: tmpDir };
+    const repo2 = { id: "r1", path: tmpDir };
+    const callA = refreshPrFiles(repo1, "feature/q", "pr-test-1");
+    // Confirm in-flight map sees it.
+    expect(isRefreshInFlight("pr-test-1")).toBe(true);
+
+    // Second caller arrives mid-refresh. Should chain, not start a new
+    // refresh — we verify by snapshotting the in-flight set BEFORE the
+    // second call resolves the gate.
+    const callB = refreshPrFiles(repo2, "feature/q", "pr-test-1");
+    expect(isRefreshInFlight("pr-test-1")).toBe(true);
+
+    // Only ONE underlying delete/create cycle should have happened —
+    // if the chain failed, both would have raced.
+    release();
+    const [resultA, resultB] = await Promise.all([callA, callB]);
+
+    expect(resultA).toEqual(resultB);
+    expect(mocks.mockPrFileDeleteMany).toHaveBeenCalledTimes(1);
+    expect(mocks.mockPrFileCreateMany).toHaveBeenCalledTimes(1);
+    expect(isRefreshInFlight("pr-test-1")).toBe(false);
   });
 });
