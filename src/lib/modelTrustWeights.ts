@@ -60,6 +60,10 @@ export const MODEL_TRUST_WEIGHTS: Record<string, number> = {
   lmstudio: 0.4,
 };
 
+function normalizeId(s: string): string {
+  return s.replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
 /**
  * Normalize a model ID for table lookup:
  *  - lowercase
@@ -69,7 +73,7 @@ export const MODEL_TRUST_WEIGHTS: Record<string, number> = {
 function normalizeModel(model: string): string {
   const lower = model.toLowerCase();
   const noPrefix = lower.includes("/") ? lower.split("/").slice(1).join("/") : lower;
-  return noPrefix.replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  return normalizeId(noPrefix);
 }
 
 let envOverrides: Record<string, number> | null = null;
@@ -95,35 +99,28 @@ export function clearWeightCache(): void {
   envOverrides = null;
 }
 
-function isLocalModel(model: string): boolean {
-  const lower = model.toLowerCase();
-  return (
-    lower.includes("ollama") ||
-    lower.includes("lm-studio") ||
-    lower.includes("lmstudio")
-  );
-}
-
 /**
  * Look up the trust weight for a model. Resolution order:
- *  1. Local-model provider check (Ollama / LM Studio → 0.4)
- *  2. Env override DRAGNET_MODEL_TRUST_<KEY>
- *  3. Exact table match on normalized key
- *  4. Prefix match: longest table key that's a prefix of the input
- *  5. Unknown → 0.5 (neutral default)
+ *  1. Env override DRAGNET_MODEL_TRUST_<KEY>
+ *  2. Exact table match on normalized key
+ *  3. Prefix match: longest table key that's a prefix of the input
+ *  4. Unknown → 0.5 (neutral default)
  */
 export function lookupTrustWeight(model: string | null | undefined): number {
   if (!model) return 0.5;
-
-  if (isLocalModel(model)) return 0.4;
 
   if (envOverrides === null) {
     envOverrides = computeEnvOverrides();
   }
 
   const key = normalizeModel(model);
+  const lowerRaw = model.toLowerCase();
+  const providerRaw = lowerRaw.includes("/") ? lowerRaw.split("/")[0] : lowerRaw;
+  const envCandidates = [key, normalizeId(providerRaw), providerRaw];
 
-  if (envOverrides[key] !== undefined) return envOverrides[key];
+  for (const candidate of envCandidates) {
+    if (envOverrides[candidate] !== undefined) return envOverrides[candidate];
+  }
 
   if (MODEL_TRUST_WEIGHTS[key] !== undefined) return MODEL_TRUST_WEIGHTS[key];
 
