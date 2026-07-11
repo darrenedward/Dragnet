@@ -21,6 +21,12 @@ import type { RunResult } from "./containerOrchestratorTypes";
 import { ContainerOrchestrator } from "./containerOrchestrator";
 import { shellEscape } from "./shellEscape";
 
+export function buildFetchRefspec(branches: string[]): string {
+  return branches
+    .map((b) => `'+refs/heads/${b}:refs/heads/${b}'`)
+    .join(" ");
+}
+
 export function buildSshEnv(
   deployKey: string,
   keyId: string,
@@ -211,9 +217,7 @@ class RealGitService implements GitServiceInterface {
     // '+refs/heads/*:refs/heads/*' refspec, scoped to just the branches we
     // need. The leading '+' allows non-fast-forward (e.g. force-pushes).
     const allBranches = [opts.branch, ...(opts.alsoFetch ?? [])];
-    const refspecs = allBranches
-      .map((b) => `'+refs/heads/${shellEscape(b)}:refs/heads/${shellEscape(b)}'`)
-      .join(" ");
+    const refspecs = buildFetchRefspec(allBranches);
     const syncScript = [
       "set -e",
       "[ -d /workspace/.git ] || git init /workspace",
