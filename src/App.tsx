@@ -401,7 +401,6 @@ export default function App() {
               if (d.selectedRepoId) {
                 await d.fetchPrsForSelectedRepo(d.selectedRepoId, true);
               }
-              setSettingsRepo(null);
             }}
           />
         )}
