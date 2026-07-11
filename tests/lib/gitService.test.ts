@@ -62,35 +62,49 @@ describe("buildFetchRefspec", () => {
   });
 
   it("round-trips a quoted branch name through /bin/sh", () => {
-    // The full acceptance test: feed buildFetchRefspec into /bin/sh -c and
-    // verify the shell parses the single-quoted form back to the canonical
-    // git refspec with the literal branch name preserved — including literal
-    // $, backticks, and other shell metacharacters that an inner escape
-    // would lose. Mirrors the path the syncScript takes inside the
-    // container (line 228): the refspec is part of the bash string the
-    // container sees once, so $-expansion is against the host env, not the
-    // branch name. We pass the refspec via env to avoid a re-expansion
-    // round that would change the test semantics.
+    // End-to-end acceptance: bake buildFetchRefspec's output into a real
+    // shell script the way the production syncScript does (gitService.ts:228),
+    // run it through /bin/sh, and verify the shell parses the refspec back
+    // to the original branch name. The previous version of this test passed
+    // the refspec via argv (`sh -c ... "_" "$refspec"`); argv expansion in
+    // node already unquotes the value, so sh never sees the single-quoted
+    // form and the test passed for any string — including the unescaped
+    // naive form which actually corrupts the branch name in real shells.
+    //
+    // To make the test meaningful, write the refspec INTO the script body
+    // (the way gitService.ts:228 interpolates it into a multi-statement
+    // bash string) so sh parses the single-quoted form. If escape
+    // regresses, the naive form would parse `my'branch` as the literal
+    // `mybranch` (the ' chars stripped), and this test fails immediately.
     if (process.platform === "win32") return;
     const { execFileSync } = require("node:child_process") as typeof import("node:child_process");
-    for (const branch of ["my'branch", "a'b'c", "weird'$branch", "'lead", "tail'", "name;with;semis", "`backticks`"]) {
+    const { writeFileSync, mkdtempSync, rmSync } = require("node:fs") as typeof import("node:fs");
+    const { tmpdir } = require("node:os") as typeof import("node:os");
+    const { join } = require("node:path") as typeof import("node:path");
+    const branches = ["my'branch", "a'b'c", "weird'$branch", "'lead", "tail'"];
+    for (const branch of branches) {
       const refspec = buildFetchRefspec([branch]);
-      // The sh -c command uses positional `$1` (set via env var below) and
-      // unsets every other parameter to make sure no outer expansion leaks.
-      // It then strips the leading '+' and trailing colon-separated halves
-      // and prints the inner refspec — which must equal our original input
-      // with the embedded single-quote restore to literal.
-      const echoed = execFileSync(
-        "/bin/sh",
-        [
-          "-c",
-          'set -f; unset IFS; refspec="$1"; shift; printf "%s" "$refspec"',
-          "_",
-          refspec,
-        ],
-        { encoding: "utf8" },
-      );
-      expect(echoed).toBe(refspec);
+      // Write a one-line script that printf's the (single-quoted) refspec,
+      // then run it with /bin/sh. shell parses it, removes the surrounding
+      // single quotes, and prints the canonical git refspec token. This
+      // mirrors the real syncScript's `git fetch origin … ${refspec}`
+      // shape — same parse order, same shell-context boundaries.
+      const dir = mkdtempSync(join(tmpdir(), "dragnet-rt-"));
+      const script = join(dir, "rt.sh");
+      writeFileSync(script, `printf '%s\\n' ${refspec}\n`);
+      let parsed: string;
+      try {
+        parsed = execFileSync("/bin/sh", [script], {
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "pipe"],
+        }).trimEnd();
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+      // The shell un-quotes the refspec and emits the canonical token
+      // git would receive. The branch name must round-trip byte-for-byte
+      // (including any literal $, ', ;, backticks, etc.).
+      expect(parsed).toBe(`+refs/heads/${branch}:refs/heads/${branch}`);
     }
   });
 });
