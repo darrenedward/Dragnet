@@ -531,11 +531,15 @@ model LLMPreset {
   embeddingModel     String
   maxIterations      Int      @default(16)
   isChatPrimary      Boolean  @default(false)
+  isChatFallback     Boolean  @default(false)
   isEmbeddingPrimary Boolean  @default(false)
+  isEmbeddingFallback Boolean @default(false)
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
   @@index([isChatPrimary])
+  @@index([isChatFallback])
   @@index([isEmbeddingPrimary])
+  @@index([isEmbeddingFallback])
   @@map("llm_presets")
 }

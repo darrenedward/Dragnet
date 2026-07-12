@@ -76,33 +76,19 @@ async function fetchAllFromDb(): Promise<PresetCache> {
   const rows = await prisma.lLMPreset.findMany();
   const presets = rows.map(rowToPreset);
   const primaryChat = rows.find((r) => r.isChatPrimary);
+  const fallbackChat = rows.find((r) => r.isChatFallback && (!primaryChat || r.id !== primaryChat.id));
   const primaryEmbedding = rows.find((r) => r.isEmbeddingPrimary);
-  const allIds = new Set(rows.map((r) => r.id));
+  const fallbackEmbedding = rows.find((r) => r.isEmbeddingFallback && (!primaryEmbedding || r.id !== primaryEmbedding.id));
 
-  const cache: PresetCache = {
+  return {
     version: getCacheVersion(),
     presets,
     primaryChatPresetId: primaryChat?.id ?? "",
-    fallbackChatPresetId: "",
+    fallbackChatPresetId: fallbackChat?.id ?? "",
     primaryEmbeddingPresetId: primaryEmbedding?.id ?? "",
-    fallbackEmbeddingPresetId: "",
+    fallbackEmbeddingPresetId: fallbackEmbedding?.id ?? "",
     fetchedAt: Date.now(),
   };
-
-  for (const p of presets) {
-    if (p.id !== cache.primaryChatPresetId && allIds.has(p.id)) {
-      if (!cache.fallbackChatPresetId) {
-        cache.fallbackChatPresetId = p.id;
-      }
-    }
-    if (p.id !== cache.primaryEmbeddingPresetId && allIds.has(p.id)) {
-      if (!cache.fallbackEmbeddingPresetId) {
-        cache.fallbackEmbeddingPresetId = p.id;
-      }
-    }
-  }
-
-  return cache;
 }
 
 function needsRefresh(c: PresetCache | null): boolean {
@@ -366,7 +352,9 @@ export async function savePresets(state: PresetsFile): Promise<void> {
           embeddingModel: p.embeddingModel,
           maxIterations: p.maxIterations ?? 16,
           isChatPrimary: p.id === state.primaryChatPresetId,
+          isChatFallback: p.id === state.fallbackChatPresetId && p.id !== state.primaryChatPresetId,
           isEmbeddingPrimary: p.id === state.primaryEmbeddingPresetId,
+          isEmbeddingFallback: p.id === state.fallbackEmbeddingPresetId && p.id !== state.primaryEmbeddingPresetId,
         },
         update: {
           name: p.name,
@@ -378,7 +366,9 @@ export async function savePresets(state: PresetsFile): Promise<void> {
           embeddingModel: p.embeddingModel,
           maxIterations: p.maxIterations ?? 16,
           isChatPrimary: p.id === state.primaryChatPresetId,
+          isChatFallback: p.id === state.fallbackChatPresetId && p.id !== state.primaryChatPresetId,
           isEmbeddingPrimary: p.id === state.primaryEmbeddingPresetId,
+          isEmbeddingFallback: p.id === state.fallbackEmbeddingPresetId && p.id !== state.primaryEmbeddingPresetId,
         },
       });
     }
@@ -397,6 +387,29 @@ export async function savePresets(state: PresetsFile): Promise<void> {
         data: { isEmbeddingPrimary: false },
       });
     }
+    // Clear stale fallback flags — a row that was a fallback for the
+    // previous primary selection must lose its flag once that slot
+    // moves elsewhere. Same shape as the primary clears above.
+    await tx.lLMPreset.updateMany({
+      where: {
+        OR: [
+          state.fallbackChatPresetId
+            ? { id: { not: state.fallbackChatPresetId }, isChatFallback: true }
+            : { isChatFallback: true },
+        ],
+      },
+      data: { isChatFallback: false },
+    });
+    await tx.lLMPreset.updateMany({
+      where: {
+        OR: [
+          state.fallbackEmbeddingPresetId
+            ? { id: { not: state.fallbackEmbeddingPresetId }, isEmbeddingFallback: true }
+            : { isEmbeddingFallback: true },
+        ],
+      },
+      data: { isEmbeddingFallback: false },
+    });
   });
 
   bumpCacheVersion();
