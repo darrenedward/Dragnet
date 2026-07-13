@@ -440,7 +440,48 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
         interrupted: true,
       });
     }
-    return NextResponse.json({ ...result, sizeProfile });
+    // Sync the PR's `status` column with what runPrScan just produced.
+    // The optimistic 'In Progress' was set when the lock was acquired;
+    // for any terminal outcome (full-review success, trivial-skip, or
+    // quality-failure with findings) the sidebar needs to flip back so
+    // the user sees the real state instead of "In Progress" until the
+    // 15s poller overwrites it. `Failed` is handled in the catch block
+    // below; we only handle the non-failure terminal cases here.
+    try {
+      await prisma.pullRequest.updateMany({
+        where: { id: prId },
+        data: { status: "Completed" },
+      });
+    } catch (statusErr) {
+      console.warn(`[scan] route: failed to clear PR In Progress status:`, statusErr);
+    }
+    // Popup data-source: most recent prior NON-SKIPPED completed run for
+    // this PR. Used by TrivialSkipNotice to honestly show "your last code
+    // grade was X/10 from Y" when the current scan trivial-skipped. Null
+    // when no prior code-touching review exists. Excludes the just-finished
+    // run (reviewRunId) so a fresh scan doesn't return itself as "prior".
+    let priorReviewRun: { rating: number | null; completedAt: string | null } | null = null;
+    try {
+      const prior = await prisma.reviewRun.findFirst({
+        where: {
+          prId,
+          status: "completed",
+          id: reviewRunId ? { not: reviewRunId } : undefined,
+          outcome: { not: "skipped" },
+        },
+        orderBy: { completedAt: "desc" },
+        select: { rating: true, completedAt: true },
+      });
+      if (prior) {
+        priorReviewRun = {
+          rating: prior.rating,
+          completedAt: prior.completedAt ? prior.completedAt.toISOString() : null,
+        };
+      }
+    } catch (priorErr) {
+      console.warn(`[scan] route: failed to load priorReviewRun for prId=${prId}:`, priorErr);
+    }
+    return NextResponse.json({ ...result, sizeProfile, priorReviewRun });
   } catch (err: any) {
     console.error(`[scan] route: ERROR:`, err);
     if (acquired) endReview(prId);

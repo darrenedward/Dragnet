@@ -97,6 +97,8 @@ export interface LatestReviewResult {
     reliability: string | null;
     refused: boolean;
     refusalNote: string | null;
+    outcome: string | null;
+    status: string;
     chunksTotal: number;
     chunksCompleted: number;
     chunksFailed: number;
@@ -495,12 +497,18 @@ async function inspectStaleRun(
 
 export async function completeReviewRun(
   runId: string,
-  outcome:
+  result:
     | {
         status: "completed";
         rating: number | null;
         refused?: boolean;
         refusalNote?: string | null;
+        // User-facing terminal classification, orthogonal to lifecycle
+        // `status`. "reviewed" = model reviewed code (or empty-diff with
+        // no prior cache). "skipped" = trivial-skip (diff was all config/
+        // docs/generated, Tier 1+2 clean). Omitted/null on `failed` and
+        // on legacy call sites that haven't been migrated.
+        outcome?: "reviewed" | "skipped" | null;
       }
     | { status: "failed" },
 ): Promise<void> {
@@ -508,15 +516,16 @@ export async function completeReviewRun(
     await prisma.reviewRun.update({
       where: { id: runId },
       data: {
-        status: outcome.status,
+        status: result.status,
         completedAt: new Date(),
-        ...(outcome.status === "completed"
+        ...(result.status === "completed"
           ? {
-              rating: outcome.rating,
+              rating: result.rating,
+              outcome: result.outcome ?? null,
               // refused defaults to false on the column; only write when the
               // reviewer actually flagged. refusalNote written alongside.
-              ...(outcome.refused === true
-                ? { refused: true, refusalNote: outcome.refusalNote ?? null }
+              ...(result.refused === true
+                ? { refused: true, refusalNote: result.refusalNote ?? null }
                 : {}),
             }
           : {}),
@@ -524,7 +533,7 @@ export async function completeReviewRun(
     });
   } catch (err) {
     console.warn(
-      `[reviewFreshness] failed to mark run ${runId} as ${outcome.status}:`,
+      `[reviewFreshness] failed to mark run ${runId} as ${result.status}:`,
       err,
     );
   }
@@ -630,6 +639,8 @@ export async function getLatestCompletedReview(
       reliability: true,
       refused: true,
       refusalNote: true,
+      outcome: true,
+      status: true,
       chunksTotal: true,
       chunksCompleted: true,
       chunksFailed: true,

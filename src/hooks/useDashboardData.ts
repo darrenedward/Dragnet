@@ -71,6 +71,8 @@ export function useDashboardData() {
     model: string | null;
     triggerReason: string | null;
     reliability?: string | null;
+    status?: string; // lifecycle: "in_progress" | "completed" | "failed"
+    outcome?: string | null; // "reviewed" | "skipped" | null (legacy / failed)
     chunksTotal?: number;
     chunksCompleted?: number;
     chunksFailed?: number;
@@ -160,6 +162,17 @@ export function useDashboardData() {
   const [isRetryingChunks, setIsRetryingChunks] = useState(false);
   const [scanResult, setScanResult] = useState<{ count: number; model: string; notice?: string | null } | null>(null);
   const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
+  // Trivial-skip popup state. Lives here (not in App.tsx) because the
+  // decision to open it is derived from inside handleTriggerPrScan, and
+  // the prior-grade context the popup needs comes from the scan response
+  // (`priorReviewRun`) — not a snapshot of `reviewRun` before refetch.
+  // App.tsx just renders the modal when this is non-null AND prId matches
+  // the currently-selected PR (defense-in-depth against cross-PR leaks).
+  const [trivialSkipNotice, setTrivialSkipNotice] = useState<{
+    prId: string;
+    lastRating: number | null;
+    lastScanAt: string | null;
+  } | null>(null);
 
   // ===== Add-repo modal form state =====
   const [showAddRepoModal, setShowAddRepoModal] = useState(false);
@@ -427,6 +440,7 @@ export function useDashboardData() {
     setScanResult(null);
     setExportStatus(null);
     setInterruptedScan(null);
+    setTrivialSkipNotice(null);
   }, [selectedRepoId, selectedPrId]);
 
   // Fetch PRs + details immediately when selection changes (no polling reset).
@@ -644,6 +658,22 @@ export function useDashboardData() {
           model: result.usedModel,
           notice: result.systemWarn,
         });
+        // Trivial-skip: backend returned `usedModel: "none (skipped)"`
+        // because the diff was all config/docs/generated files. The
+        // backend also returned `priorReviewRun` — the most recent
+        // NON-SKIPPED completed run for this PR — so the popup can
+        // honestly show "your last code grade was X/10 from Y" without
+        // snapshotting `reviewRun` before the refetch overwrites it.
+        // The sticky button label is derived per-PR from
+        // `reviewRun.outcome` after refetch, so no `lastScanOutcome`
+        // state is needed.
+        if (result.usedModel === "none (skipped)") {
+          setTrivialSkipNotice({
+            prId: targetPrId,
+            lastRating: result.priorReviewRun?.rating ?? null,
+            lastScanAt: result.priorReviewRun?.completedAt ?? null,
+          });
+        }
         console.log(`[scan] handleTriggerPrScan: refetching PR details, PRs, repos, logs`);
         setSelectedRepoId(scanningRepoId);
         setSelectedPrId(targetPrId);
@@ -1064,6 +1094,8 @@ export function useDashboardData() {
     isRetryingChunks,
     scanResult,
     setScanResult,
+    trivialSkipNotice,
+    setTrivialSkipNotice,
     handleTriggerPrScan,
     handleStopScan,
     handleRetryFailedChunks,

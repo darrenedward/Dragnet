@@ -150,6 +150,7 @@ describe("Empty-diff PR handling — issue #61", () => {
       status: "completed",
       rating: null,
       refused: false,
+      outcome: "reviewed",
     });
   });
 
