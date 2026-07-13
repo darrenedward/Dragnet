@@ -134,6 +134,7 @@ model ReviewRun {
   diffHash         String
   reviewConfigHash String
   status           String // "in_progress" | "completed" | "failed"
+  outcome          String? // user-facing terminal classification — "reviewed" | "skipped" | null (legacy / in-progress / failed). Orthogonal to lifecycle `status`.
   startedAt        DateTime
   completedAt      DateTime?
   model            String?
