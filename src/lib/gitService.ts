@@ -45,6 +45,69 @@ export function buildFetchRefspec(branches: string[]): string {
     .join(" ");
 }
 
+/**
+ * Build the shell script `syncToBranch` sends into the alpine/git sidecar.
+ * Extracted as a pure function so the consecutive-fetch bug
+ * ("refusing to fetch into branch 'refs/heads/main' checked out at '/workspace'")
+ * can be reproduced in a unit test against a real tmpdir git repo, without
+ * needing Docker.
+ *
+ * `workDir` is shell-escaped via the same rules as `cloneUrl`/`branch`. In
+ * production it is always `/workspace`; tests pass a tmpdir.
+ *
+ * Invariant: the script MUST detach HEAD before invoking `git fetch` with
+ * explicit `refs/heads/<branch>` refspecs, and MUST leave HEAD detached at
+ * the target ref afterwards. If the working tree is on any branch that also
+ * appears in `refspecs`, git refuses to update that branch's ref
+ * (`fatal: refusing to fetch into branch 'refs/heads/main' checked out at …`,
+ * exit 128 under `set -e`). Re-attaching HEAD to the branch at the end
+ * would re-introduce the same bug on the next call. See ticket #18.
+ */
+export function buildSyncBranchScript(opts: {
+  workDir: string;
+  escapedUrl: string;
+  escapedBranch: string;
+  refspecs: string;
+}): string {
+  const workDir = shellEscape(opts.workDir);
+  return [
+    "set -e",
+    `[ -d ${workDir}/.git ] || git init ${workDir}`,
+    `cd ${workDir}`,
+    `git remote get-url origin 2>/dev/null && git remote set-url origin '${opts.escapedUrl}' || git remote add origin '${opts.escapedUrl}'`,
+    // Detach HEAD before fetch so git allows refs/heads/* updates for the
+    // branch the working tree currently points at.
+    //
+    // Two cases:
+    //   1. HEAD is born (reused volume left at a commit on main, or any
+    //      branch we last switched to): `git checkout --detach HEAD`
+    //      detaches at that commit, freeing the symbolic ref.
+    //   2. HEAD is unborn (fresh `git init`, no commits yet — HEAD is
+    //      `ref: refs/heads/main` with no commit): `git checkout --detach`
+    //      fails with "You are on a branch yet to be born", so we fall
+    //      through to `git symbolic-ref HEAD refs/heads/__dragnet_fetch`,
+    //      which reassigns HEAD's symbolic target to a placeholder unborn
+    //      branch. The working tree stays empty, refs/heads/main becomes
+    //      fetchable, and the final `git checkout --detach` populates the
+    //      tree from the fetched commit.
+    //
+    // Without this step, `git fetch origin +refs/heads/main:refs/heads/main`
+    // fails with `fatal: refusing to fetch into branch 'refs/heads/main'
+    // checked out at '/workspace'` (exit 128 under `set -e`). See #18.
+    "git checkout --detach HEAD 2>/dev/null || git symbolic-ref HEAD refs/heads/__dragnet_fetch",
+    // Prune so branches deleted on remote disappear locally too;
+    // depth=100 is plenty for review use cases.
+    `git fetch origin --prune --depth=100 ${opts.refspecs}`.trim(),
+    // Detach at the PR branch's ref rather than `git switch -C <branch>`,
+    // so the next syncToBranch against a refspec that includes this same
+    // branch can update it without hitting the same "refusing to fetch"
+    // error. `git diff base...pr` works identically against a detached
+    // HEAD at the branch's commit as it does against a checked-out
+    // branch.
+    `git checkout --detach 'refs/heads/${opts.escapedBranch}'`,
+  ].join(" && ");
+}
+
 export function buildSshEnv(
   deployKey: string,
   keyId: string,
@@ -236,19 +299,12 @@ class RealGitService implements GitServiceInterface {
     // need. The leading '+' allows non-fast-forward (e.g. force-pushes).
     const allBranches = [opts.branch, ...(opts.alsoFetch ?? [])];
     const refspecs = buildFetchRefspec(allBranches);
-    const syncScript = [
-      "set -e",
-      "[ -d /workspace/.git ] || git init /workspace",
-      "cd /workspace",
-      `git remote get-url origin 2>/dev/null && git remote set-url origin '${escapedUrl}' || git remote add origin '${escapedUrl}'`,
-      // Prune so branches deleted on remote disappear locally too;
-      // depth=100 is plenty for review use cases.
-      `git fetch origin --prune --depth=100 ${refspecs}`.trim(),
-      // Checkout the PR branch from the just-updated local ref. Using the
-      // explicit ref (not FETCH_HEAD) avoids ambiguity when multiple
-      // refspecs are fetched in one go.
-      `git switch -C '${escapedBranch}' 'refs/heads/${escapedBranch}'`,
-    ].join(" && ");
+    const syncScript = buildSyncBranchScript({
+      workDir: "/workspace",
+      escapedUrl,
+      escapedBranch,
+      refspecs,
+    });
 
     const extraEnv: Record<string, string> = {};
     let result: RunResult;
