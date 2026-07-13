@@ -19,6 +19,7 @@ import { detectBuildSystem } from "./src/lib/buildsystemDetect";
 import { classifyDiff } from "./src/lib/diffClassifier";
 import { buildFindingFingerprint, resolveSymbolsBatch } from "./src/services/largePrReview/fingerprint";
 import { dedupFindingsWithinRun, reconcileFindingsAcrossRuns } from "./src/services/largePrReview/reconcile";
+import { recordFixesForCompletedScan } from "./src/services/findingLifecycle/bugFixTracker";
 import { classifyProviderOutcome, type OutcomeClass, type ProviderAttempt } from "./src/lib/failureClassifier";
 import { computeCost } from "./src/lib/llmPricing";
 import { recordProviderQualityFailure, recordProviderSuccess } from "./src/lib/providerHealth";
@@ -2267,6 +2268,9 @@ ${diffPayload}${deterministicPayload}`;
       refusalNote,
       outcome: "reviewed",
     });
+    recordFixesForCompletedScan(reviewRunId).catch((err) =>
+      console.warn(`[scan] recordFixesForCompletedScan failed for run ${reviewRunId}:`, err),
+    );
   }
 
   // 7. Update PR rating + status
