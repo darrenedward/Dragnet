@@ -440,6 +440,21 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
         interrupted: true,
       });
     }
+    // Sync the PR's `status` column with what runPrScan just produced.
+    // The optimistic 'In Progress' was set when the lock was acquired;
+    // for any terminal outcome (full-review success, trivial-skip, or
+    // quality-failure with findings) the sidebar needs to flip back so
+    // the user sees the real state instead of "In Progress" until the
+    // 15s poller overwrites it. `Failed` is handled in the catch block
+    // below; we only handle the non-failure terminal cases here.
+    try {
+      await prisma.pullRequest.updateMany({
+        where: { id: prId },
+        data: { status: "Completed" },
+      });
+    } catch (statusErr) {
+      console.warn(`[scan] route: failed to clear PR In Progress status:`, statusErr);
+    }
     return NextResponse.json({ ...result, sizeProfile });
   } catch (err: any) {
     console.error(`[scan] route: ERROR:`, err);
