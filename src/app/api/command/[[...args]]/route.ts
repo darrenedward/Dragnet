@@ -87,7 +87,7 @@ async function startTrackedReview(pr: any, repo: any, userId: string | null): Pr
     oversizedCodeFiles: limits.oversizedCodeFiles,
   });
   const tier = assertTier(manifest);
-  const diffHash = computeDiffHash(files);
+  const diffHash = computeDiffHash(files, pr.commitHash);
   const configHash = chatChain.length > 0
     ? computeReviewConfigHash(chatChain, shortHash(SYSTEM_INSTRUCTION), limits)
     : "";

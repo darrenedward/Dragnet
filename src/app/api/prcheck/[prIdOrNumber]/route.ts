@@ -129,10 +129,18 @@ export async function GET(req: Request, { params }: { params: Promise<{ prIdOrNu
         sizeProfile,
       });
     }
-    const diffHash = computeDiffHash(files);
+    const diffHash = computeDiffHash(files, pr.commitHash);
     const configHash = chatChain.length > 0
       ? computeReviewConfigHash(chatChain, shortHash(SYSTEM_INSTRUCTION), limits)
       : "";
+    // Issue #13 — log the persisted PrFile row count + aggregate diff size
+    // when a cached diffHash is about to be used, so future runs can
+    // distinguish "stale row mix" from "no diff change" at a glance.
+    console.log(
+      `[prcheck] pr=${pr.id} commit=${pr.commitHash.slice(0, 7) || "(empty)"} ` +
+      `diffHash=${diffHash.slice(0, 8) || "(empty)"} files=${files.length} ` +
+      `diffChars=${files.reduce((n, f) => n + (f.diff?.length ?? 0), 0)}`,
+    );
 
     const force = url.searchParams.get("force") === "true";
     // Shared concurrency guard — same helper as scan/route.ts so a UI

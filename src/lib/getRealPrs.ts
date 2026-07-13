@@ -455,39 +455,28 @@ async function listBranches(repo: RepoLike): Promise<BranchInfo[]> {
   });
 }
 
-// In-memory guard: prevents concurrent refreshPrFiles for the same prId.
-// Without this, multiple scan requests that arrive before the review lock
-// is acquired ALL call collectBranchFiles simultaneously, spawning
-// N × (numFiles × 3) Docker containers and overwhelming the host.
-const activeFileRefreshes = new Set<string>();
+// In-flight refresh promises, keyed by prId. Replaces a naive Set guard
+// so concurrent callers chain onto the same refresh instead of returning
+// the partially-mutated PrFile rows (which happens when caller A is
+// between deleteMany and createMany — caller B then reads an empty or
+// stale row mix).
+//
+// Why this matters: the previous Set-based short-circuit returned the
+// current PrFile rows directly, racing with caller A's deleteMany/createMany
+// and producing a stale diffHash for caller B's scan. Same PR, two
+// scans, byte-identical ReviewRun.diffHash — that's what triggered #13.
+const inFlightRefreshes = new Map<string, Promise<Awaited<ReturnType<typeof collectBranchFiles>>>>();
 
 export async function refreshPrFiles(repo: RepoLike, branchName: string, prId: string) {
-  if (activeFileRefreshes.has(prId)) {
-    console.log(`[refreshPrFiles] already in progress for ${prId} — returning existing files`);
-    const existing = await prisma.prFile.findMany({
-      where: { prId },
-      select: {
-        filename: true,
-        status: true,
-        additions: true,
-        deletions: true,
-        originalContent: true,
-        modifiedContent: true,
-        diff: true,
-      },
-    });
-    return existing.map((f) => ({
-      filename: f.filename,
-      status: f.status,
-      additions: f.additions,
-      deletions: f.deletions,
-      originalContent: f.originalContent ?? "",
-      modifiedContent: f.modifiedContent ?? "",
-      diff: f.diff ?? "",
-    }));
+  // Chain: if a refresh is already running for this prId, return the same
+  // promise. Callers see the result of the in-flight work — no stale rows.
+  const existing = inFlightRefreshes.get(prId);
+  if (existing) {
+    console.log(`[refreshPrFiles] chaining onto in-flight refresh for ${prId}`);
+    return existing;
   }
-  activeFileRefreshes.add(prId);
-  try {
+
+  const refreshPromise = (async () => {
     const repoRow = await prisma.repository.findUnique({
       where: { id: repo.id },
       select: { baseBranch: true },
@@ -524,9 +513,23 @@ export async function refreshPrFiles(repo: RepoLike, branchName: string, prId: s
       });
     }
     return files;
+  })();
+
+  inFlightRefreshes.set(prId, refreshPromise);
+  try {
+    return await refreshPromise;
   } finally {
-    activeFileRefreshes.delete(prId);
+    inFlightRefreshes.delete(prId);
   }
+}
+
+/**
+ * Test/diagnostic helper — true while a refresh is in flight for a given prId.
+ * Used by routes that want to log when chained rather than fresh. Not used
+ * by refreshPrFiles itself (it uses the in-flight map directly).
+ */
+export function isRefreshInFlight(prId: string): boolean {
+  return inFlightRefreshes.has(prId);
 }
 
 async function collectBranchFiles(
