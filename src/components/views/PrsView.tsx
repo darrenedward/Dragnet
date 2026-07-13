@@ -20,6 +20,7 @@ import IndexNowBanner from "./prs/IndexNowBanner";
 import InterruptedScanBanner, { type InterruptedScan } from "./prs/InterruptedScanBanner";
 import ReviewProgress from "./prs/ReviewProgress";
 import ReviewCard from "./prs/ReviewCard";
+import BugFixFeed from "./prs/BugFixFeed";
 import ScanHistory from "./prs/ScanHistory";
 import PrSizeProfileChip from "../PrSizeProfileChip";
 import type { ReviewLimits } from "../../lib/prSizeConfig";
@@ -226,6 +227,10 @@ export default function PrsView({
                 copyFeedback={copyFeedback}
               />
             </>
+          )}
+
+          {activePR && (
+            <BugFixFeed prId={activePR.id} />
           )}
 
           <SectionLabel>Scan History</SectionLabel>
