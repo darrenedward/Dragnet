@@ -10,6 +10,8 @@ const API_KEY = process.env.DRAGNET_REPO_KEY || process.env.DRAGNET_API_KEY || "
 
 const [cmd, ...args] = process.argv.slice(2);
 
+const { execSync: _execSync } = await import("child_process");
+
 async function main() {
   switch (cmd) {
     case "install-hooks": {
@@ -30,9 +32,9 @@ async function main() {
       break;
     }
     case "review": {
-      const branch = args[0] || execSync("git rev-parse --abbrev-ref HEAD", { encoding: "utf8" }).trim();
-      const repoPath = execSync("git rev-parse --show-toplevel", { encoding: "utf8" }).trim();
-      const sha = execSync("git rev-parse HEAD", { encoding: "utf8" }).trim();
+      const branch = args[0] || _execSync("git rev-parse --abbrev-ref HEAD", { encoding: "utf8" }).trim();
+      const repoPath = _execSync("git rev-parse --show-toplevel", { encoding: "utf8" }).trim();
+      const sha = _execSync("git rev-parse HEAD", { encoding: "utf8" }).trim();
 
       const res = await fetch(`${BASE}/api/hooks/prepush`, {
         method: "POST",

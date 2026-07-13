@@ -935,7 +935,7 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
     // Persist the result for this new scan
     await prisma.pullRequest.updateMany({ where: { id: prId }, data: { status: "Completed", rating } });
     if (reviewRunId && !reviewChunkId) {
-      await completeReviewRun(reviewRunId, { status: "completed", rating, refused: false });
+      await completeReviewRun(reviewRunId, { status: "completed", rating, refused: false, outcome: "reviewed" });
     }
     if (!reviewChunkId) {
       try {
@@ -1895,6 +1895,31 @@ ${diffPayload}${deterministicPayload}`;
   }
 
   if (llmData.skipped) {
+    // Trivial-skip: Tier 1+2 clean + diff is config/docs/generated —
+    // LLM review never runs, but the review_run row still needs to be
+    // marked completed and the PR status updated so the sidebar flips
+    // out of "In Progress", getActiveScan() returns null on /findings,
+    // and the next polling tick sees the run as terminal. Doing this
+    // inside runPrScan (vs. relying on the scan route's catch/success
+    // branches) keeps the run-row lifecycle co-located with the result.
+    if (reviewRunId && !reviewChunkId) {
+      try {
+        await prisma.reviewRun.update({
+          where: { id: reviewRunId },
+          data: { status: "completed", outcome: "skipped", completedAt: new Date(), rating: null },
+        });
+      } catch (runErr) {
+        console.warn(`[scan] runPrScan: failed to mark trivial-skip run completed:`, runErr);
+      }
+    }
+    try {
+      await prisma.pullRequest.updateMany({
+        where: { id: prId },
+        data: { status: "Completed", rating: null },
+      });
+    } catch (prErr) {
+      console.warn(`[scan] runPrScan: failed to set PR Completed on trivial-skip:`, prErr);
+    }
     return {
       success: true,
       rating: null,
@@ -2240,6 +2265,7 @@ ${diffPayload}${deterministicPayload}`;
       rating,
       refused,
       refusalNote,
+      outcome: "reviewed",
     });
   }
 

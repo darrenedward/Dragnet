@@ -21,9 +21,27 @@ import type { RunResult } from "./containerOrchestratorTypes";
 import { ContainerOrchestrator } from "./containerOrchestrator";
 import { shellEscape } from "./shellEscape";
 
+/**
+ * Wrap a branch-name fragment for safe inclusion inside a single-quoted
+ * shell token. An embedded `'` would terminate the outer `'…'` wrap, so
+ * we close the current quote, emit a backslash-escaped `'`, and reopen.
+ *
+ * 'my'branch'  →  'my'\''branch'
+ *
+ * NB: this shares the underlying escape pattern with src/lib/shellEscape.ts
+ * but is intentionally a separate helper — shellEscape is meant for a value
+ * interpolated between bare quotes (`'${shellEscape(x)}'`); reusing it
+ * here would emit the same sequence in a context where only the close/
+ * reopen form makes sense. Either produces the right bytes today, but
+ * they have different contracts and would diverge.
+ */
+function escapeForSingleQuotedRefspec(branch: string): string {
+  return branch.replace(/'/g, "'\\''");
+}
+
 export function buildFetchRefspec(branches: string[]): string {
   return branches
-    .map((b) => `'+refs/heads/${b}:refs/heads/${b}'`)
+    .map((b) => `'+refs/heads/${escapeForSingleQuotedRefspec(b)}:refs/heads/${escapeForSingleQuotedRefspec(b)}'`)
     .join(" ");
 }
 

@@ -227,7 +227,7 @@ export default function LlmConfigTabs() {
               LLM Router
             </h3>
             <p className="text-xs text-slate-400">
-              Pick a primary + optional fallback provider for each role. If the primary fails, the fallback is tried automatically. Changes save to <code>.dragnet/llm-presets.json</code> and take effect immediately.
+              Pick a primary + optional fallback provider for each role. If the primary fails, the fallback is tried automatically. Changes save to the Dragnet database (encrypted keys) and take effect immediately.
             </p>
           </div>
           <button
@@ -371,7 +371,7 @@ function ExplanatoryCard() {
           <strong className="text-slate-300">Honest failure:</strong> if both providers fail, the review returns an empty findings list with a null rating and a clear actionable banner — never templated/hallucinated output. Embeddings trip a session circuit breaker and return empty until you fix the underlying issue.
         </li>
         <li>
-          <strong className="text-slate-300">No restart:</strong> changes take effect on the next request. Keys are stored in <code>.dragnet/llm-presets.json</code> with mode 0600.
+          <strong className="text-slate-300">No restart:</strong> changes take effect on the next request. Keys are stored in the Dragnet database, encrypted at rest with <code>DRAGNET_MASTER_KEY</code>.
         </li>
         <li>
           <strong className="text-slate-300">Visible keys:</strong> the actual key is loaded back into the field on every page load. Click the eye to reveal it in plain text — useful for confirming you pasted the right one or for copying into a CLI. The route is session-gated, so this is a usability tradeoff, not a security regression.

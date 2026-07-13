@@ -57,6 +57,8 @@ interface Props {
     model: string | null;
     triggerReason: string | null;
     reliability?: string | null;
+    status?: string; // lifecycle: "in_progress" | "completed" | "failed"
+    outcome?: string | null; // "reviewed" | "skipped" | null (legacy / failed)
     chunksTotal?: number;
     chunksCompleted?: number;
     chunksFailed?: number;
@@ -183,6 +185,7 @@ export default function PrsView({
           hasFindings={findings.length > 0}
           scanResult={scanResult}
           onDismissScanResult={onDismissScanResult}
+          reviewRun={reviewRun}
           scanSettings={scanSettings}
           repoId={repoId}
           repoIndexedAt={repoIndexedAt}
@@ -250,6 +253,7 @@ function PrHeader({
   hasFindings,
   scanResult,
   onDismissScanResult,
+  reviewRun,
   scanSettings,
   repoId,
   repoIndexedAt,
@@ -267,6 +271,13 @@ function PrHeader({
   hasFindings: boolean;
   scanResult: ScanResult | null;
   onDismissScanResult: () => void;
+  reviewRun?: {
+    id: string;
+    status?: string;
+    outcome?: string | null;
+    rating?: number | null;
+    completedAt?: string | null;
+  } | null;
   scanSettings: ScanSettingsSummary | null;
   repoId?: string;
   repoIndexedAt?: string | null;
@@ -276,6 +287,17 @@ function PrHeader({
   onStartFreshScan?: (prId: string) => void;
 }) {
   const scanning = isScanning || activePR?.status === "In Progress";
+  // Label/color/tooltip decision tree for the "Run PR Review" button.
+  // Pure function of the selected PR's persisted scan state — no
+  // dashboard-level sticky memory, so switching PRs can never leak a
+  // foreign PR's outcome onto this button. Priority order:
+  //   1. scanning        → "Review Running..." (pulse + opacity)
+  //   2. !repoIndexedAt  → "Index Required" (disabled, greyscale)
+  //   3. status=failed   → "Re-run review" (rose)
+  //   4. outcome=skipped → "Skipped — re-scan after changes" (amber)
+  //   5. else            → "Run PR Review" (default cyan→indigo)
+  const failed = reviewRun?.status === "failed";
+  const skipped = reviewRun?.outcome === "skipped";
 
   if (!activePR) {
     return (
@@ -335,14 +357,34 @@ function PrHeader({
                 ? "Index the codebase first — reviews without an index produce only diff-only guesses."
                 : scanning
                   ? "Review already in progress."
-                  : "Run the agentic review loop on this PR"
+                  : failed
+                    ? "Last scan failed — re-run when ready."
+                    : skipped
+                      ? "Last scan skipped — no code changes were detected. Make a code change and re-run."
+                      : "Run the agentic review loop on this PR"
             }
-            className={`min-h-11 px-4 py-2 bg-gradient-to-r from-cyan-500 to-indigo-500 hover:from-cyan-400 hover:to-indigo-400 text-black text-xs font-bold rounded-lg flex items-center gap-1.5 transition-all shadow-md select-none ${
+            className={`min-h-11 px-4 py-2 text-xs font-bold rounded-lg flex items-center gap-1.5 transition-all shadow-md select-none ${
+              failed && !scanning
+                ? "bg-rose-500 hover:bg-rose-400 text-black"
+                : skipped && !scanning
+                  ? "bg-amber-500 hover:bg-amber-400 text-black"
+                  : "bg-gradient-to-r from-cyan-500 to-indigo-500 hover:from-cyan-400 hover:to-indigo-400 text-black"
+            } ${
               scanning ? "animate-pulse opacity-50" : ""
             } ${!repoIndexedAt ? "opacity-40 cursor-not-allowed grayscale" : "cursor-pointer"}`}
           >
             <Zap size={14} className="fill-black" />
-            <span>{scanning ? "Review Running..." : !repoIndexedAt ? "Index Required" : "Run PR Review"}</span>
+            <span>
+              {scanning
+                ? "Review Running..."
+                : !repoIndexedAt
+                  ? "Index Required"
+                  : failed
+                    ? "Re-run review"
+                    : skipped
+                      ? "Skipped — re-scan after changes"
+                      : "Run PR Review"}
+            </span>
           </button>
           {scanning && (
             <>
