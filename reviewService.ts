@@ -935,7 +935,7 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
     // Persist the result for this new scan
     await prisma.pullRequest.updateMany({ where: { id: prId }, data: { status: "Completed", rating } });
     if (reviewRunId && !reviewChunkId) {
-      await completeReviewRun(reviewRunId, { status: "completed", rating, refused: false });
+      await completeReviewRun(reviewRunId, { status: "completed", rating, refused: false, outcome: "reviewed" });
     }
     if (!reviewChunkId) {
       try {
@@ -1906,7 +1906,7 @@ ${diffPayload}${deterministicPayload}`;
       try {
         await prisma.reviewRun.update({
           where: { id: reviewRunId },
-          data: { status: "completed", completedAt: new Date(), rating: null },
+          data: { status: "completed", outcome: "skipped", completedAt: new Date(), rating: null },
         });
       } catch (runErr) {
         console.warn(`[scan] runPrScan: failed to mark trivial-skip run completed:`, runErr);
@@ -2265,6 +2265,7 @@ ${diffPayload}${deterministicPayload}`;
       rating,
       refused,
       refusalNote,
+      outcome: "reviewed",
     });
   }
 
