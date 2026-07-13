@@ -253,7 +253,6 @@ export default function App() {
                   exportStatus={d.exportStatus}
                   scanResult={d.scanResult}
                   onDismissScanResult={() => d.setScanResult(null)}
-                  lastScanOutcome={d.lastScanOutcome}
                   findings={d.findings}
                   reviewRun={d.reviewRun}
                   chunks={d.reviewChunks}
@@ -421,9 +420,12 @@ export default function App() {
 
       {/* MODAL: Trivial-skip results popup. Triggered when runPrScan
           returned usedModel="none (skipped)" — surface the explanation
-          the user asked for with a per-browser opt-out. */}
+          the user asked for with a per-browser opt-out. Render-gated
+          on prId === selectedPrId as defense-in-depth against cross-PR
+          state leaks (the source of truth is the clear in the
+          [selectedRepoId, selectedPrId] effect in useDashboardData). */}
       <AnimatePresence>
-        {d.trivialSkipNotice && (
+        {d.trivialSkipNotice && d.trivialSkipNotice.prId === d.selectedPrId && (
           <TrivialSkipNotice
             open
             lastRating={d.trivialSkipNotice.lastRating}
