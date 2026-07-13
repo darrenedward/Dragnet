@@ -18,6 +18,7 @@ interface BugFixEvent {
 interface BugFixResponse {
   fixedCount: number;
   events: BugFixEvent[];
+  hasPriorRun: boolean;
 }
 
 interface Props {
@@ -51,12 +52,16 @@ export default function BugFixFeed({ prId }: Props) {
 
   if (loading || !data) return null;
 
-  if (data.fixedCount === 0) {
+  if (data.fixedCount === 0 && !data.hasPriorRun) {
     return (
       <div className="mt-4 text-xs text-gray-500 dark:text-gray-400 italic">
         Awaiting next scan to detect fix events.
       </div>
     );
+  }
+
+  if (data.fixedCount === 0) {
+    return null;
   }
 
   return (

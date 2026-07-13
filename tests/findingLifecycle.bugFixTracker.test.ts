@@ -1,12 +1,20 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const bugFixEventCreate = vi.fn();
+const txBugFixEventCreate = vi.fn();
 const reviewRunFindFirst = vi.fn();
 const reviewRunFindUnique = vi.fn();
 const reviewFindingFindMany = vi.fn();
+const transactionCallback = vi.fn();
 
 vi.mock("../src/lib/prisma", () => ({
   prisma: {
+    $transaction: (cbOrArray: any) => {
+      if (typeof cbOrArray === "function") {
+        transactionCallback(cbOrArray);
+        return cbOrArray({ bugFixEvent: { create: txBugFixEventCreate } });
+      }
+      return Promise.all(cbOrArray);
+    },
     reviewRun: {
       findUnique: reviewRunFindUnique,
       findFirst: reviewRunFindFirst,
@@ -15,7 +23,7 @@ vi.mock("../src/lib/prisma", () => ({
       findMany: reviewFindingFindMany,
     },
     bugFixEvent: {
-      create: bugFixEventCreate,
+      create: txBugFixEventCreate,
     },
   },
 }));
@@ -42,12 +50,12 @@ describe("recordFixesForCompletedScan", () => {
         { filename: "a.ts", line: 1, category: "security", severity: "blocker" },
       ])
       .mockResolvedValueOnce([
-        { filename: "a.ts", line: 1, category: "security", severity: "blocker" },
-        { filename: "b.ts", line: 5, category: "performance", severity: "blocker" },
-        { filename: "b.ts", line: 5, category: "performance", severity: "blocker" },
+        { id: "f1", filename: "a.ts", line: 1, category: "security", severity: "blocker" },
+        { id: "f2", filename: "b.ts", line: 5, category: "performance", severity: "blocker" },
+        { id: "f3", filename: "b.ts", line: 5, category: "performance", severity: "blocker" },
       ]);
 
-    bugFixEventCreate
+    txBugFixEventCreate
       .mockResolvedValueOnce({ id: "evt-1" })
       .mockRejectedValueOnce(Object.assign(new Error("Unique constraint"), { code: "P2002" }));
 
@@ -59,7 +67,7 @@ describe("recordFixesForCompletedScan", () => {
     expect(result).toEqual({ written: 1, skipped: 1 });
   });
 
-  it("handles non-P2002 errors from bugFixEvent.create by logging and NOT writing", async () => {
+  it("rethrows non-P2002 errors from bugFixEvent.create", async () => {
     reviewRunFindUnique.mockResolvedValue({
       id: "run-2",
       prId: "pr-1",
@@ -71,16 +79,15 @@ describe("recordFixesForCompletedScan", () => {
 
     reviewFindingFindMany
       .mockResolvedValueOnce([{ filename: "a.ts", line: 1, category: "security", severity: "blocker" }])
-      .mockResolvedValueOnce([{ filename: "a.ts", line: 1, category: "security", severity: "blocker" }, { filename: "b.ts", line: 5, category: "performance", severity: "blocker" }]);
+      .mockResolvedValueOnce([{ id: "f1", filename: "a.ts", line: 1, category: "security", severity: "blocker" }, { id: "f2", filename: "b.ts", line: 5, category: "performance", severity: "blocker" }]);
 
-    bugFixEventCreate.mockRejectedValueOnce(new Error("DB connection lost"));
+    txBugFixEventCreate.mockRejectedValueOnce(new Error("DB connection lost"));
 
     const { recordFixesForCompletedScan } = await import(
       "../src/services/findingLifecycle/bugFixTracker"
     );
 
-    const result = await recordFixesForCompletedScan("run-2");
-    expect(result).toEqual({ written: 0, skipped: 0 });
+    await expect(recordFixesForCompletedScan("run-2")).rejects.toThrow("DB connection lost");
   });
 
   it("returns zeros when no prior run exists", async () => {
@@ -128,5 +135,31 @@ describe("recordFixesForCompletedScan", () => {
     );
 
     expect(await recordFixesForCompletedScan("run-1")).toEqual({ written: 0, skipped: 0 });
+  });
+
+  it("idempotent on re-run — second call returns written:0, skipped:1", async () => {
+    reviewRunFindUnique.mockResolvedValue({
+      id: "run-2",
+      prId: "pr-1",
+      status: "completed",
+      outcome: "reviewed",
+    });
+
+    reviewRunFindFirst.mockResolvedValue({ id: "run-1" });
+
+    reviewFindingFindMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ id: "f1", filename: "a.ts", line: 1, category: "security", severity: "blocker" }]);
+
+    txBugFixEventCreate.mockRejectedValueOnce(
+      Object.assign(new Error("Unique constraint"), { code: "P2002" }),
+    );
+
+    const { recordFixesForCompletedScan } = await import(
+      "../src/services/findingLifecycle/bugFixTracker"
+    );
+
+    const result = await recordFixesForCompletedScan("run-2");
+    expect(result).toEqual({ written: 0, skipped: 1 });
   });
 });

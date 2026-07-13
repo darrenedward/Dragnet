@@ -15,24 +15,33 @@ export async function GET(req: Request, { params }: { params: Promise<{ prId: st
     });
     if (!pr) return NextResponse.json({ error: "PR not found" }, { status: 404 });
 
-    const events = await prisma.bugFixEvent.findMany({
-      where: { prId },
-      orderBy: { fixedAt: "desc" },
-      select: {
-        id: true,
-        filename: true,
-        line: true,
-        category: true,
-        severity: true,
-        fixedAt: true,
-        fixedAtScanId: true,
-        originatedAtScanId: true,
-        sourceFindingId: true,
-      },
-    });
+    const [events, priorRunCount] = await Promise.all([
+      prisma.bugFixEvent.findMany({
+        where: { prId },
+        orderBy: { fixedAt: "desc" },
+        select: {
+          id: true,
+          filename: true,
+          line: true,
+          category: true,
+          severity: true,
+          fixedAt: true,
+          fixedAtScanId: true,
+          originatedAtScanId: true,
+          sourceFindingId: true,
+        },
+      }),
+      prisma.reviewRun.count({
+        where: {
+          prId,
+          status: "completed",
+          outcome: { not: "skipped" },
+        },
+      }),
+    ]);
 
     return NextResponse.json(
-      { fixedCount: events.length, events },
+      { fixedCount: events.length, events, hasPriorRun: priorRunCount > 1 },
       { headers: { "Cache-Control": "max-age=0, must-revalidate" } },
     );
   } catch (err) {
