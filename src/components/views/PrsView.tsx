@@ -47,6 +47,11 @@ interface Props {
   exportStatus: { kind: "file" | "download"; success: boolean; message: string } | null;
   scanResult: ScanResult | null;
   onDismissScanResult: () => void;
+  // Sticky label state for the "Run PR Review" button. When the last
+  // scan finished with a trivial skip, this is "skipped" so the button
+  // doesn't flash back to its default and pretend nothing happened.
+  // Cleared at the start of the next click.
+  lastScanOutcome?: "success" | "skipped" | null;
   findings: ReviewFinding[];
   reviewRun?: {
     id: string;
@@ -135,6 +140,7 @@ export default function PrsView({
   exportStatus,
   scanResult,
   onDismissScanResult,
+  lastScanOutcome,
   findings,
   reviewRun,
   stability,
@@ -183,6 +189,7 @@ export default function PrsView({
           hasFindings={findings.length > 0}
           scanResult={scanResult}
           onDismissScanResult={onDismissScanResult}
+          lastScanOutcome={lastScanOutcome}
           scanSettings={scanSettings}
           repoId={repoId}
           repoIndexedAt={repoIndexedAt}
@@ -250,6 +257,7 @@ function PrHeader({
   hasFindings,
   scanResult,
   onDismissScanResult,
+  lastScanOutcome,
   scanSettings,
   repoId,
   repoIndexedAt,
@@ -267,6 +275,7 @@ function PrHeader({
   hasFindings: boolean;
   scanResult: ScanResult | null;
   onDismissScanResult: () => void;
+  lastScanOutcome?: "success" | "skipped" | null;
   scanSettings: ScanSettingsSummary | null;
   repoId?: string;
   repoIndexedAt?: string | null;
@@ -335,14 +344,28 @@ function PrHeader({
                 ? "Index the codebase first — reviews without an index produce only diff-only guesses."
                 : scanning
                   ? "Review already in progress."
-                  : "Run the agentic review loop on this PR"
+                  : lastScanOutcome === "skipped"
+                    ? "Last scan skipped — no code changes were detected. Make a code change and re-run."
+                    : "Run the agentic review loop on this PR"
             }
-            className={`min-h-11 px-4 py-2 bg-gradient-to-r from-cyan-500 to-indigo-500 hover:from-cyan-400 hover:to-indigo-400 text-black text-xs font-bold rounded-lg flex items-center gap-1.5 transition-all shadow-md select-none ${
+            className={`min-h-11 px-4 py-2 text-xs font-bold rounded-lg flex items-center gap-1.5 transition-all shadow-md select-none ${
+              lastScanOutcome === "skipped" && !scanning
+                ? "bg-amber-500 hover:bg-amber-400 text-black"
+                : "bg-gradient-to-r from-cyan-500 to-indigo-500 hover:from-cyan-400 hover:to-indigo-400 text-black"
+            } ${
               scanning ? "animate-pulse opacity-50" : ""
             } ${!repoIndexedAt ? "opacity-40 cursor-not-allowed grayscale" : "cursor-pointer"}`}
           >
             <Zap size={14} className="fill-black" />
-            <span>{scanning ? "Review Running..." : !repoIndexedAt ? "Index Required" : "Run PR Review"}</span>
+            <span>
+              {scanning
+                ? "Review Running..."
+                : !repoIndexedAt
+                  ? "Index Required"
+                  : lastScanOutcome === "skipped"
+                    ? "Skipped — re-scan after changes"
+                    : "Run PR Review"}
+            </span>
           </button>
           {scanning && (
             <>

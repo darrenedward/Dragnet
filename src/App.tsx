@@ -24,6 +24,7 @@ import LlmConfigView from "./components/views/LlmConfigView";
 import DashboardSidebar from "./components/DashboardSidebar";
 import SystemSetupBanner from "./components/SystemSetupBanner";
 import PrsView from "./components/views/PrsView";
+import TrivialSkipNotice from "./components/views/prs/TrivialSkipNotice";
 import AddRepoModal from "./components/modals/addRepo";
 import EditRepoModal from "./components/modals/editRepo";
 import RepoSettingsModal from "./components/modals/repoSettings/RepoSettingsModal";
@@ -252,6 +253,7 @@ export default function App() {
                   exportStatus={d.exportStatus}
                   scanResult={d.scanResult}
                   onDismissScanResult={() => d.setScanResult(null)}
+                  lastScanOutcome={d.lastScanOutcome}
                   findings={d.findings}
                   reviewRun={d.reviewRun}
                   chunks={d.reviewChunks}
@@ -413,6 +415,20 @@ export default function App() {
             repoId={keyModalRepo.id}
             repoName={keyModalRepo.name}
             onClose={() => setKeyModalRepo(null)}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* MODAL: Trivial-skip results popup. Triggered when runPrScan
+          returned usedModel="none (skipped)" — surface the explanation
+          the user asked for with a per-browser opt-out. */}
+      <AnimatePresence>
+        {d.trivialSkipNotice && (
+          <TrivialSkipNotice
+            open
+            lastRating={d.trivialSkipNotice.lastRating}
+            lastScanAt={d.trivialSkipNotice.lastScanAt}
+            onClose={() => d.setTrivialSkipNotice(null)}
           />
         )}
       </AnimatePresence>
