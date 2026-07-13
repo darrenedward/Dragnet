@@ -64,6 +64,7 @@ describe("GET /api/prs/[prId]/fixes", () => {
       fixedAtScanId: "run-2",
       originatedAtScanId: "run-1",
       sourceFindingId: "find-1",
+      sourceFinding: { explanation: "Null dereference in payment handler" },
     };
     mocks.mockPullRequestFindUnique.mockResolvedValue({ id: "pr-1" });
     mocks.mockBugFixEventFindMany.mockResolvedValue([event]);
@@ -82,6 +83,7 @@ describe("GET /api/prs/[prId]/fixes", () => {
       line: 42,
       category: "Correctness",
       severity: "blocker",
+      title: "Null dereference in payment handler",
     });
     expect(body.hasPriorRun).toBe(true);
   });
@@ -97,6 +99,7 @@ describe("GET /api/prs/[prId]/fixes", () => {
       fixedAtScanId: "run-2",
       originatedAtScanId: "run-1",
       sourceFindingId: "find-1",
+      sourceFinding: null,
     };
     const newer = {
       id: "evt-new",
@@ -108,6 +111,7 @@ describe("GET /api/prs/[prId]/fixes", () => {
       fixedAtScanId: "run-3",
       originatedAtScanId: "run-1",
       sourceFindingId: "find-2",
+      sourceFinding: null,
     };
     mocks.mockPullRequestFindUnique.mockResolvedValue({ id: "pr-1" });
     mocks.mockBugFixEventFindMany.mockResolvedValue([newer, older]);
@@ -132,6 +136,7 @@ describe("GET /api/prs/[prId]/fixes", () => {
       fixedAtScanId: "run-2",
       originatedAtScanId: "run-1",
       sourceFindingId: "find-1",
+      sourceFinding: null,
     };
     mocks.mockPullRequestFindUnique.mockResolvedValue({ id: "pr-1" });
     mocks.mockBugFixEventFindMany.mockResolvedValue([warningEvent]);
@@ -180,5 +185,29 @@ describe("GET /api/prs/[prId]/fixes", () => {
       params: Promise.resolve({ prId: "pr-1" }),
     });
     expect(res.headers.get("Cache-Control")).toBe("max-age=0, must-revalidate");
+  });
+
+  it("includes title from sourceFinding explanation", async () => {
+    const event = {
+      id: "evt-1",
+      filename: "src/handler.ts",
+      line: 42,
+      category: "Correctness",
+      severity: "blocker",
+      fixedAt: "2026-07-14T00:00:00.000Z",
+      fixedAtScanId: "run-2",
+      originatedAtScanId: "run-1",
+      sourceFindingId: null,
+      sourceFinding: null,
+    };
+    mocks.mockPullRequestFindUnique.mockResolvedValue({ id: "pr-1" });
+    mocks.mockBugFixEventFindMany.mockResolvedValue([event]);
+    mocks.mockReviewRunCount.mockResolvedValue(2);
+
+    const res = await GET(makeRequest("pr-1"), {
+      params: Promise.resolve({ prId: "pr-1" }),
+    });
+    const body = await res.json();
+    expect(body.events[0].title).toBeNull();
   });
 });

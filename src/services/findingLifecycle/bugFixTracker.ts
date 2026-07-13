@@ -1,5 +1,5 @@
 import { prisma } from "@/src/lib/prisma";
-import { diffBlockerFixes } from "./diffFindings";
+import { diffBlockerFixes, identityTuple } from "./diffFindings";
 import type { FindingShape } from "./diffFindings";
 
 export interface RecordFixesResult {
@@ -52,8 +52,7 @@ export async function recordFixesForCompletedScan(
   }
 
   const priorMap = new Map(priorFindings.map((f) => {
-    const key = `${f.filename}|${f.line ?? ""}|${f.category}|${f.severity}`;
-    return [key, f.id] as const;
+    return [identityTuple(f), f.id] as const;
   }));
 
   let written = 0;
@@ -62,7 +61,7 @@ export async function recordFixesForCompletedScan(
   await prisma.$transaction(async (tx) => {
     for (const finding of fixed) {
       try {
-        const key = `${finding.filename}|${finding.line ?? ""}|${finding.category}|${finding.severity}`;
+        const key = identityTuple(finding);
         await tx.bugFixEvent.create({
           data: {
             prId: run.prId,

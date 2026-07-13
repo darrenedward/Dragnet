@@ -29,6 +29,9 @@ export async function GET(req: Request, { params }: { params: Promise<{ prId: st
           fixedAtScanId: true,
           originatedAtScanId: true,
           sourceFindingId: true,
+          sourceFinding: {
+            select: { explanation: true },
+          },
         },
       }),
       prisma.reviewRun.count({
@@ -40,10 +43,26 @@ export async function GET(req: Request, { params }: { params: Promise<{ prId: st
       }),
     ]);
 
-    return NextResponse.json(
-      { fixedCount: events.length, events, hasPriorRun: priorRunCount > 1 },
-      { headers: { "Cache-Control": "max-age=0, must-revalidate" } },
-    );
+    const response = {
+      fixedCount: events.length,
+      events: events.map((e) => ({
+        id: e.id,
+        filename: e.filename,
+        line: e.line,
+        category: e.category,
+        severity: e.severity,
+        fixedAt: e.fixedAt,
+        fixedAtScanId: e.fixedAtScanId,
+        originatedAtScanId: e.originatedAtScanId,
+        sourceFindingId: e.sourceFindingId,
+        title: e.sourceFinding?.explanation ?? null,
+      })),
+      hasPriorRun: priorRunCount > 1,
+    };
+
+    return NextResponse.json(response, {
+      headers: { "Cache-Control": "max-age=0, must-revalidate" },
+    });
   } catch (err) {
     console.error(`[fixes] failed to load fixes for prId=${prId}:`, err);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });

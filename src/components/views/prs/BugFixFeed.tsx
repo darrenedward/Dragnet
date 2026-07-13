@@ -13,6 +13,7 @@ interface BugFixEvent {
   fixedAtScanId: string;
   originatedAtScanId: string | null;
   sourceFindingId: string | null;
+  title: string | null;
 }
 
 interface BugFixResponse {
@@ -78,9 +79,14 @@ export default function BugFixFeed({ prId }: Props) {
         <div className="divide-y divide-gray-200 dark:divide-gray-700">
           {data.events.map((event) => (
             <div key={event.id} className="px-3 py-2 text-xs space-y-1">
+              {event.title && (
+                <div className="text-gray-800 dark:text-gray-100 font-medium leading-tight">
+                  {event.title}
+                </div>
+              )}
               <div className="flex items-center gap-2">
                 <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
-                  {event.severity}
+                  blocker
                 </span>
                 <span className="text-gray-700 dark:text-gray-200 font-medium truncate">
                   {event.filename}:{event.line ?? "?"}
