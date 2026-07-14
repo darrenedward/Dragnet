@@ -8,7 +8,7 @@ const prismaMocks = vi.hoisted(() => ({
   prFileFindMany: vi.fn(),
 }));
 
-vi.mock("../src/lib/prisma", () => ({
+vi.mock("../../../src/lib/prisma", () => ({
   prisma: {
     reviewRun: {
       findFirst: prismaMocks.reviewRunFindFirst,
@@ -28,13 +28,10 @@ vi.mock("../src/lib/prisma", () => ({
 
 import {
   assertReviewFreshness,
-  computeDiffHash,
-  computeReviewConfigHash,
   createReviewRun,
   getLatestCompletedReview,
   parseIterationLogs,
-  shortHash,
-} from "../src/lib/reviewFreshness";
+} from "../../../src/lib/reviewFreshness";
 
 beforeEach(() => {
   prismaMocks.reviewRunFindFirst.mockReset();
@@ -76,162 +73,7 @@ beforeEach(() => {
   prismaMocks.reviewFindingFindMany.mockResolvedValue([]);
 });
 
-describe("reviewFreshness", () => {
-  describe("computeDiffHash", () => {
-    it("returns empty string when no files have diffs", () => {
-      expect(computeDiffHash([])).toBe("");
-      expect(computeDiffHash([{ filename: "a.ts", diff: "" }])).toBe("");
-      expect(computeDiffHash([{ filename: "a.ts", diff: null }])).toBe("");
-      expect(computeDiffHash([{ filename: "a.ts", diff: "   " }])).toBe("");
-    });
-
-    it("produces identical hashes for identical input", () => {
-      const files = [
-        { filename: "a.ts", diff: "+line1" },
-        { filename: "b.ts", diff: "-line2\n+line3" },
-      ];
-      expect(computeDiffHash(files)).toBe(computeDiffHash(files));
-    });
-
-    it("is stable across input reordering (sorts by filename)", () => {
-      const ordered = [
-        { filename: "a.ts", diff: "+x" },
-        { filename: "b.ts", diff: "+y" },
-        { filename: "c.ts", diff: "+z" },
-      ];
-      const reversed = [...ordered].reverse();
-      const shuffled = [ordered[1], ordered[2], ordered[0]];
-      expect(computeDiffHash(ordered)).toBe(computeDiffHash(reversed));
-      expect(computeDiffHash(ordered)).toBe(computeDiffHash(shuffled));
-    });
-
-    it("changes when diff content changes", () => {
-      const a = [{ filename: "a.ts", diff: "+original" }];
-      const b = [{ filename: "a.ts", diff: "+modified" }];
-      expect(computeDiffHash(a)).not.toBe(computeDiffHash(b));
-    });
-
-    it("produces a 16-char hex string", () => {
-      const hash = computeDiffHash([{ filename: "a.ts", diff: "+x" }]);
-      expect(hash).toMatch(/^[a-f0-9]{16}$/);
-    });
-
-    it("treats different commit hints as different hashes even when the diff is byte-identical (issue #13)", () => {
-      // Reproduces the #13 scenario: a force-push that moves the PR commit
-      // but leaves the resulting diff text byte-identical (e.g. cherry-pick
-      // to a new HEAD). Without the commit hint, both pushes hash the same
-      // and the second scan silently reuses the first scan's findings.
-      const files = [{ filename: "src/foo.ts", diff: "@@ -1 +1 @@\n-x\n+y" }];
-      const hashA = computeDiffHash(files, "aaa111");
-      const hashB = computeDiffHash(files, "bbb222");
-      expect(hashA).not.toBe(hashB);
-      expect(hashA).toMatch(/^[a-f0-9]{16}$/);
-      expect(hashB).toMatch(/^[a-f0-9]{16}$/);
-    });
-
-    it("treats the empty commit-hint the same as a missing one (back-compat)", () => {
-      const files = [{ filename: "a.ts", diff: "+x" }];
-      expect(computeDiffHash(files, "")).toBe(computeDiffHash(files));
-    });
-  });
-
-  describe("computeReviewConfigHash", () => {
-    it("is deterministic for the same chain + prompt", () => {
-      const chain = [{ name: "primary", model: "gpt-4o" }];
-      const promptHash = shortHash("system-prompt-v1");
-      expect(computeReviewConfigHash(chain, promptHash))
-        .toBe(computeReviewConfigHash(chain, promptHash));
-    });
-
-    it("changes when model changes", () => {
-      const promptHash = shortHash("prompt");
-      const a = computeReviewConfigHash([{ name: "p", model: "gpt-4o" }], promptHash);
-      const b = computeReviewConfigHash([{ name: "p", model: "claude-sonnet-4-6" }], promptHash);
-      expect(a).not.toBe(b);
-    });
-
-    it("changes when prompt hash changes", () => {
-      const chain = [{ name: "p", model: "gpt-4o" }];
-      const a = computeReviewConfigHash(chain, shortHash("prompt-a"));
-      const b = computeReviewConfigHash(chain, shortHash("prompt-b"));
-      expect(a).not.toBe(b);
-    });
-
-    it("incorporates fallback model when present", () => {
-      const promptHash = shortHash("prompt");
-      const single = computeReviewConfigHash([{ name: "p", model: "gpt-4o" }], promptHash);
-      const withFallback = computeReviewConfigHash(
-        [{ name: "p", model: "gpt-4o" }, { name: "fb", model: "claude" }],
-        promptHash,
-      );
-      expect(single).not.toBe(withFallback);
-    });
-
-    it("changes when provider endpoint changes", () => {
-      const promptHash = shortHash("prompt");
-      const a = computeReviewConfigHash(
-        [{ name: "primary", endpoint: "https://api.one.example/v1", model: "gpt-4o" }],
-        promptHash,
-      );
-      const b = computeReviewConfigHash(
-        [{ name: "primary", endpoint: "https://api.two.example/v1", model: "gpt-4o" }],
-        promptHash,
-      );
-      expect(a).not.toBe(b);
-    });
-
-    it("changes when provider name changes", () => {
-      const promptHash = shortHash("prompt");
-      const a = computeReviewConfigHash(
-        [{ name: "primary-a", endpoint: "https://api.example/v1", model: "gpt-4o" }],
-        promptHash,
-      );
-      const b = computeReviewConfigHash(
-        [{ name: "primary-b", endpoint: "https://api.example/v1", model: "gpt-4o" }],
-        promptHash,
-      );
-      expect(a).not.toBe(b);
-    });
-
-    it("changes when the model iteration cap changes", () => {
-      const promptHash = shortHash("prompt");
-      const a = computeReviewConfigHash([{ name: "p", model: "gpt-4o", maxIterations: 8 }], promptHash);
-      const b = computeReviewConfigHash([{ name: "p", model: "gpt-4o", maxIterations: 16 }], promptHash);
-      expect(a).not.toBe(b);
-    });
-
-    it("changes when review limits change", () => {
-      const promptHash = shortHash("prompt");
-      const chain = [{ name: "p", model: "gpt-4o" }];
-      const limits = {
-        chunkLineCap: 600,
-        minUsefulChunkLines: 100,
-        normalMaxLines: 800,
-        normalMaxCodeFiles: 40,
-        oversizedLines: 3000,
-        oversizedCodeFiles: 100,
-        maxFilesPerReview: 0,
-      };
-      const a = computeReviewConfigHash(chain, promptHash, limits);
-      const b = computeReviewConfigHash(chain, promptHash, { ...limits, chunkLineCap: 1200 });
-      expect(a).not.toBe(b);
-    });
-  });
-
-  describe("shortHash", () => {
-    it("returns 16-char hex", () => {
-      expect(shortHash("anything")).toMatch(/^[a-f0-9]{16}$/);
-    });
-
-    it("is deterministic", () => {
-      expect(shortHash("x")).toBe(shortHash("x"));
-    });
-
-    it("differs across inputs", () => {
-      expect(shortHash("a")).not.toBe(shortHash("b"));
-    });
-  });
-
+describe("reviewFreshness > freshness gate", () => {
   describe("assertReviewFreshness", () => {
     const pr = { id: "pr-1", commitHash: "commit-current" };
     const matchingRun = {
@@ -271,6 +113,43 @@ describe("reviewFreshness", () => {
       if (!("kind" in result)) throw new Error("expected cache miss for partial reliability");
       expect(result.kind).toBe("STALE_RUN");
       expect(result.message).toContain("reliability=partial");
+    });
+
+    it("reuses a completed run when the commit hash moved but the diff + config match (issue #33 — no-op rebase)", async () => {
+      // No-op rebase scenario: a new commit hash on the PR (e.g. force-push
+      // or rebase) but the diff text is byte-identical. With content-only
+      // diffHash (#33) the freshness tuple matches and the cached review is
+      // reused — rating stays stable instead of moving on a non-code change.
+      const priorRunOnEarlierCommit = {
+        ...matchingRun,
+        commitHash: "commit-earlier", // PR commit has moved on
+      };
+      prismaMocks.reviewRunFindFirst.mockResolvedValue(priorRunOnEarlierCommit);
+
+      const result = await assertReviewFreshness(
+        { id: "pr-1", commitHash: "commit-current" }, // PR's current commit
+        "diff-current", // but the diff content hasn't moved
+        "config-current",
+      );
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error("expected cache HIT on no-op rebase");
+      expect(result.runId).toBe("run-1");
+      expect(result.rating).toBe(8);
+    });
+
+    it("does not reuse a run when only the reviewConfigHash differs", async () => {
+      // Different config (e.g. swapped chat model or prompt) must invalidate
+      // the cache even when the diff content is identical — the cached
+      // review was produced by a different config and would be stale.
+      prismaMocks.reviewRunFindFirst.mockResolvedValue(matchingRun);
+
+      const result = await assertReviewFreshness(pr, "diff-current", "config-different");
+
+      expect(result.ok).toBe(false);
+      if (!("kind" in result)) throw new Error("expected cache miss for config drift");
+      expect(result.kind).toBe("STALE_RUN");
+      expect(result.message).toContain("configHash config-d");
     });
   });
 
