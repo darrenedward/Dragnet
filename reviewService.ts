@@ -2011,8 +2011,23 @@ ${diffPayload}${deterministicPayload}`;
   let skepticMap = new Map<string, { verdict: "confirmed" | "downgraded" | "rejected"; note: string; newSeverity?: string }>();
   if (skepticEnabled && skepticEntryPre) {
     try {
-      console.log(`[skeptic] running pass on ${candidates.length} finding(s) via ${skepticEntryPre.name}/${skepticEntryPre.model}`);
-      const skepticResult = await runSkepticPass(candidates, skepticEntryPre, repoPathForVerifier ?? null, prId, skepticSettings);
+      const runningMsg = `running pass on ${candidates.length} finding(s) via ${skepticEntryPre.name}/${skepticEntryPre.model}`;
+      console.log(`[skeptic] ${runningMsg}`);
+      void logReview(prId, `[skeptic] ${runningMsg}`, "info", reviewRunId, reviewChunkId);
+      // onLog sink routes gate-decision lines ("filtered all", "included
+      // X of N", "truncated") to review_logs so the PR review log UI
+      // surfaces the gate's verdict alongside verifier activity.
+      const onSkepticLog = (msg: string, level: "info" | "warn" = "info") => {
+        void logReview(prId, `[skeptic] ${msg}`, level, reviewRunId, reviewChunkId);
+      };
+      const skepticResult = await runSkepticPass(
+        candidates,
+        skepticEntryPre,
+        repoPathForVerifier ?? null,
+        prId,
+        skepticSettings,
+        onSkepticLog,
+      );
       skepticMap = skepticResult.verdicts;
       const t = skepticResult.telemetry;
       skepticTelemetry = {
@@ -2027,10 +2042,11 @@ ${diffPayload}${deterministicPayload}`;
         outcome: t.outcome,
       };
       const o = t.outcomes;
-      console.log(
-        `[skeptic] verdicts: ${o.confirmed} confirmed, ${o.downgraded} downgraded, ${o.rejected} rejected ` +
-          `(of ${candidates.length} findings; ${o.skipped} skipped, ${o.error} error) — ${t.promptTokens}+${t.completionTokens} tokens, $${t.costUsd.toFixed(6)}`,
-      );
+      const verdictsMsg =
+        `verdicts: ${o.confirmed} confirmed, ${o.downgraded} downgraded, ${o.rejected} rejected ` +
+        `(of ${candidates.length} findings; ${o.skipped} skipped, ${o.error} error) — ${t.promptTokens}+${t.completionTokens} tokens, $${t.costUsd.toFixed(6)}`;
+      console.log(`[skeptic] ${verdictsMsg}`);
+      void logReview(prId, `[skeptic] ${verdictsMsg}`, "info", reviewRunId, reviewChunkId);
       // Cross-scan reject-rate accumulator. Adjudicated = findings the
       // fallback actually graded (confirmed + downgraded + rejected).
       // Failures (skipped + error) don't count toward the denominator —
@@ -2046,10 +2062,22 @@ ${diffPayload}${deterministicPayload}`;
         );
       }
     } catch (err) {
-      console.warn(`[skeptic] pass failed:`, (err as Error).message?.slice(0, 200));
+      const failMsg = `pass failed: ${(err as Error).message?.slice(0, 200) ?? "unknown"}`;
+      console.warn(`[skeptic] ${failMsg}`);
+      void logReview(prId, `[skeptic] ${failMsg}`, "warn", reviewRunId, reviewChunkId);
     }
-  } else if (!skepticEnabled) {
-    console.log(`[skeptic] disabled or no fallback — skipping`);
+  } else if (!skepticSettingOn) {
+    const msg = "disabled — skipping";
+    console.log(`[skeptic] ${msg}`);
+    void logReview(prId, `[skeptic] ${msg}`, "info", reviewRunId, reviewChunkId);
+  } else {
+    // skepticSettingOn is true but skepticEntryPre is null — enabled but
+    // no fallback chat provider (single-preset install, or the breaker
+    // filtered the fallback out). Distinct from the disabled case so the
+    // PR review log UI can tell the operator what to fix.
+    const msg = "no fallback chat provider — skipping";
+    console.log(`[skeptic] ${msg}`);
+    void logReview(prId, `[skeptic] ${msg}`, "info", reviewRunId, reviewChunkId);
   }
 
   // Reconcile the rating with verifier + skeptic rejects (issue #72).
@@ -2110,10 +2138,11 @@ ${diffPayload}${deterministicPayload}`;
 
       if (rerate.ok && rerate.rating !== null) {
         const delta = rerate.rating - originalRating;
-        console.log(
-          `[skeptic] re-rated: ${originalRating} → ${rerate.rating} ` +
-            `(Δ${delta >= 0 ? "+" : ""}${delta}) after ${summary.totalRejected} reject(s)`,
-        );
+        const reratedMsg =
+          `re-rated: ${originalRating} → ${rerate.rating} ` +
+          `(Δ${delta >= 0 ? "+" : ""}${delta}) after ${summary.totalRejected} reject(s)`;
+        console.log(`[skeptic] ${reratedMsg}`);
+        void logReview(prId, `[skeptic] ${reratedMsg}`, "info", reviewRunId, reviewChunkId);
         rating = rerate.rating;
         if (rerate.summary) {
           scanSummary = rerate.summary;
@@ -2121,9 +2150,9 @@ ${diffPayload}${deterministicPayload}`;
         systemWarn = `Skeptic rejected ${summary.totalRejected} of ${candidates.length} findings. ` +
           `Rating re-evaluated by primary model: was ${originalRating}/10, now ${rating}/10.`;
       } else {
-        console.warn(
-          `[skeptic] re-rate failed after ${summary.totalRejected} reject(s): ${rerate.error ?? "unknown"}`,
-        );
+        const failMsg = `re-rate failed after ${summary.totalRejected} reject(s): ${rerate.error ?? "unknown"}`;
+        console.warn(`[skeptic] ${failMsg}`);
+        void logReview(prId, `[skeptic] ${failMsg}`, "warn", reviewRunId, reviewChunkId);
         systemWarn = `Skeptic rejected ${summary.totalRejected} of ${candidates.length} findings, ` +
           `but re-rating failed (${rerate.error ?? "unknown error"}). ` +
           `Rating left at ${rating}/10 — treat with caution.`;
