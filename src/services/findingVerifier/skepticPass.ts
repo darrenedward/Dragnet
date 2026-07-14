@@ -64,6 +64,26 @@ export interface SkepticVerdict {
  */
 export type SkepticLogFn = (message: string, level?: "info" | "warn") => void;
 
+/**
+ * Invoke the optional log sink without ever propagating exceptions.
+ * `runSkepticPass` documents a "never throws" contract — callers depend
+ * on it returning `{ verdicts, telemetry }` regardless of sink bugs
+ * (broken DB connection, logReview race, etc.). A naive `onLog?.(msg)`
+ * would violate that contract if the injected sink throws. Catches and
+ * warns instead so the pass result is still delivered.
+ */
+function safeOnLog(onLog: SkepticLogFn | undefined, message: string, level: "info" | "warn"): void {
+  if (!onLog) return;
+  try {
+    onLog(message, level);
+  } catch (err) {
+    console.warn(
+      `[skeptic] onLog sink threw, dropping message "${message.slice(0, 80)}":`,
+      (err as Error)?.message ?? err,
+    );
+  }
+}
+
 const SKEPTIC_BATCH_CAP = 30;
 const VALID_VERDICTS = new Set(["confirmed", "downgraded", "rejected"]);
 const VALID_SEVERITIES = new Set(["blocker", "warning", "suggestion"]);
@@ -217,14 +237,14 @@ export async function runSkepticPass(
   if (gated.batch.length === 0) {
     const msg = `gate filtered out all ${gated.excludedCount} findings — skipping LLM call`;
     console.log(`[skeptic] ${msg}`);
-    onLog?.(msg, "info");
+    safeOnLog(onLog, msg, "info");
     outcomes.skipped = candidates.length;
     return { verdicts: results, telemetry: baseTelemetry };
   }
   if (gated.excludedCount > 0) {
     const msg = `gate included ${gated.batch.length} of ${candidates.length} findings (${gated.excludedCount} filtered)`;
     console.log(`[skeptic] ${msg}`);
-    onLog?.(msg, "info");
+    safeOnLog(onLog, msg, "info");
     outcomes.skipped = gated.excludedCount;
   }
 
@@ -233,7 +253,7 @@ export async function runSkepticPass(
   if (truncatedCount > 0) {
     const msg = `truncating batch to ${SKEPTIC_BATCH_CAP} of ${gated.batch.length} findings (cap)`;
     console.warn(`[skeptic] ${msg}`);
-    onLog?.(msg, "warn");
+    safeOnLog(onLog, msg, "warn");
     outcomes.skipped += truncatedCount;
   }
 
