@@ -3,10 +3,9 @@ export interface FindingShape {
   line: number | null;
   category: string;
   severity: string;
-  [key: string]: unknown;
 }
 
-function identityTuple(f: FindingShape): string {
+export function identityTuple(f: FindingShape): string {
   return `${f.filename}|${f.line ?? ""}|${f.category}|${f.severity}`;
 }
 

@@ -1,5 +1,5 @@
 import { prisma } from "@/src/lib/prisma";
-import { diffBlockerFixes } from "./diffFindings";
+import { diffBlockerFixes, identityTuple } from "./diffFindings";
 import type { FindingShape } from "./diffFindings";
 
 export interface RecordFixesResult {
@@ -41,7 +41,7 @@ export async function recordFixesForCompletedScan(
     }),
     prisma.reviewFinding.findMany({
       where: { reviewRunId: priorRun.id },
-      select: { filename: true, line: true, category: true, severity: true },
+      select: { id: true, filename: true, line: true, category: true, severity: true },
     }),
   ]);
 
@@ -51,34 +51,39 @@ export async function recordFixesForCompletedScan(
     return { written: 0, skipped: 0 };
   }
 
+  const priorMap = new Map(priorFindings.map((f) => {
+    return [identityTuple(f), f.id] as const;
+  }));
+
   let written = 0;
   let skipped = 0;
 
-  for (const finding of fixed) {
-    try {
-      await prisma.bugFixEvent.create({
-        data: {
-          prId: run.prId,
-          fixedAtScanId: reviewRunId,
-          originatedAtScanId: priorRun.id,
-          filename: finding.filename,
-          line: finding.line ?? null,
-          category: finding.category,
-          severity: finding.severity,
-        },
-      });
-      written++;
-    } catch (err: any) {
-      if (err?.code === "P2002") {
-        skipped++;
-      } else {
-        console.warn(
-          `[bugFixTracker] failed to write BugFixEvent for ${finding.filename}:${finding.line}:`,
-          err,
-        );
+  await prisma.$transaction(async (tx) => {
+    for (const finding of fixed) {
+      try {
+        const key = identityTuple(finding);
+        await tx.bugFixEvent.create({
+          data: {
+            prId: run.prId,
+            fixedAtScanId: reviewRunId,
+            originatedAtScanId: priorRun.id,
+            sourceFindingId: priorMap.get(key) ?? null,
+            filename: finding.filename,
+            line: finding.line ?? null,
+            category: finding.category,
+            severity: finding.severity,
+          },
+        });
+        written++;
+      } catch (err: any) {
+        if (err?.code === "P2002") {
+          skipped++;
+        } else {
+          throw err;
+        }
       }
     }
-  }
+  });
 
   return { written, skipped };
 }
