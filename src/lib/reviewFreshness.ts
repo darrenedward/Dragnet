@@ -705,14 +705,23 @@ export async function getLatestCompletedReview(
   const [findings, rejectedFindings, regressionRows] = await Promise.all([
     prisma.reviewFinding.findMany({
       where: {
-        reviewRunId: latestRun.id,
+        // Surviving priors: matched-new was deleted during reconcile and
+        // prior.lastSeenRunId was bumped to latestRun.id. The prior's
+        // reviewRunId still points at the FIRST run it was detected in,
+        // so we OR-match on either column (issue #31).
         OR: [
-          { verificationStatus: null },
-          { verificationStatus: { not: "rejected" } },
+          { reviewRunId: latestRun.id },
+          { lastSeenRunId: latestRun.id },
         ],
-        // Skeptic rejects mirror the verifier pattern: persisted for audit,
-        // excluded from the active findings list.
         AND: [
+          {
+            OR: [
+              { verificationStatus: null },
+              { verificationStatus: { not: "rejected" } },
+            ],
+          },
+          // Skeptic rejects mirror the verifier pattern: persisted for audit,
+          // excluded from the active findings list.
           {
             OR: [
               { skepticVerdict: null },
@@ -727,10 +736,19 @@ export async function getLatestCompletedReview(
     }),
     prisma.reviewFinding.findMany({
       where: {
-        reviewRunId: latestRun.id,
+        // Same issue #31 OR-match — surviving priors whose verdict flipped
+        // to "rejected" in the latest run must show up here.
         OR: [
-          { verificationStatus: "rejected" },
-          { skepticVerdict: "rejected" },
+          { reviewRunId: latestRun.id },
+          { lastSeenRunId: latestRun.id },
+        ],
+        AND: [
+          {
+            OR: [
+              { verificationStatus: "rejected" },
+              { skepticVerdict: "rejected" },
+            ],
+          },
         ],
       },
       orderBy: { line: "asc" },

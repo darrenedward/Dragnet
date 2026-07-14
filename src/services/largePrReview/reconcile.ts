@@ -10,9 +10,26 @@ export interface ReconcileResult {
 
 export interface ReconcilePlan {
   matchedNewIds: string[];
+  /**
+   * Persist-side contract: each entry is the set of fields the persist
+   * step must write onto the surviving prior row before deleting the
+   * matched-new duplicate.
+   *
+   * Includes the matched-new finding's latest adjudicated state
+   * (`skepticVerdict`, `skepticNote`, `verificationStatus`,
+   * `verificationNote`, `confidence`) so the surviving prior row reflects
+   * the current run's verdict. Without this carry-over (issue #31) the
+   * PR page would render stale verdicts from the previous run, because
+   * the matched-new row (which has the latest verdict) gets deleted.
+   */
   matchedPriorUpdates: Array<{
     id: string;
     sourceHashAtInsert: string | null;
+    skepticVerdict: string | null;
+    skepticNote: string | null;
+    verificationStatus: string | null;
+    verificationNote: string | null;
+    confidence: number | null;
   }>;
   unmatchedPriorIds: string[];
 }
@@ -138,6 +155,11 @@ export function planReconcile(
     id: string;
     fingerprint: string | null;
     sourceHashAtInsert: string | null;
+    skepticVerdict?: string | null;
+    skepticNote?: string | null;
+    verificationStatus?: string | null;
+    verificationNote?: string | null;
+    confidence?: number | null;
   }>,
   priorFindings: Array<{
     id: string;
@@ -150,10 +172,7 @@ export function planReconcile(
   }
 
   const matchedNewIds: string[] = [];
-  const matchedPriorUpdates: Array<{
-    id: string;
-    sourceHashAtInsert: string | null;
-  }> = [];
+  const matchedPriorUpdates: ReconcilePlan["matchedPriorUpdates"] = [];
   const unmatchedPriorIds: string[] = [];
 
   for (const prior of priorFindings) {
@@ -166,7 +185,15 @@ export function planReconcile(
       matchedNewIds.push(match.id);
       matchedPriorUpdates.push({
         id: prior.id,
-        sourceHashAtInsert: match.sourceHashAtInsert,
+        sourceHashAtInsert: match.sourceHashAtInsert ?? null,
+        // Carry over the matched-new finding's latest adjudicated state so
+        // the surviving prior row renders the current run's verdict after
+        // the matched-new is deleted (issue #31).
+        skepticVerdict: match.skepticVerdict ?? null,
+        skepticNote: match.skepticNote ?? null,
+        verificationStatus: match.verificationStatus ?? null,
+        verificationNote: match.verificationNote ?? null,
+        confidence: match.confidence ?? null,
       });
       currentByFp.delete(prior.fingerprint);
     } else {
@@ -268,7 +295,19 @@ export async function reconcileFindingsAcrossRuns(
 
   const currentFindings = await prisma.reviewFinding.findMany({
     where: { prId, reviewRunId: currentRunId, status: "open" },
-    select: { id: true, fingerprint: true, sourceHashAtInsert: true },
+    select: {
+      id: true,
+      fingerprint: true,
+      sourceHashAtInsert: true,
+      // Carry the latest adjudicated state so the surviving prior row
+      // reflects this run's verdict after the matched-new is deleted
+      // (issue #31 — PR page would otherwise show stale verdict).
+      skepticVerdict: true,
+      skepticNote: true,
+      verificationStatus: true,
+      verificationNote: true,
+      confidence: true,
+    },
   });
 
   const priorOpenFindings = await prisma.reviewFinding.findMany({
@@ -317,6 +356,15 @@ export async function reconcileFindingsAcrossRuns(
       data: {
         lastSeenRunId: currentRunId,
         sourceHashAtInsert: update.sourceHashAtInsert,
+        // Carry the matched-new finding's latest adjudicated state onto
+        // the surviving prior row. Without this (issue #31) the prior
+        // row keeps its previous run's verdict after the matched-new is
+        // deleted, and the PR page shows a stale Skeptic / Verified chip.
+        skepticVerdict: update.skepticVerdict,
+        skepticNote: update.skepticNote,
+        verificationStatus: update.verificationStatus,
+        verificationNote: update.verificationNote,
+        confidence: update.confidence,
       },
     });
   }

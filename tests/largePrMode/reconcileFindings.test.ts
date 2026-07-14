@@ -15,7 +15,19 @@ describe("planReconcile", () => {
 
     expect(plan.matchedNewIds).toEqual(["new-1"]);
     expect(plan.matchedPriorUpdates).toEqual([
-      { id: "prior-1", sourceHashAtInsert: "hash-r2" },
+      {
+        id: "prior-1",
+        sourceHashAtInsert: "hash-r2",
+        // No verdict fields on the current finding — every adjudicated-state
+        // field defaults to null. Persist step still writes them (clearing
+        // any stale verdict on the prior row is the explicit intent of
+        // issue #31's carry-over).
+        skepticVerdict: null,
+        skepticNote: null,
+        verificationStatus: null,
+        verificationNote: null,
+        confidence: null,
+      },
     ]);
     expect(plan.unmatchedPriorIds).toEqual([]);
   });
@@ -134,5 +146,89 @@ describe("planReconcile", () => {
       matchedPriorUpdates: [],
       unmatchedPriorIds: [],
     });
+  });
+
+  // ===== Issue #31: carry adjudicated state from matched-new onto prior row =====
+  //
+  // After a re-scan, the matched-new finding is deleted (it's the duplicate).
+  // But the matched-new was the one with the LATEST skeptic/verification
+  // adjudication, because the skeptic and verifier run each scan. The prior
+  // row's verdict/note reflect the previous scan's adjudication. Without
+  // a carry-over step the surviving prior row would keep showing the stale
+  // verdict even though the new run said "confirmed" / "rejected" / etc.
+  //
+  // The plan's matchedPriorUpdates entry is the contract the
+  // reconcileFindingsAcrossRuns() persister consumes, so the verdict fields
+  // belong there.
+
+  it("carries the matched-new finding's skepticVerdict onto the prior update (issue #31)", () => {
+    // Reproduces the MarketingCo #18 scenario: a prior finding with no
+    // skeptic verdict is re-detected by a scan whose skeptic (fallback model)
+    // confirmed it. The prior row needs the new verdict so the PR page
+    // renders the Skeptic badge instead of leaving the chip blank.
+    const fp = "fp-x";
+    const current = [
+      {
+        id: "new-1",
+        fingerprint: fp,
+        sourceHashAtInsert: "hash-r2",
+        skepticVerdict: "confirmed",
+        skepticNote: "Skeptic agrees with primary",
+        verificationStatus: "verified",
+        verificationNote: "Evidence chain checks out",
+        confidence: 0.9,
+      },
+    ];
+    const prior = [{ id: "prior-1", fingerprint: fp }];
+
+    const plan = planReconcile(current, prior);
+
+    expect(plan.matchedNewIds).toEqual(["new-1"]);
+    expect(plan.matchedPriorUpdates).toEqual([
+      {
+        id: "prior-1",
+        sourceHashAtInsert: "hash-r2",
+        skepticVerdict: "confirmed",
+        skepticNote: "Skeptic agrees with primary",
+        verificationStatus: "verified",
+        verificationNote: "Evidence chain checks out",
+        confidence: 0.9,
+      },
+    ]);
+  });
+
+  it("carries the matched-new finding's skepticVerdict='rejected' onto the prior update (issue #31)", () => {
+    // After re-scan, the skeptic flipped the finding from confirmed to
+    // rejected. The prior row's verdict must update so the rejected list
+    // (which filters on skepticVerdict='rejected') includes the surviving
+    // row, otherwise the user sees the old "confirmed" chip while the
+    // log says the new run rejected it.
+    const fp = "fp-x";
+    const current = [
+      {
+        id: "new-1",
+        fingerprint: fp,
+        sourceHashAtInsert: "hash-r2",
+        skepticVerdict: "rejected",
+        skepticNote: "Code path no longer reaches this branch",
+        verificationStatus: "verified",
+        verificationNote: null,
+        confidence: 0.4,
+      },
+    ];
+    const prior = [
+      {
+        id: "prior-1",
+        fingerprint: fp,
+      },
+    ];
+
+    const plan = planReconcile(current, prior);
+
+    const update = plan.matchedPriorUpdates.find((u) => u.id === "prior-1");
+    expect(update).toBeDefined();
+    expect(update!.skepticVerdict).toBe("rejected");
+    expect(update!.skepticNote).toBe("Code path no longer reaches this branch");
+    expect(update!.confidence).toBe(0.4);
   });
 });
