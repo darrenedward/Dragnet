@@ -153,8 +153,10 @@ model ReviewRun {
   createdByUserId  String?
   createdByUser    User?           @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
   pullRequest      PullRequest     @relation(fields: [prId], references: [id], onDelete: Cascade)
-  reviewFindings   ReviewFinding[]
-  reviewChunks     ReviewChunk[]
+  reviewFindings       ReviewFinding[]
+  reviewChunks         ReviewChunk[]
+  bugFixFixedAt        BugFixEvent[] @relation("BugFixFixedAt")
+  bugFixOriginatedAt   BugFixEvent[] @relation("BugFixOriginatedAt")
 
   @@index([prId, status, completedAt])
   @@index([repoId, status, completedAt])
@@ -199,6 +201,7 @@ model PullRequest {
   prFiles        PrFile[]
   reviewFindings ReviewFinding[]
   reviewRuns     ReviewRun[]
+  bugFixEvents   BugFixEvent[]
 
   @@map("pull_requests")
 }
@@ -250,8 +253,9 @@ model ReviewFinding {
   sourceHashAtInsert String? // snapshot of Symbol.sourceHash when this finding was last detected
   isRegression       Boolean  @default(false) // true if this is a reappearance of a previously resolved finding
   regressedFromRunId String?  // the run where this finding was previously resolved before regressing
-  pullRequest        PullRequest @relation(fields: [prId], references: [id], onDelete: Cascade)
-  reviewRun          ReviewRun?  @relation(fields: [reviewRunId], references: [id], onDelete: Cascade)
+  pullRequest          PullRequest  @relation(fields: [prId], references: [id], onDelete: Cascade)
+  reviewRun            ReviewRun?   @relation(fields: [reviewRunId], references: [id], onDelete: Cascade)
+  bugFixSourceOf       BugFixEvent[]
 
   @@index([reviewRunId])
   @@index([reviewChunkId])
@@ -260,6 +264,30 @@ model ReviewFinding {
   @@index([prId, reviewRunId])
   @@index([prId, status])
   @@map("review_findings")
+}
+
+/// Audit trail for blocker fixes across scans.
+/// A BugFixEvent is created when a blocker finding present in scan N is
+/// absent in scan N+1. See .opencode/plans/bug-fix-tracking.md.
+model BugFixEvent {
+  id                 String         @id @default(cuid())
+  prId               String
+  pr                 PullRequest    @relation(fields: [prId], references: [id], onDelete: Cascade)
+  fixedAtScanId      String
+  fixedAtScan        ReviewRun      @relation("BugFixFixedAt", fields: [fixedAtScanId], references: [id])
+  originatedAtScanId String?
+  originatedAtScan   ReviewRun?     @relation("BugFixOriginatedAt", fields: [originatedAtScanId], references: [id])
+  sourceFindingId    String?
+  sourceFinding      ReviewFinding? @relation(fields: [sourceFindingId], references: [id], onDelete: SetNull)
+  filename           String
+  line               Int?
+  category           String
+  severity           String          // "blocker" only — filtered at the app layer
+  fixedAt            DateTime        @default(now())
+
+  @@unique([prId, fixedAtScanId, filename, line, category, severity])
+  @@index([prId, fixedAt(sort: Desc)])
+  @@map("bug_fix_events")
 }
 
 model Symbol {
