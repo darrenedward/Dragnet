@@ -115,11 +115,7 @@ describe("reviewFreshness > freshness gate", () => {
       expect(result.message).toContain("reliability=partial");
     });
 
-    it("reuses a completed run when the commit hash moved but the diff + config match (issue #33 — no-op rebase)", async () => {
-      // No-op rebase scenario: a new commit hash on the PR (e.g. force-push
-      // or rebase) but the diff text is byte-identical. With content-only
-      // diffHash (#33) the freshness tuple matches and the cached review is
-      // reused — rating stays stable instead of moving on a non-code change.
+    it("does not reuse a completed run when the commit hash moved", async () => {
       const priorRunOnEarlierCommit = {
         ...matchingRun,
         commitHash: "commit-earlier", // PR commit has moved on
@@ -132,10 +128,9 @@ describe("reviewFreshness > freshness gate", () => {
         "config-current",
       );
 
-      expect(result.ok).toBe(true);
-      if (!result.ok) throw new Error("expected cache HIT on no-op rebase");
-      expect(result.runId).toBe("run-1");
-      expect(result.rating).toBe(8);
+      expect(result.ok).toBe(false);
+      if (!("kind" in result)) throw new Error("expected cache miss on revision change");
+      expect(result.kind).toBe("STALE_RUN");
     });
 
     it("does not reuse a run when only the reviewConfigHash differs", async () => {

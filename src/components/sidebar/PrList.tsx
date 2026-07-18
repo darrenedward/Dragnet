@@ -78,7 +78,9 @@ function PrRow({ pr, isPrSelected, onSelect }: { pr: PullRequest; isPrSelected: 
               {pr.status === "In Progress" && (
                 <span className="inline-block w-1 h-1 rounded-full bg-blue-400 animate-pulse shrink-0" />
               )}
-              <span>{pr.status}</span>
+              <span title={pr.status === "Pending" ? "Review the current PR revision" : undefined}>
+                {pr.status === "Pending" ? "Pending · review current revision" : pr.status}
+              </span>
             </span>
           </div>
         </div>

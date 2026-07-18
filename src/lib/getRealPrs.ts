@@ -5,6 +5,7 @@ import { prisma } from "@/src/lib/prisma";
 import { runGitInRepo, syncCloneForPr, type RepoLike } from "./repoAccess";
 import { getInstallationToken } from "@/src/lib/githubApp";
 import { decryptSecret, hasMasterKey } from "@/src/lib/crypto";
+import { statusForRevision } from "./prRevisionStatus";
 
 /**
  * Postgres TEXT columns reject NUL bytes (0x00) — git can produce them
@@ -87,7 +88,7 @@ function parseGitHubUrl(url: string): { owner: string; repo: string } | null {
  * should fall back to local-branch detection in that case.
  */
 async function fetchGitHubPrs(repo: RepoLike): Promise<{
-  open: { number: number; title: string; headRef: string; baseRef: string; updatedAt: string }[];
+  open: { number: number; title: string; headRef: string; baseRef: string; headSha: string; updatedAt: string }[];
   merged: { number: number; headRef: string }[];
 } | null> {
   if (!repo.cloneUrl) return null;
@@ -128,6 +129,7 @@ async function fetchGitHubPrs(repo: RepoLike): Promise<{
     title: pr.title || `PR #${pr.number}`,
     headRef: pr.head?.ref || "",
     baseRef: pr.base?.ref || "main",
+    headSha: pr.head?.sha || "",
     updatedAt: pr.updated_at || new Date().toISOString(),
   }));
 
@@ -213,6 +215,10 @@ export async function getRealPrs(repo: RepoLike) {
       // Upsert live PRs into DB
       for (const ghPr of livePrs.open) {
         const prId = `real-pr-${repoId}-${ghPr.headRef.replace(/\//g, "-")}`;
+        const existing = await prisma.pullRequest.findUnique({
+          where: { id: prId },
+          select: { status: true, commitHash: true },
+        });
         await prisma.pullRequest.upsert({
           where: { id: prId },
           create: {
@@ -223,7 +229,7 @@ export async function getRealPrs(repo: RepoLike) {
             targetBranch: ghPr.baseRef,
             status: "Pending",
             author: "GitHub",
-            commitHash: "",
+            commitHash: ghPr.headSha,
             createdAt: ghPr.updatedAt,
             description: `GitHub PR #${ghPr.number}`,
           },
@@ -231,6 +237,8 @@ export async function getRealPrs(repo: RepoLike) {
             title: ghPr.title,
             sourceBranch: ghPr.headRef,
             targetBranch: ghPr.baseRef,
+            commitHash: ghPr.headSha,
+            status: statusForRevision(existing?.status, existing?.commitHash, ghPr.headSha),
           },
         });
       }
@@ -268,7 +276,7 @@ export async function getRealPrs(repo: RepoLike) {
         targetBranch: p.baseRef,
         status: "Pending",
         author: "GitHub",
-        commitHash: "",
+        commitHash: p.headSha,
         createdAt: p.updatedAt,
         description: `GitHub PR #${p.number}`,
       }));
@@ -338,7 +346,7 @@ export async function getRealPrs(repo: RepoLike) {
         if (merged) {
           const existing = await prisma.pullRequest.findUnique({
             where: { id: prId },
-            select: { id: true, status: true },
+            select: { id: true, status: true, commitHash: true },
           });
           if (existing && existing.status !== "Merged") {
             await prisma.pullRequest.update({
@@ -352,12 +360,10 @@ export async function getRealPrs(repo: RepoLike) {
 
         const existing = await prisma.pullRequest.findUnique({
           where: { id: prId },
-          select: { status: true },
+          select: { status: true, commitHash: true },
         });
 
-        const status = existing?.status === "In Progress" || existing?.status === "Completed"
-          ? existing.status
-          : "Pending";
+        const status = statusForRevision(existing?.status, existing?.commitHash, branch.hash);
 
         const prData = {
           repoId,

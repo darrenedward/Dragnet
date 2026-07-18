@@ -48,7 +48,7 @@ export async function triggerHostedScan(
           commitHash: data.commitHash,
           description: data.description ?? null,
           author: data.author ?? "hosted",
-          status: "Open",
+          status: "Pending",
         },
       })
     : await prisma.pullRequest.create({
@@ -60,7 +60,7 @@ export async function triggerHostedScan(
           targetBranch: data.baseBranch,
           commitHash: data.commitHash,
           author: data.author ?? "hosted",
-          status: "Open",
+          status: "Pending",
           createdAt: new Date().toISOString(),
         },
       });
