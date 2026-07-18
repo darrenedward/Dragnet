@@ -66,7 +66,7 @@ export function ProjectsSidebar({
   }, [repos]);
 
   const repoReviewStatus = useMemo(() => {
-    const map = new Map<string, "idle" | "scanning" | "complete" | "failed" | "pending">();
+    const map = new Map<string, "idle" | "scanning" | "complete" | "failed" | "pending" | "changes">();
     for (const repo of repos) {
       const repoPrs = prs.filter((p) => p.repoId === repo.id);
       if (repoPrs.length === 0) {
@@ -76,9 +76,11 @@ export function ProjectsSidebar({
       const hasScanning = repoPrs.some((p) => p.status === "In Progress");
       const hasFailed = repoPrs.some((p) => p.status === "Failed");
       const hasPending = repoPrs.some((p) => p.status === "Pending");
+      const hasChanges = repoPrs.some((p) => p.status === "Pending" && p.rating != null);
       const allRated = repoPrs.every((p) => p.rating != null);
       if (hasScanning) map.set(repo.id, "scanning");
       else if (hasFailed) map.set(repo.id, "failed");
+      else if (hasChanges) map.set(repo.id, "changes");
       else if (hasPending) map.set(repo.id, "pending");
       else if (allRated) map.set(repo.id, "complete");
       else map.set(repo.id, "idle");
@@ -137,6 +139,11 @@ const STATUS_CONFIG: Record<string, { icon: React.ReactNode; label: string; badg
     label: "Needs review",
     badgeClass: "bg-amber-500/20 text-amber-300 border-amber-500/30",
   },
+  changes: {
+    icon: <AlertCircle size={9} />,
+    label: "Changes detected",
+    badgeClass: "bg-orange-500/20 text-orange-300 border-orange-500/30",
+  },
   idle: {
     icon: null,
     label: "",
@@ -158,7 +165,7 @@ function YourProjectsPane({
   onSelectPr,
 }: {
   repos: Repository[];
-  repoReviewStatus: Map<string, "idle" | "scanning" | "complete" | "failed" | "pending">;
+  repoReviewStatus: Map<string, "idle" | "scanning" | "complete" | "failed" | "pending" | "changes">;
   selectedRepoId: string;
   onSelectRepo: (repoId: string) => void;
   onEditRepo: (repo: Repository) => void;
@@ -233,7 +240,7 @@ function SharedProjectsPane({
   onSelectPr,
 }: {
   sharedProjects: { id: string; name: string; role: "admin" | "member" | null; invitedAt: string | null }[];
-  repoReviewStatus: Map<string, "idle" | "scanning" | "complete" | "failed" | "pending">;
+  repoReviewStatus: Map<string, "idle" | "scanning" | "complete" | "failed" | "pending" | "changes">;
   yourRepoById: Map<string, Repository>;
   selectedRepoId: string;
   onSelectRepo: (repoId: string) => void;
