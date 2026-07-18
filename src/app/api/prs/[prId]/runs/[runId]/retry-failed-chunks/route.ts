@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/src/lib/prisma";
 import { authenticateSessionOrKey, enforcePrRepoScope } from "@/src/lib/apiAuth";
-import { acquireReviewLock, endReview } from "@/src/lib/reviewLocks";
-import { retryFailedChunks } from "@/src/services/largePrReview";
+import { admitScanJobForPr } from "@/src/services/scanQueue";
 
 export const runtime = "nodejs";
 
@@ -16,7 +15,6 @@ export async function POST(
   const { prId, runId } = await params;
   const prScopeErr = await enforcePrRepoScope(auth, prId);
   if (prScopeErr) return NextResponse.json(prScopeErr, { status: 403 });
-  let acquired = false;
   try {
     const run = await prisma.reviewRun.findUnique({
       where: { id: runId },
@@ -33,26 +31,16 @@ export async function POST(
       return NextResponse.json({ ok: true, message: "Nothing to resume — all chunks completed or skipped." });
     }
 
-    const lock = await acquireReviewLock(prId, false);
-    if (lock.status === "busy") {
-      return NextResponse.json(
-        {
-          error: "SCAN_IN_PROGRESS",
-          runId: lock.runId,
-          startedAt: lock.startedAt,
-          message: lock.message,
-        },
-        { status: 409 },
-      );
-    }
-    acquired = true;
-
-    const result = await retryFailedChunks(runId);
-    return NextResponse.json(result);
+    const job = await admitScanJobForPr({
+      prId,
+      triggerReason: `retry-failed-chunks:${runId}`,
+      forced: true,
+      createdByUserId: auth.userId,
+    });
+    if (!job) return NextResponse.json({ error: "Pull request not found." }, { status: 404 });
+    return NextResponse.json({ ok: true, accepted: true, jobId: job.jobId, state: job.state, queuePosition: job.queuePosition }, { status: 202 });
   } catch (err: any) {
     console.error("Failed to retry Large PR chunks:", err);
     return NextResponse.json({ error: err.message }, { status: 500 });
-  } finally {
-    if (acquired) endReview(prId);
   }
 }

@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import { prisma } from "@/src/lib/prisma";
-import { runPrScan } from "../../../reviewService";
+import { admitScanJobForPr } from "../scanQueue";
 
 export interface HostedPrData {
   prNumber: number;
@@ -65,11 +65,15 @@ export async function triggerHostedScan(
         },
       });
 
-  const scanResult = (await runPrScan(pr.id)) as unknown as Record<string, unknown>;
+  const job = await admitScanJobForPr({
+    prId: pr.id,
+    triggerReason: "hosted",
+  });
+  if (!job) return { ok: false, error: "Pull request disappeared before scan admission" };
 
   return {
     ok: true,
     prId: pr.id,
-    runId: typeof scanResult?.runId === "string" ? scanResult.runId : undefined,
+    runId: job.jobId,
   } as HostedScanResult;
 }

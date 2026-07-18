@@ -26,6 +26,7 @@ import {
 } from "@/src/lib/reviewFreshness";
 import { computeStability, computeWeightedStability } from "@/src/lib/stabilityScore";
 import { lookupTrustWeight } from "@/src/lib/modelTrustWeights";
+import { admitScanJobForPr } from "@/src/services/scanQueue";
 
 /**
  * Start a tracked review: refresh files, create an in_progress ReviewRun,
@@ -38,129 +39,16 @@ import { lookupTrustWeight } from "@/src/lib/modelTrustWeights";
  * (caller surfaces a SCAN_IN_PROGRESS message instead of starting a race).
  */
 async function startTrackedReview(pr: any, repo: any, userId: string | null): Promise<
-  | { sourceBranch: string; sizeProfile: PrSizeProfile }
+  | { sourceBranch: string; jobId: string; queuePosition: number | null }
   | { conflict: true; runId: string; startedAt: Date }
 > {
-  // Each step logs an info row to reviewLog so the sidebar's "in progress"
-  // UI shows what's happening during the 1-15s warm-up where otherwise
-  // nothing visible happens. Best-effort: logReview swallows its own errors,
-  // so a DB hiccup never blocks the scan.
-  void logReview(pr.id, `> Scan requested for ${pr.sourceBranch}`, "info");
-
-  const chatChain = getChatChain();
-  void logReview(
-    pr.id,
-    `> Resolving LLM chain: ${chatChain.length} provider(s) configured${chatChain.length > 0 ? `, primary=${chatChain[0]?.model ?? "unknown"}` : " — chat review will be skipped"}`,
-    chatChain.length > 0 ? "info" : "warn",
-  );
-
-  let files: any[] = [];
-  if ((repo?.path || repo?.cloneUrl) && pr.sourceBranch) {
-    void logReview(pr.id, `> Syncing repository (clone path or container fetch)…`, "info");
-    try {
-      files = await refreshPrFiles(repo, pr.sourceBranch, pr.id);
-      void logReview(
-        pr.id,
-        `> Diff files refreshed — ${files.length} file${files.length === 1 ? "" : "s"} in scope`,
-        "info",
-      );
-    } catch (e) {
-      console.warn("[api] prfile refresh failed, using cached:", e);
-      void logReview(pr.id, `> WARNING: prfile refresh failed, falling back to cached files: ${(e as Error).message}`, "warn");
-    }
-  } else {
-    void logReview(pr.id, `> No repo path/cloneUrl on the record, skipping file refresh`, "warn");
-  }
-
-  const sizeProfile = await loadPrSizeProfile(pr, repo, files.length > 0 ? files : undefined);
-  void logReview(
-    pr.id,
-    `> Size profile computed — tier=${sizeProfile.tier}, codeLines=${sizeProfile.codeLines.toLocaleString()}, files=${sizeProfile.codeFiles}/${sizeProfile.totalFiles}${sizeProfile.message ? ` (${sizeProfile.message})` : ""}`,
-    "info",
-  );
-
-  const limits = readLimits();
-  const manifest = buildDiffManifest(files, sizeProfile.commitCount, {
-    normalMaxLines: limits.normalMaxLines,
-    normalMaxCodeFiles: limits.normalMaxCodeFiles,
-    oversizedLines: limits.oversizedLines,
-    oversizedCodeFiles: limits.oversizedCodeFiles,
-  });
-  const tier = assertTier(manifest);
-  const diffHash = computeDiffHash(files, pr.commitHash);
-  const configHash = chatChain.length > 0
-    ? computeReviewConfigHash(chatChain, shortHash(SYSTEM_INSTRUCTION), limits)
-    : "";
-
-  // Shared concurrency guard via acquireReviewLock — narrows the race
-  // window that the previous assertNoActiveScan→createReviewRun→beginReview
-  // sequence left open. Same helper as scan/prcheck/prepush so all four
-  // entry points share identical guard semantics.
-  void logReview(pr.id, `> Acquiring scan lock…`, "info");
-  const lock = await acquireReviewLock(pr.id, false);
-  if (lock.status === "busy") {
-    void logReview(pr.id, `> Scan already in progress (runId=${lock.runId}), aborting`, "warn");
-    return {
-      conflict: true,
-      runId: lock.runId,
-      startedAt: lock.startedAt,
-    };
-  }
-  // Phase 7: programmatic entry point can't surface Continue/Start fresh
-  // UI, so a stale_inspectable result (only returned when repoPath is
-  // passed, which we don't here) is treated as busy. Defensive — narrows
-  // the union so the next line's `.release` access type-checks.
-  if (lock.status === "stale_inspectable") {
-    return {
-      conflict: true,
-      runId: lock.runId,
-      startedAt: lock.startedAt,
-    };
-  }
-  const releaseLock = lock.release;
-
-  const reviewRunId = await createReviewRun({
+  const job = await admitScanJobForPr({
     prId: pr.id,
-    repoId: pr.repoId,
-    commitHash: pr.commitHash,
-    diffHash,
-    reviewConfigHash: configHash,
-    model: chatChain[0]?.model ?? null,
     triggerReason: "prcheck",
     createdByUserId: userId,
   });
-
-  if (tier.tier === "normal") {
-    void logReview(pr.id, `> Scan started — single-shot mode (no chunking), runId=${reviewRunId}`, "info");
-  } else {
-    void logReview(pr.id, `> Scan started — Large PR mode (${tier.tier}), splitting into chunks, runId=${reviewRunId}`, "info");
-  }
-
-  const runPromise = tier.tier === "normal"
-    ? runPrScan(pr.id, files, reviewRunId)
-    : runLargePrReview({
-        reviewRunId,
-        prId: pr.id,
-        files,
-        tier: tier.tier,
-        warning: "message" in tier ? tier.message : null,
-      });
-
-  runPromise.then((sr) => {
-    releaseLock();
-    prisma.pullRequest.updateMany({ where: { id: pr.id }, data: { rating: sr.rating } }).catch(() => {});
-    console.log(`[api] review complete for ${pr.sourceBranch}: ${sr.rating}/10`);
-  }).catch((err) => {
-    releaseLock();
-    // Mark the run failed — without this, the run stays in_progress and
-    // the next command invocation 409s with SCAN_IN_PROGRESS.
-    completeReviewRun(reviewRunId, { status: "failed" }).catch((e) => {
-      console.error(`[api] failed to mark ReviewRun ${reviewRunId} failed:`, e);
-    });
-    console.error(`[api] review failed for ${pr.sourceBranch}:`, err);
-  });
-
-  return { sourceBranch: pr.sourceBranch, sizeProfile };
+  if (!job) throw new Error("Pull request disappeared before scan admission");
+  return { sourceBranch: pr.sourceBranch, jobId: job.jobId, queuePosition: job.queuePosition };
 }
 
 async function loadPrSizeProfile(pr: any, repo?: any, refreshedFiles?: any[]): Promise<PrSizeProfile> {
@@ -357,7 +245,7 @@ async function handlePrCheck(args: any, userId: string | null): Promise<string> 
     return `> ⚠ **Scan already in progress** for PR \`${pr.sourceBranch}\` (started ${started.startedAt.toISOString()}). Re-run \`prcheck ${pr.sourceBranch}\` after it completes.`;
   }
 
-  return `> **Review started** for PR \`${started.sourceBranch}\`.\n>\n> Size: ${formatSizeProfile(started.sizeProfile)}\n>\n> This runs in the background. Check results with \`prcheckstatus ${started.sourceBranch}\` or view in the Dragnet dashboard.\n>\n> Alternatively, use \`prcomments ${started.sourceBranch}\` for the latest persisted findings.`;
+  return `> **Review queued** for PR \`${started.sourceBranch}\`.\n>\n> Queue job: \`${started.jobId}\` (position ${started.queuePosition ?? "running"}).\n>\n> This runs in the background. Check results with \`prcheckstatus ${started.sourceBranch}\` or view in the Dragnet dashboard.`;
 }
 
 async function handlePrCheckStatus(args: any, _userId: string | null): Promise<string> {
@@ -598,8 +486,9 @@ const started = await startTrackedReview(pr, repo, userId);
       }
       return NextResponse.json({
         status: "Accepted",
-        message: `> **Review started** for \`${started.sourceBranch}\`.\n>\n> Size: ${formatSizeProfile(started.sizeProfile)}\n>\n> Poll with \`prcheckstatus ${started.sourceBranch}\`.`,
-        sizeProfile: started.sizeProfile,
+        message: `> **Review queued** for \`${started.sourceBranch}\`.\n>\n> Queue job: \`${started.jobId}\` (position ${started.queuePosition ?? "running"}).\n>\n> Poll with \`prcheckstatus ${started.sourceBranch}\`.`,
+        jobId: started.jobId,
+        queuePosition: started.queuePosition,
       });
     }
     if (cmdName.endsWith("prcomments") || cmdName.endsWith("comments")) {
