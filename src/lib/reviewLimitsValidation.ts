@@ -10,6 +10,7 @@ interface Bounds {
 }
 
 const BOUNDS: Record<keyof ReviewLimits, Bounds> = {
+  maxConcurrentScans: { min: 1, max: 32 },
   chunkLineCap: { min: 300, max: 3000 },
   minUsefulChunkLines: { min: 50, max: 500 },
   normalMaxLines: { min: 200, max: 5000 },
@@ -20,6 +21,7 @@ const BOUNDS: Record<keyof ReviewLimits, Bounds> = {
 };
 
 const FIELDS: Array<keyof ReviewLimits> = [
+  "maxConcurrentScans",
   "chunkLineCap",
   "minUsefulChunkLines",
   "normalMaxLines",

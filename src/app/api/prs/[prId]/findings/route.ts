@@ -6,6 +6,7 @@ import { authenticateSessionOrKey, enforcePrRepoScope } from "@/src/lib/apiAuth"
 import { prisma } from "@/src/lib/prisma";
 import { computePrSizeProfile } from "@/src/lib/prSizeProfile";
 import { readPrCommitCount } from "@/src/lib/prSizeProfile.server";
+import { getScanJobForPr } from "@/src/services/scanQueue";
 
 const CHUNK_SELECT = {
   id: true,
@@ -51,7 +52,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ prId: st
     const prScopeErr = await enforcePrRepoScope(auth, prId);
     if (prScopeErr) return NextResponse.json(prScopeErr, { status: 403 });
 
-    const [latest, pr, files, activeScan] = await Promise.all([
+    const [latest, pr, files, activeScan, queueJob] = await Promise.all([
       getLatestCompletedReview(prId),
       prisma.pullRequest.findUnique({
         where: { id: prId },
@@ -80,6 +81,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ prId: st
         select: { filename: true, additions: true, deletions: true },
       }),
       getActiveScan(prId),
+      getScanJobForPr(prId),
     ]);
     const commitCount = pr
       ? await readPrCommitCount(
@@ -144,6 +146,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ prId: st
         activeChunks,
         activeFindings,
         activeIterations,
+        queueJob,
         message: "No completed review yet. Run a scan.",
       });
     }
@@ -186,6 +189,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ prId: st
       activeChunks,
       activeFindings,
       activeIterations,
+      queueJob,
     });
   } catch (err: any) {
     console.error("Error fetching findings for PR:", err);

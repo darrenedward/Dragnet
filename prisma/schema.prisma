@@ -68,6 +68,7 @@ model Repository {
   owner                  User?           @relation("RepositoryOwner", fields: [ownerId], references: [id], onDelete: SetNull)
   reviewHistory          ReviewHistory[]
   pullRequests           PullRequest[]
+  scanJobs               ScanJob[]
   symbols                Symbol[]
   edges                  Edge[]
   files                  File[]
@@ -164,6 +165,36 @@ model ReviewRun {
   @@map("review_runs")
 }
 
+/// Durable admission and lease state for manual PR scans. ReviewRun remains
+/// the execution/result record; ScanJob is the queue identity.
+model ScanJob {
+  id             String        @id @default(cuid())
+  prId           String
+  repoId         String
+  commitHash     String
+  state          String        @default("queued") // queued | running | completed | failed | cancelled | interrupted
+  triggerReason  String        @default("manual")
+  forced         Boolean       @default(false)
+  resumeRequested Boolean      @default(false)
+  freshRequested  Boolean      @default(false)
+  workerId       String?
+  leaseExpiresAt DateTime?
+  claimedAt      DateTime?
+  completedAt    DateTime?
+  errorMessage   String?
+  reviewRunId    String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  pullRequest    PullRequest   @relation(fields: [prId], references: [id], onDelete: Cascade)
+  repository     Repository    @relation(fields: [repoId], references: [id], onDelete: Cascade)
+
+  @@unique([prId, commitHash])
+  @@index([state, createdAt])
+  @@index([prId, state])
+  @@index([leaseExpiresAt])
+  @@map("scan_jobs")
+}
+
 model ReviewChunk {
   id                       String    @id
   reviewRunId              String
@@ -201,6 +232,7 @@ model PullRequest {
   prFiles        PrFile[]
   reviewFindings ReviewFinding[]
   reviewRuns     ReviewRun[]
+  scanJobs       ScanJob[]
   bugFixEvents   BugFixEvent[]
 
   @@map("pull_requests")

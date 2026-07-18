@@ -111,6 +111,11 @@ export function useDashboardData() {
     chunksFailed?: number;
     chunksSkipped?: number;
   } | null>(null);
+  const [queueJob, setQueueJob] = useState<{
+    jobId: string;
+    state: "queued" | "running" | "completed" | "failed" | "cancelled" | "interrupted";
+    queuePosition: number | null;
+  } | null>(null);
   const [activeScanChunks, setActiveScanChunks] = useState<ReviewChunk[]>([]);
   // Phase 7 — when a scan comes back as `status: "interrupted"`, store
   // the resume metadata so the UI can render a Continue / Start fresh
@@ -358,6 +363,7 @@ export function useDashboardData() {
         setReviewRun(findingsData.reviewRun ?? null);
         setReviewChunks(findingsData.chunks ?? []);
         setActiveScan(findingsData.activeScan ?? null);
+        setQueueJob(findingsData.queueJob ?? null);
         setActiveScanChunks(findingsData.activeChunks ?? []);
         setActiveFindings(findingsData.activeFindings ?? []);
         setActiveIterations(findingsData.activeIterations ?? {});
@@ -376,6 +382,7 @@ export function useDashboardData() {
         setReviewRun(null);
         setReviewChunks([]);
         setActiveScan(null);
+        setQueueJob(null);
         setActiveScanChunks([]);
         setActiveFindings([]);
         setActiveIterations({});
@@ -515,8 +522,9 @@ export function useDashboardData() {
     // pointing at the previously-selected PR's run. The prId guard rejects
     // that, so isScanning can't be forced true by a foreign run.
     const activeScanIsForSelectedPr = !!activeScan && activeScan.prId === selectedPrId;
-    setIsScanning(activePR.status === "In Progress" || activeScanIsForSelectedPr);
-  }, [selectedPrId, prs, activeScan, scanningPrId]);
+    const queueJobIsForSelectedPr = !!queueJob && (queueJob.state === "queued" || queueJob.state === "running");
+    setIsScanning(activePR.status === "In Progress" || activeScanIsForSelectedPr || queueJobIsForSelectedPr);
+  }, [selectedPrId, prs, activeScan, queueJob, scanningPrId]);
 
   // ===== DB actions =====
   const handleTestDbConnection = async () => {
@@ -1080,6 +1088,7 @@ export function useDashboardData() {
     reviewRun,
     reviewChunks,
     activeScan,
+    queueJob,
     activeScanChunks,
     activeFindings,
     activeIterations,
