@@ -19,6 +19,7 @@
 import { execFileSync } from "child_process";
 import { prisma } from "./prisma";
 import { statusForRevision } from "./prRevisionStatus";
+import { isAutoRescanEnabled } from "./autoRescanPolicy";
 
 export type TriggerScan = (
   repoId: string,
@@ -177,7 +178,9 @@ export async function pollOnce(triggerScan: TriggerScan): Promise<void> {
             status: statusForRevision(localPr.status, localPr.commitHash, ghPr.head.sha),
           },
         });
-        await triggerScan(repo.id, localPr.id, ghPr.head.sha);
+        if (isAutoRescanEnabled(repo.autoRescanPolicy)) {
+          await triggerScan(repo.id, localPr.id, ghPr.head.sha);
+        }
       } catch (err: any) {
         console.warn(
           `[poll] trigger failed for ${repo.name}/${localPr.id}:`,
@@ -200,6 +203,7 @@ async function fetchPollingRepos() {
       patCipher: true,
       patIv: true,
       patTag: true,
+      autoRescanPolicy: true,
         pullRequests: {
         select: { id: true, sourceBranch: true, commitHash: true, targetBranch: true, status: true },
       },

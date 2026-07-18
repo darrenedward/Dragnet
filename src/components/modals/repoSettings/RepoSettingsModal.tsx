@@ -52,6 +52,27 @@ export default function RepoSettingsModal({ repo, onClose, onResetIndex, onRefre
   const [settingUpWebhook, setSettingUpWebhook] = useState(false);
   const [setupWebhookSuccess, setSetupWebhookSuccess] = useState(false);
   const [webhookError, setWebhookError] = useState<string | null>(null);
+  const [autoRescanPolicy, setAutoRescanPolicy] = useState<"inherit" | "enabled" | "disabled">(repo.autoRescanPolicy ?? "inherit");
+  const [autoRescanSaving, setAutoRescanSaving] = useState(false);
+
+  const saveAutoRescanPolicy = async (next: "inherit" | "enabled" | "disabled") => {
+    setAutoRescanPolicy(next);
+    setAutoRescanSaving(true);
+    try {
+      const res = await fetch(`/api/repos/${repo.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ autoRescanPolicy: next }),
+      });
+      if (!res.ok) throw new Error("Failed to save automatic rescan policy.");
+      onRefresh();
+    } catch (err: any) {
+      setWebhookError(err.message);
+      setAutoRescanPolicy(repo.autoRescanPolicy ?? "inherit");
+    } finally {
+      setAutoRescanSaving(false);
+    }
+  };
 
   useEffect(() => {
     const fetchStats = async () => {
@@ -219,6 +240,23 @@ export default function RepoSettingsModal({ repo, onClose, onResetIndex, onRefre
           {!stats && !statsError && (
             <div className="text-slate-500 text-center py-6 animate-pulse">Loading stats…</div>
           )}
+
+          <div className="border-t border-white/10 pt-4 mt-2 space-y-3">
+            <div className="bg-slate-900/40 border border-white/10 rounded-lg p-3 space-y-2">
+              <div className="text-xs font-bold text-white">Automatic rescans</div>
+              <p className="text-[10px] text-slate-500">Choose whether new commits enqueue automatically for this repository.</p>
+              <select
+                value={autoRescanPolicy}
+                disabled={autoRescanSaving}
+                onChange={(event) => void saveAutoRescanPolicy(event.target.value as "inherit" | "enabled" | "disabled")}
+                className="w-full bg-slate-950 border border-white/10 rounded px-2 py-1.5 text-xs text-slate-200"
+              >
+                <option value="inherit">Inherit global default</option>
+                <option value="enabled">Enabled</option>
+                <option value="disabled">Disabled</option>
+              </select>
+            </div>
+          </div>
 
           <div className="border-t border-white/10 pt-4 mt-2 space-y-3">
               <div className="flex items-center justify-between bg-slate-900/40 border border-white/10 rounded-lg p-3">

@@ -6,6 +6,7 @@ import { admitScanJobForPr } from "@/src/services/scanQueue";
 import { triggerHostedScan } from "@/src/services/hostedScan/orchestrator";
 import { createDeliveryLog, updateDeliveryStatus } from "../../../../lib/webhookDelivery";
 import type { HostedPrData } from "@/src/services/hostedScan/orchestrator";
+import { isAutoRescanEnabled } from "@/src/lib/autoRescanPolicy";
 
 export async function POST(request: Request) {
   const event = request.headers.get("x-gitlab-event");
@@ -50,12 +51,17 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Duplicate delivery UUID — replay rejected" }, { status: 429 });
   }
 
-  const triggerAfkScans = (prIds: string[]) => {
+  const triggerAfkScans = async (prIds: string[]) => {
+    if (!isAutoRescanEnabled(matched.autoRescanPolicy)) return 0;
+    let admitted = 0;
     for (const prId of prIds) {
-      admitScanJobForPr({ prId, triggerReason: "webhook" }).catch((err) =>
-        console.error(`[webhook] AFK scan failed for ${prId}:`, err),
-      );
+      try {
+        if (await admitScanJobForPr({ prId, triggerReason: "webhook" })) admitted++;
+      } catch (err) {
+        console.error(`[webhook] AFK scan failed for ${prId}:`, err);
+      }
     }
+    return admitted;
   };
 
   const logDelivery = deliveryGuid
@@ -89,7 +95,7 @@ export async function POST(request: Request) {
         author: payload.user?.name || "webhook",
         description: mr.description || undefined,
       };
-      const result = await triggerHostedScan(matched.id, prData);
+      const result = await triggerHostedScan(matched.id, prData, { automatic: true });
       if (!result.ok) {
         if (logDelivery) await updateDeliveryStatus(logDelivery, "failed", (result as { error: string }).error);
         return NextResponse.json({ error: (result as { error: string }).error }, { status: 400 });
@@ -114,21 +120,17 @@ export async function POST(request: Request) {
         prIds.push(...ids);
       }
     }
-    triggerAfkScans(prIds);
+    const afkScans = await triggerAfkScans(prIds);
     if (logDelivery) await updateDeliveryStatus(logDelivery, "completed");
-    return NextResponse.json({ ok: true, repo: matched.id, mr: mr.iid, afkScans: prIds.length });
+    return NextResponse.json({ ok: true, repo: matched.id, mr: mr.iid, afkScans });
   }
 
   if (event === "Push Hook") {
     if (matched.hostedMode) {
       const prIds = await getOpenPrIds(matched.id);
-      for (const prId of prIds) {
-        admitScanJobForPr({ prId, triggerReason: "webhook" }).catch((err) =>
-          console.error(`[webhook] hosted push scan failed for ${prId}:`, err),
-        );
-      }
-      if (logDelivery) await updateDeliveryStatus(logDelivery, prIds.length > 0 ? "completed" : "ignored");
-      return NextResponse.json({ ok: true, repo: matched.id, hosted: true, afkScans: prIds.length });
+      const afkScans = await triggerAfkScans(prIds);
+      if (logDelivery) await updateDeliveryStatus(logDelivery, afkScans > 0 ? "completed" : "ignored");
+      return NextResponse.json({ ok: true, repo: matched.id, hosted: true, afkScans });
     }
 
     const prIds: string[] = [];
@@ -147,9 +149,9 @@ export async function POST(request: Request) {
         prIds.push(...ids);
       }
     }
-    triggerAfkScans(prIds);
+    const afkScans = await triggerAfkScans(prIds);
     if (logDelivery) await updateDeliveryStatus(logDelivery, "completed");
-    return NextResponse.json({ ok: true, repo: matched.id, afkScans: prIds.length });
+    return NextResponse.json({ ok: true, repo: matched.id, afkScans });
   }
 
   if (logDelivery) await updateDeliveryStatus(logDelivery, "ignored");

@@ -42,6 +42,10 @@ vi.mock("@/src/services/scanQueue", () => ({
   admitScanJobForPr: mocks.mockAdmitScanJobForPr,
 }));
 
+vi.mock("@/src/lib/autoRescanPolicy", () => ({
+  isAutoRescanEnabled: () => true,
+}));
+
 vi.mock("../src/services/hostedScan/orchestrator", () => ({
   triggerHostedScan: mocks.mockTriggerHostedScan,
 }));
@@ -86,6 +90,7 @@ describe("webhooks/gitlab/route POST", () => {
       path: "/tmp/repo",
       webhookSecret: "test-secret",
       hostedMode: false,
+      autoRescanPolicy: "enabled",
     });
     mocks.mockVerifyGitlabToken.mockImplementation(
       (token: string, secret: string) => token === secret,
@@ -360,7 +365,7 @@ describe("webhooks/gitlab/route POST", () => {
         commitHash: "abc123",
         author: "gitlab_user",
         description: "Fixes the critical bug",
-      });
+      }, { automatic: true });
       expect(mocks.mockGitFetch).not.toHaveBeenCalled();
       expect(mocks.mockEnqueue).not.toHaveBeenCalled();
     });
@@ -389,7 +394,7 @@ describe("webhooks/gitlab/route POST", () => {
         commitHash: "def456",
         author: "webhook",
         description: undefined,
-      });
+      }, { automatic: true });
     });
 
     it("returns 400 when object_attributes is missing head fields", async () => {

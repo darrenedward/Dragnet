@@ -190,7 +190,7 @@ async function syncPr(
   const needsScan = isNew || isUpdated;
 
   if (needsScan) {
-    const res = await triggerHostedScan(repoId, prData);
+    const res = await triggerHostedScan(repoId, prData, { automatic: true });
     if (!res.ok) {
       throw new Error(`triggerHostedScan failed: ${(res as { error: string }).error}`);
     }

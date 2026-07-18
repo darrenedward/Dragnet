@@ -8,6 +8,7 @@ import { toast } from "../../../lib/toast";
 import RolePanel from "./RolePanel";
 import ApiKeysPanel from "./ApiKeysPanel";
 import ReviewLimitsPanel from "./ReviewLimitsPanel";
+import AutoRescanPanel from "./AutoRescanPanel";
 import ProviderHealthPanel from "./ProviderHealthPanel";
 import SkepticPanel from "./SkepticPanel";
 import {
@@ -260,7 +261,7 @@ export default function LlmConfigTabs() {
         {tab === "api" ? (
           <ApiKeysPanel />
         ) : tab === "limits" ? (
-          <ReviewLimitsPanel />
+          <div className="space-y-4"><AutoRescanPanel /><ReviewLimitsPanel /></div>
         ) : tab === "health" ? (
           <ProviderHealthPanel />
         ) : tab === "skeptic" ? (
