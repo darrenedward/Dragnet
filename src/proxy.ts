@@ -31,8 +31,12 @@ export async function proxy(req: NextRequest) {
   const session = getSessionCookie(req);
   const authHeader = req.headers.get("authorization");
   const hasBearerKey = authHeader && authHeader.startsWith("Bearer dr_");
+  const queueWorkerToken = process.env.DRAGNET_MASTER_KEY;
+  const isQueueWorker = Boolean(
+    queueWorkerToken && req.headers.get("x-dragnet-queue-worker") === queueWorkerToken,
+  );
 
-  if (!session && !hasBearerKey) {
+  if (!session && !hasBearerKey && !isQueueWorker) {
     return NextResponse.json(
       {
         error:
