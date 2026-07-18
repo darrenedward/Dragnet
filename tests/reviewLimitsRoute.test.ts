@@ -58,6 +58,16 @@ describe("review-limits route validateLimits", () => {
     ).toThrow(/chunkLineCap must be a finite number/);
   });
 
+  it("enforces the global concurrent scan limit", () => {
+    expect(validateLimits({ ...DEFAULT_LIMITS, maxConcurrentScans: 32 }).maxConcurrentScans).toBe(32);
+    expect(() => validateLimits({ ...DEFAULT_LIMITS, maxConcurrentScans: 0 })).toThrow(
+      /maxConcurrentScans must be between 1 and 32/,
+    );
+    expect(() => validateLimits({ ...DEFAULT_LIMITS, maxConcurrentScans: 33 })).toThrow(
+      /maxConcurrentScans must be between 1 and 32/,
+    );
+  });
+
   it("rejects non-object body", () => {
     expect(() => validateLimits(null)).toThrow(/Expected an object body/);
   });

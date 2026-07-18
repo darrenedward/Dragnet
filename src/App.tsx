@@ -30,6 +30,7 @@ import EditRepoModal from "./components/modals/editRepo";
 import RepoSettingsModal from "./components/modals/repoSettings/RepoSettingsModal";
 import WebhookPrompt from "./components/modals/addRepo/WebhookPrompt";
 import TeamPanel from "./components/views/team/TeamPanel";
+import ScanQueueView from "./components/views/ScanQueueView";
 import RepoKeyModal from "./components/modals/repoKey/RepoKeyModal";
 import FirstKeyPrompt from "./components/FirstKeyPrompt";
 import DashboardTitleBar from "./components/DashboardTitleBar";
@@ -193,6 +194,8 @@ export default function App() {
               )}
 
               {activeTab === "llm_config" && <LlmConfigView />}
+
+              {activeTab === "queue" && <ScanQueueView />}
 
                {activeTab === "team" && <TeamPanel />}
 
