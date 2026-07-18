@@ -63,7 +63,11 @@ export async function POST(req: Request) {
 
   const run = await prisma.reviewRun.findUnique({
     where: { id: terminal.reviewRunId },
-    select: { rating: true, reliability: true },
+    select: { rating: true, reliability: true, model: true },
+  });
+  const findings = await prisma.reviewFinding.findMany({
+    where: { reviewRunId: terminal.reviewRunId },
+    orderBy: { timestamp: "asc" },
   });
   const rating = run?.rating ?? null;
   const reliability = run?.reliability ?? "complete";
@@ -71,6 +75,10 @@ export async function POST(req: Request) {
   return NextResponse.json({
     passed,
     rating,
+    findingsCount: findings.length,
+    findings,
+    usedModel: run?.model ?? null,
+    reliability,
     jobId: job.jobId,
     message: passed
       ? `✓ Dragnet: PR approved (${rating}/10)`
