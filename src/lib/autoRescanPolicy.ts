@@ -1,5 +1,5 @@
 import { chmod, mkdir, rename, writeFile } from "node:fs/promises";
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { prisma } from "@/src/lib/prisma";
 

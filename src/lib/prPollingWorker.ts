@@ -204,7 +204,7 @@ async function fetchPollingRepos() {
       patIv: true,
       patTag: true,
       autoRescanPolicy: true,
-        pullRequests: {
+      pullRequests: {
         select: { id: true, sourceBranch: true, commitHash: true, targetBranch: true, status: true },
       },
     },
