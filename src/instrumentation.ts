@@ -76,7 +76,7 @@ export async function register(): Promise<void> {
 
       const { startPolling } = await import("./lib/prPollingWorker");
       startPolling(async (_repoId, prId, _commitHash) => {
-        const res = await fetch(`${baseUrl}/api/prs/${encodeURIComponent(prId)}/scan`, {
+        const res = await fetch(`${baseUrl}/api/prs/${encodeURIComponent(prId)}/scan?triggerReason=auto`, {
           method: "POST",
           headers: {
             Authorization: `Bearer ${apiKey}`,

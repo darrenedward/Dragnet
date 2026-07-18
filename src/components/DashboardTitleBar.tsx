@@ -1,6 +1,6 @@
 "use client";
 
-import { Activity, Code2, Cpu, Database, GitBranch, ListTodo, Network, Users } from "lucide-react";
+import { Activity, Code2, Cpu, Database, GitBranch, ListTodo, Network, Users, ListChecks } from "lucide-react";
 import type { ActiveTab, Repository } from "../lib/types";
 
 interface Props {
@@ -12,6 +12,7 @@ interface Props {
 
 const TAB_TITLES: Record<ActiveTab, string> = {
   prs: "Manual PR Code Review Scanners",
+  queue: "Durable Scan Queue",
   watcher: "Git Watcher Daemon: Configured Workspace",
   roadmap: "Dragnet Tracker: PRD Progress Roadmap",
   codebase: "Codebase AST Indexer & Call-Graph Tracer",
@@ -49,6 +50,7 @@ export default function DashboardTitleBar({
 
       <div className="flex bg-slate-900 border border-white/10 p-1 rounded-lg self-start flex-wrap gap-1">
         <TabButton active={activeTab === "prs"} onClick={() => setActiveTab("prs")} icon={<Code2 size={13} />} label="Diff Scanner" />
+        <TabButton active={activeTab === "queue"} onClick={() => setActiveTab("queue")} icon={<ListChecks size={13} />} label="Scan Queue" />
         <TabButton active={activeTab === "watcher"} onClick={() => setActiveTab("watcher")} icon={<Activity size={13} />} label="Git Watcher Daemon" />
         <TabButton active={activeTab === "codebase"} onClick={() => setActiveTab("codebase")} icon={<Network size={13} />} label="Codebase AST graph" id="tab-codebase-graph" />
         <TabButton active={activeTab === "roadmap"} onClick={() => setActiveTab("roadmap")} icon={<ListTodo size={13} />} label="PRD Task Roadmap" />

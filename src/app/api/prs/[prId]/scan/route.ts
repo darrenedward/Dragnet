@@ -52,6 +52,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
   const force = new URL(req.url).searchParams.get("force") === "true";
   const resume = new URL(req.url).searchParams.get("resume") === "true";
   const fresh = new URL(req.url).searchParams.get("fresh") === "true";
+  const triggerReason = new URL(req.url).searchParams.get("triggerReason") ?? "manual";
   if (isQueueWorker) {
     const queuedCommit = new URL(req.url).searchParams.get("queuedCommit");
     if (queuedCommit) {
@@ -74,6 +75,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
       prId,
       repoId: queuedPr.repoId,
       commitHash: queuedPr.commitHash,
+      triggerReason,
       forced: force,
       resumeRequested: resume,
       freshRequested: fresh,
