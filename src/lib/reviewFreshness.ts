@@ -315,6 +315,7 @@ export async function assertReviewFreshness(
   }
 
   const matches =
+    latest.commitHash === pr.commitHash &&
     latest.diffHash === currentDiffHash &&
     latest.reviewConfigHash === currentConfigHash &&
     currentDiffHash !== ""; // empty hash = can't verify, don't cache

@@ -23,6 +23,7 @@ import { recordFixesForCompletedScan } from "./src/services/findingLifecycle/bug
 import { classifyProviderOutcome, type OutcomeClass, type ProviderAttempt } from "./src/lib/failureClassifier";
 import { computeCost } from "./src/lib/llmPricing";
 import { recordProviderQualityFailure, recordProviderSuccess } from "./src/lib/providerHealth";
+import { completePrReviewIfCurrent } from "./src/lib/prRevisionStatus";
 import {
   deleteCheckpoint,
   deleteRunCheckpoints,
@@ -934,7 +935,7 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
     const usedModel = "unconfigured";
     const systemWarn = "No code changes detected. Push your changes and re-scan. If this PR is intentionally empty, close it.";
     // Persist the result for this new scan
-    await prisma.pullRequest.updateMany({ where: { id: prId }, data: { status: "Completed", rating } });
+    await completePrReviewIfCurrent(prId, pr.commitHash, rating);
     if (reviewRunId && !reviewChunkId) {
       await completeReviewRun(reviewRunId, { status: "completed", rating, refused: false, outcome: "reviewed" });
     }
@@ -1914,10 +1915,7 @@ ${diffPayload}${deterministicPayload}`;
       }
     }
     try {
-      await prisma.pullRequest.updateMany({
-        where: { id: prId },
-        data: { status: "Completed", rating: null },
-      });
+      await completePrReviewIfCurrent(prId, pr.commitHash, null);
     } catch (prErr) {
       console.warn(`[scan] runPrScan: failed to set PR Completed on trivial-skip:`, prErr);
     }
@@ -2305,7 +2303,7 @@ ${diffPayload}${deterministicPayload}`;
   // 7. Update PR rating + status
   if (!reviewChunkId) {
     console.log(`[scan] runPrScan: setting PR status=Completed rating=${rating}`);
-    await prisma.pullRequest.updateMany({ where: { id: prId }, data: { status: "Completed", rating } });
+    await completePrReviewIfCurrent(prId, pr.commitHash, rating);
   }
 
   // 8. Audit trail

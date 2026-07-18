@@ -18,6 +18,7 @@
 
 import { execFileSync } from "child_process";
 import { prisma } from "./prisma";
+import { statusForRevision } from "./prRevisionStatus";
 
 export type TriggerScan = (
   repoId: string,
@@ -67,6 +68,7 @@ interface LocalPrRow {
   sourceBranch: string;
   commitHash: string;
   targetBranch: string;
+  status: string;
 }
 
 /**
@@ -170,7 +172,10 @@ export async function pollOnce(triggerScan: TriggerScan): Promise<void> {
       try {
         await prisma.pullRequest.update({
           where: { id: localPr.id },
-          data: { commitHash: ghPr.head.sha },
+          data: {
+            commitHash: ghPr.head.sha,
+            status: statusForRevision(localPr.status, localPr.commitHash, ghPr.head.sha),
+          },
         });
         await triggerScan(repo.id, localPr.id, ghPr.head.sha);
       } catch (err: any) {
@@ -195,8 +200,8 @@ async function fetchPollingRepos() {
       patCipher: true,
       patIv: true,
       patTag: true,
-      pullRequests: {
-        select: { id: true, sourceBranch: true, commitHash: true, targetBranch: true },
+        pullRequests: {
+        select: { id: true, sourceBranch: true, commitHash: true, targetBranch: true, status: true },
       },
     },
   });

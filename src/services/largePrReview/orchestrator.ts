@@ -18,6 +18,7 @@ import type {
   LargePrTier,
   ReviewFileInput,
 } from "./types";
+import { completePrReviewIfCurrent } from "@/src/lib/prRevisionStatus";
 
 type ChunkRunner = (
   prId: string,
@@ -96,6 +97,7 @@ export async function runLargePrReview({
     select: {
       repoId: true,
       pullRequest: { select: { sourceBranch: true } },
+      commitHash: true,
     },
   });
   if (!run) throw new Error(`ReviewRun ${reviewRunId} not found.`);
@@ -174,7 +176,7 @@ export async function runLargePrReview({
         chunksSkipped: 0,
       },
     });
-    await prisma.pullRequest.updateMany({ where: { id: prId }, data: { status: "Completed", rating: null } });
+    await completePrReviewIfCurrent(prId, run.commitHash, null);
     return {
       success: true,
       rating: null,

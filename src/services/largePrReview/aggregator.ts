@@ -1,6 +1,7 @@
 import { prisma } from "@/src/lib/prisma";
 import { dedupFindingsWithinRun, reconcileFindingsAcrossRuns } from "./reconcile";
 import type { ReviewReliability } from "./types";
+import { completePrReviewIfCurrent } from "@/src/lib/prRevisionStatus";
 
 export interface AggregatedReviewResult {
   reliability: ReviewReliability;
@@ -91,10 +92,7 @@ export async function aggregateResults(reviewRunId: string): Promise<AggregatedR
     },
   });
 
-  await prisma.pullRequest.updateMany({
-    where: { id: run.prId },
-    data: { status: "Completed", rating },
-  });
+  await completePrReviewIfCurrent(run.prId, run.commitHash, rating);
 
   const historyId = `rev-${reviewRunId}`;
   const existingHistory = await prisma.reviewHistory.findUnique({ where: { id: historyId } });

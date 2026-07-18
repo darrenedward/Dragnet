@@ -157,6 +157,9 @@ describe("pollOnce", () => {
 
     expect(triggerScan).toHaveBeenCalledTimes(1);
     expect(triggerScan).toHaveBeenCalledWith("repo-1", "pr-1", "new-sha");
+    expect(vi.mocked(prisma.pullRequest.update)).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { commitHash: "new-sha", status: "Pending" } }),
+    );
   });
 
   // ─── No-change guard ───────────────────────────────────────────────
@@ -430,7 +433,7 @@ describe("pollOnce", () => {
     // commitHash WAS updated (sync cycle continues despite gh failure)
     expect(prisma.pullRequest.update).toHaveBeenCalledWith({
       where: { id: "pr-1" },
-      data: { commitHash: "new-sha" },
+      data: { commitHash: "new-sha", status: "Pending" },
     });
     expect(triggerScan).toHaveBeenCalledWith("repo-1", "pr-1", "new-sha");
   });

@@ -27,6 +27,7 @@ import {
 } from "@/src/services/checkpointStore";
 import { logReview } from "@/src/services/deterministicChecks/logging";
 import { admitScanJob } from "@/src/services/scanQueue";
+import { completePrReviewIfCurrent } from "@/src/lib/prRevisionStatus";
 
 export async function POST(req: Request, { params }: { params: Promise<{ prId: string }> }) {
   const queueWorkerToken = process.env.DRAGNET_MASTER_KEY;
@@ -487,10 +488,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
     // 15s poller overwrites it. `Failed` is handled in the catch block
     // below; we only handle the non-failure terminal cases here.
     try {
-      await prisma.pullRequest.updateMany({
-        where: { id: prId },
-        data: { status: "Completed" },
-      });
+      await completePrReviewIfCurrent(prId, pr.commitHash);
     } catch (statusErr) {
       console.warn(`[scan] route: failed to clear PR In Progress status:`, statusErr);
     }

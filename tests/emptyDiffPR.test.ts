@@ -136,7 +136,7 @@ describe("Empty-diff PR handling — issue #61", () => {
     await runPrScan("pr-empty");
 
     expect(prismaMocks.pullRequestUpdateMany).toHaveBeenCalledWith({
-      where: { id: "pr-empty" },
+      where: { id: "pr-empty", commitHash: "abc123" },
       data: { status: "Completed", rating: null },
     });
   });
