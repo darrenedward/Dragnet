@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertTriangle, Database, RefreshCw, Settings } from "lucide-react";
+import { AlertTriangle, Check, Database, RefreshCw, Settings } from "lucide-react";
 import type { ConfigHealthReport } from "../lib/types";
 
 interface Props {
@@ -8,6 +8,7 @@ interface Props {
   onOpenDbSettings: () => void;
   onOpenSettings: () => void;
   onRefresh: () => void;
+  onUseCurrentUrl: () => Promise<void>;
 }
 
 export default function SystemSetupBanner({
@@ -15,12 +16,14 @@ export default function SystemSetupBanner({
   onOpenDbSettings,
   onOpenSettings,
   onRefresh,
+  onUseCurrentUrl,
 }: Props) {
   if (!health || health.ok || health.items.length === 0) return null;
 
   const blocking = health.items.filter((item) => item.severity === "blocking");
   const visibleItems = health.items.slice(0, 3);
   const hiddenCount = Math.max(0, health.items.length - visibleItems.length);
+  const needsPublicUrl = health.items.some((item) => item.id === "public-url");
 
   return (
     <div className="border-b border-amber-500/20 bg-amber-500/10 px-4 sm:px-6 py-3 shrink-0">
@@ -44,7 +47,7 @@ export default function SystemSetupBanner({
               )}
             </div>
             <p className="mt-1 text-xs text-amber-100/80">
-              Complete the missing environment details in <code className="font-mono text-amber-50">.env.local</code>, then restart Dragnet.
+              Complete the missing server setup below. These settings are stored by Dragnet; environment variables are only needed for deployment overrides.
             </p>
 
             <div className="mt-2 grid gap-1.5">
@@ -72,6 +75,15 @@ export default function SystemSetupBanner({
         </div>
 
         <div className="flex flex-wrap gap-2 shrink-0">
+          {needsPublicUrl && (
+            <button
+              onClick={onUseCurrentUrl}
+              className="h-8 px-2.5 rounded-md bg-cyan-500 hover:bg-cyan-400 text-xs font-semibold text-slate-950 border border-cyan-300/50 flex items-center gap-1.5"
+            >
+              <Check size={13} />
+              <span>Use this address</span>
+            </button>
+          )}
           <button
             onClick={onOpenDbSettings}
             className="h-8 px-2.5 rounded-md bg-slate-950/70 hover:bg-slate-900 text-xs font-semibold text-slate-200 border border-white/10 flex items-center gap-1.5"

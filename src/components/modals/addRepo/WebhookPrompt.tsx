@@ -140,8 +140,8 @@ export default function WebhookPrompt({ repoName, repoId, hasPat, onClose }: Pro
                 </button>
               </div>
               <p className="text-slate-500 mt-2 leading-relaxed">
-                Copy the tunnel URL it prints, set <code className="text-slate-400">DRAGNET_PUBLIC_URL=https://xyz.trycloudflare.com</code> in
-                <code className="text-slate-400"> .env.local</code>, restart the server, then continue below.
+                Copy the tunnel URL it prints, save it from the setup banner&apos;s
+                <strong className="text-slate-300"> Use this address </strong> button, then continue below.
               </p>
             </div>
           )}
