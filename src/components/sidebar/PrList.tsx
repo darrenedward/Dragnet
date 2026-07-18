@@ -45,12 +45,6 @@ function PrRow({ pr, isPrSelected, onSelect }: { pr: PullRequest; isPrSelected: 
   const statusClass = isPending && hasPriorReview
     ? "bg-orange-500/10 text-orange-400 border-orange-500/20"
     : getStatusBadgeStyle(pr.status);
-  const statusLabel = isPending
-    ? hasPriorReview
-      ? "Pending · changes detected"
-      : "Pending · review"
-    : pr.status;
-
   return (
     <button
       onClick={onSelect}
@@ -90,7 +84,7 @@ function PrRow({ pr, isPrSelected, onSelect }: { pr: PullRequest; isPrSelected: 
                 <span className="inline-block w-1 h-1 rounded-full bg-blue-400 animate-pulse shrink-0" />
               )}
               <span title={isPending ? (hasPriorReview ? "Code changed since the last completed review" : "This PR has not been reviewed yet") : undefined}>
-                {statusLabel}
+                {pr.status}
               </span>
             </span>
           </div>
