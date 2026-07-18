@@ -178,7 +178,7 @@ describe("pollHostedRepos", () => {
       commitHash: "abc123",
       author: "octocat",
       description: undefined,
-    });
+    }, { automatic: true });
   });
 
   it("does not re-scan if commit hash has not changed", async () => {
@@ -400,7 +400,7 @@ describe("pollHostedRepos", () => {
       commitHash: "gl-sha-123",
       author: "gl-user",
       description: "MR description",
-    });
+    }, { automatic: true });
   });
 
   // ─── HostedScan errors ───────────────────────────────────────────

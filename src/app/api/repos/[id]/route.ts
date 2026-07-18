@@ -71,6 +71,7 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
       installCommand,
       testCommand,
       isPollingEnabled,
+      autoRescanPolicy,
       webhookEnabled,
       skipTier2,
       hostedMode,
@@ -98,6 +99,12 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
     if (installCommand !== undefined) updateData.installCommand = installCommand;
     if (testCommand !== undefined) updateData.testCommand = testCommand;
     if (isPollingEnabled !== undefined) updateData.isPollingEnabled = Boolean(isPollingEnabled);
+    if (autoRescanPolicy !== undefined) {
+      if (!["inherit", "enabled", "disabled"].includes(autoRescanPolicy)) {
+        return NextResponse.json({ error: "autoRescanPolicy must be inherit, enabled, or disabled." }, { status: 400 });
+      }
+      updateData.autoRescanPolicy = autoRescanPolicy;
+    }
     if (webhookEnabled !== undefined) updateData.webhookEnabled = Boolean(webhookEnabled);
     if (skipTier2 !== undefined) updateData.skipTier2 = Boolean(skipTier2);
     if (hostedMode !== undefined) updateData.hostedMode = Boolean(hostedMode);

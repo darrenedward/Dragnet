@@ -38,6 +38,7 @@ vi.mock("child_process", () => ({
 const mockState = vi.hoisted(() => ({
   dbFixtures: [] as RepoRow[],
   dbShouldThrow: null as string | null,
+  autoRescanEnabled: true,
 }));
 
 vi.mock("../src/lib/prisma", () => {
@@ -67,6 +68,10 @@ vi.mock("../src/lib/prisma", () => {
   };
 });
 
+vi.mock("../src/lib/autoRescanPolicy", () => ({
+  isAutoRescanEnabled: () => mockState.autoRescanEnabled,
+}));
+
 import { pollOnce, fetchGhTargetBranch } from "../src/lib/prPollingWorker";
 import { prisma } from "../src/lib/prisma";
 
@@ -89,6 +94,7 @@ describe("pollOnce", () => {
     vi.clearAllMocks();
     mockState.dbFixtures = [];
     mockState.dbShouldThrow = null;
+    mockState.autoRescanEnabled = true;
   });
 
   afterEach(() => {
@@ -178,6 +184,25 @@ describe("pollOnce", () => {
     await pollOnce(triggerScan);
 
     expect(triggerScan).not.toHaveBeenCalled();
+  });
+
+  it("marks the new revision Pending without triggering a job when auto-rescan is disabled", async () => {
+    mockState.autoRescanEnabled = false;
+    mockState.dbFixtures = [
+      repoWithPrs({
+        pullRequests: [{ id: "pr-1", sourceBranch: "feature", commitHash: "old-sha", status: "Completed" }],
+      }),
+    ];
+    fetchSpy = vi
+      .spyOn(global, "fetch")
+      .mockImplementationOnce(() => Promise.resolve(ghResponse([{ number: 1, ref: "feature", sha: "new-sha" }])));
+
+    await pollOnce(triggerScan);
+
+    expect(triggerScan).not.toHaveBeenCalled();
+    expect(vi.mocked(prisma.pullRequest.update)).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { commitHash: "new-sha", status: "Pending" } }),
+    );
   });
 
   // ─── Pending PR still works ────────────────────────────────────────

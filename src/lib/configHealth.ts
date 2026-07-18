@@ -158,7 +158,9 @@ function publicUrlHealth(env: EnvMap): ConfigHealthItem | null {
     Boolean(env.GITHUB_APP_ID?.trim()) ||
     Boolean(env.GITHUB_APP_CLIENT_ID?.trim()) ||
     Boolean(env.DRAGNET_POLLING_ENABLED === "1");
-  if (!usesExternalCallbacks || env.DRAGNET_PUBLIC_URL?.trim()) return null;
+  const serverUrl = env.DRAGNET_URL?.trim();
+  const hasNonLocalServerUrl = Boolean(serverUrl && !/\b(localhost|127\.0\.0\.1|0\.0\.0\.0|::1)\b/i.test(serverUrl));
+  if (!usesExternalCallbacks || env.DRAGNET_PUBLIC_URL?.trim() || hasNonLocalServerUrl) return null;
 
   return missingItem({
     id: "public-url",
@@ -166,7 +168,7 @@ function publicUrlHealth(env: EnvMap): ConfigHealthItem | null {
     variables: ["DRAGNET_PUBLIC_URL"],
     feature: "Webhook delivery and callback URLs",
     message: "External callback features are configured, but DRAGNET_PUBLIC_URL is not set. Dragnet will advertise localhost URLs.",
-    action: "Set DRAGNET_PUBLIC_URL to the tunnel or deployed app URL, then restart Dragnet.",
+    action: "Use the banner button to save the current server address, or set DRAGNET_PUBLIC_URL for a deployment override.",
     severity: "warning",
   });
 }

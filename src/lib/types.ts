@@ -32,6 +32,7 @@ export interface Repository {
   installCommand?: string | null;
   testCommand?: string | null;
   isPollingEnabled?: boolean | null;
+  autoRescanPolicy?: "inherit" | "enabled" | "disabled" | null;
   skipTier2?: boolean | null;
   apiKeyPrefix?: string | null;
   hostedMode?: boolean | null;

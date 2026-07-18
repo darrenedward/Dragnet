@@ -76,6 +76,21 @@ export default function App() {
     }
   };
 
+  const saveCurrentPublicUrl = async () => {
+    try {
+      const url = `${window.location.origin}`;
+      const res = await fetchJson("/api/config/public-url", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url }),
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Unable to save server address.");
+      await fetchConfigHealth();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Unable to save server address.");
+    }
+  };
+
   useEffect(() => {
     fetchConfigHealth();
   }, []);
@@ -136,6 +151,7 @@ export default function App() {
         onOpenDbSettings={() => setActiveTab("db_config")}
         onOpenSettings={() => setActiveTab("llm_config")}
         onRefresh={fetchConfigHealth}
+        onUseCurrentUrl={saveCurrentPublicUrl}
       />
 
       {/* 2. Main Workspace Layout */}

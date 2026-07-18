@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import { prisma } from "@/src/lib/prisma";
 import { admitScanJobForPr } from "../scanQueue";
+import { isAutoRescanEnabledForRepo } from "../../lib/autoRescanPolicy";
 
 export interface HostedPrData {
   prNumber: number;
@@ -31,6 +32,7 @@ export async function validateHostedMode(repoId: string): Promise<ValidateResult
 export async function triggerHostedScan(
   repoId: string,
   data: HostedPrData,
+  options?: { automatic?: boolean },
 ): Promise<HostedScanResult> {
   const mode = await validateHostedMode(repoId);
   if (!mode.ok) return { ok: false, error: (mode as { error: string }).error };
@@ -64,6 +66,10 @@ export async function triggerHostedScan(
           createdAt: new Date().toISOString(),
         },
       });
+
+  if (options?.automatic && !(await isAutoRescanEnabledForRepo(repoId))) {
+    return { ok: true, prId: pr.id };
+  }
 
   const job = await admitScanJobForPr({
     prId: pr.id,

@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import { prisma } from "./prisma";
 import { decryptSecret, hasMasterKey } from "./crypto";
+import { getPublicUrl } from "./publicUrl";
 
 const providerPatterns: [RegExp, string][] = [
   [/github\.com/i, "github"],
@@ -39,7 +40,7 @@ export async function setupWebhookWithPat(
 
   const pat = decryptSecret(repo.patCipher, repo.patIv, repo.patTag);
   const provider = repo.provider || getProviderFromUrl(repo.cloneUrl || "", repo.cloneUrlHttps || undefined);
-  const targetUrl = opts?.targetUrl || `${process.env.DRAGNET_PUBLIC_URL || "http://localhost:3300"}/api/webhooks/${provider}`;
+  const targetUrl = opts?.targetUrl || `${getPublicUrl().url}/api/webhooks/${provider}`;
   const secret = repo.webhookSecret || crypto.randomUUID();
   const apiUrl = getApiBase(provider);
   const { owner, repo: repoName } = parseOwnerRepo(repo.cloneUrlHttps || repo.cloneUrl || "");
@@ -168,7 +169,7 @@ export function getManualWebhookInstructions(repo: {
   provider?: string | null;
 }): string {
   const provider = repo.provider || getProviderFromUrl(repo.cloneUrl || "", repo.cloneUrlHttps || undefined);
-  const publicUrl = process.env.DRAGNET_PUBLIC_URL || "http://localhost:3300";
+  const publicUrl = getPublicUrl().url;
   const webhookUrl = `${publicUrl}/api/webhooks/${provider}`;
   const secret = repo.webhookSecret || "(generated automatically)";
 

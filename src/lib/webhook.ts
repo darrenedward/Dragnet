@@ -76,6 +76,7 @@ export async function findRepoByCloneUrl(cloneUrl: string): Promise<{
   webhookSecret: string | null;
   webhookEnabled: boolean;
   hostedMode: boolean;
+  autoRescanPolicy: string;
   deployKeyCipher: string | null;
   deployKeyIv: string | null;
   deployKeyTag: string | null;
@@ -104,6 +105,7 @@ export async function findRepoByCloneUrl(cloneUrl: string): Promise<{
     webhookSecret: true,
     webhookEnabled: true,
     hostedMode: true,
+    autoRescanPolicy: true,
     deployKeyCipher: true,
     deployKeyIv: true,
     deployKeyTag: true,

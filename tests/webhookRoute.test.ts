@@ -43,6 +43,10 @@ vi.mock("@/src/services/scanQueue", () => ({
   admitScanJobForPr: mocks.mockAdmitScanJobForPr,
 }));
 
+vi.mock("@/src/lib/autoRescanPolicy", () => ({
+  isAutoRescanEnabled: () => true,
+}));
+
 vi.mock("../src/services/hostedScan/orchestrator", () => ({
   triggerHostedScan: mocks.mockTriggerHostedScan,
 }));
@@ -94,6 +98,7 @@ describe("webhooks/github/route POST", () => {
       path: "/tmp/repo",
       webhookSecret: "test-secret",
       hostedMode: false,
+      autoRescanPolicy: "enabled",
     });
     mocks.mockVerifySignature.mockImplementation(
       (payload: string, signature: string, secret: string) => {
@@ -432,7 +437,7 @@ describe("webhooks/github/route POST", () => {
         commitHash: "abc123",
         author: "octocat",
         description: "Description here",
-      });
+      }, { automatic: true });
 
       expect(mocks.mockGitFetch).not.toHaveBeenCalled();
       expect(mocks.mockScanRepoPrs).not.toHaveBeenCalled();
@@ -462,7 +467,7 @@ describe("webhooks/github/route POST", () => {
         commitHash: "def456",
         author: "webhook",
         description: undefined,
-      });
+      }, { automatic: true });
     });
 
     it("returns 400 when pull_request data is missing head/ref fields", async () => {

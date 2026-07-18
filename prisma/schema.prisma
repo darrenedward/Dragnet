@@ -60,6 +60,7 @@ model Repository {
   installCommand         String          @default("npm install")
   testCommand            String          @default("npm test && npm run lint")
   isPollingEnabled       Boolean         @default(false)
+  autoRescanPolicy       String          @default("inherit") // inherit | enabled | disabled
   skipTier2              Boolean         @default(false)
   repoId                 String?         @unique
   canonicalRemote        String?
