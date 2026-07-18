@@ -35,6 +35,10 @@ export async function register(): Promise<void> {
         execute: async (job) => {
           const query = new URLSearchParams({
             queuedCommit: job.commitHash,
+            triggerReason: job.triggerReason,
+            ...(job.triggerReason.startsWith("retry-failed-chunks:")
+              ? { retryRunId: job.triggerReason.slice("retry-failed-chunks:".length) }
+              : {}),
             ...(job.forced ? { force: "true" } : {}),
             ...(job.resumeRequested ? { resume: "true" } : {}),
             ...(job.freshRequested ? { fresh: "true" } : {}),
@@ -46,7 +50,10 @@ export async function register(): Promise<void> {
           });
           const body = await res.json().catch(() => ({}));
           if (!res.ok) throw new Error(body.error || `scan route returned ${res.status}`);
-          return { state: body.interrupted ? "interrupted" : "completed" };
+          return {
+            state: body.interrupted ? "interrupted" : "completed",
+            reviewRunId: typeof body.runId === "string" ? body.runId : null,
+          };
         },
       });
     } catch (err: any) {

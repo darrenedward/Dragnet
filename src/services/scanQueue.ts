@@ -134,7 +134,46 @@ export async function admitScanJob(input: {
     },
     update: {},
   });
+  // A force/recovery request is allowed to reuse the durable identity while
+  // moving a terminal job back through the queue. Ordinary duplicate
+  // requests remain idempotent and never restart completed work.
+  if ((input.forced || input.resumeRequested || input.freshRequested)
+    && ["completed", "failed", "interrupted", "cancelled"].includes(job.state)) {
+    const requeued = await prisma.scanJob.update({
+      where: { id: job.id },
+      data: {
+        state: "queued",
+        forced: input.forced ?? job.forced,
+        resumeRequested: input.resumeRequested ?? job.resumeRequested,
+        freshRequested: input.freshRequested ?? job.freshRequested,
+        triggerReason: input.triggerReason ?? job.triggerReason,
+        completedAt: null,
+        errorMessage: null,
+        workerId: null,
+        claimedAt: null,
+        leaseExpiresAt: null,
+      },
+    });
+    return view(requeued, await positionFor(requeued), requeued.forced, requeued.resumeRequested, requeued.freshRequested);
+  }
   return view(job, await positionFor(job), job.forced, job.resumeRequested, job.freshRequested);
+}
+
+/** Admit a scan using the PR's current revision as the coalescing key. */
+export async function admitScanJobForPr(input: {
+  prId: string;
+  triggerReason: string;
+  forced?: boolean;
+  resumeRequested?: boolean;
+  freshRequested?: boolean;
+  createdByUserId?: string | null;
+}): Promise<QueueJobView | null> {
+  const pr = await prisma.pullRequest.findUnique({
+    where: { id: input.prId },
+    select: { repoId: true, commitHash: true },
+  });
+  if (!pr) return null;
+  return admitScanJob({ ...input, repoId: pr.repoId, commitHash: pr.commitHash });
 }
 
 /**
@@ -234,6 +273,28 @@ export async function getScanJobForPr(prId: string): Promise<QueueJobView | null
     include: { repository: { select: { name: true } }, pullRequest: { select: { title: true, sourceBranch: true } } },
   });
   return job ? view(job, await positionFor(job), job.forced, job.resumeRequested, job.freshRequested) : null;
+}
+
+/** Wait for a queued job when the caller has a synchronous contract (pre-push). */
+export async function waitForScanJob(jobId: string, options?: { timeoutMs?: number; pollMs?: number }): Promise<{
+  state: ScanJobState;
+  reviewRunId: string | null;
+  errorMessage: string | null;
+} | null> {
+  const deadline = Date.now() + (options?.timeoutMs ?? 5 * 60 * 1000);
+  const pollMs = options?.pollMs ?? 250;
+  while (Date.now() < deadline) {
+    const job = await prisma.scanJob.findUnique({
+      where: { id: jobId },
+      select: { state: true, reviewRunId: true, errorMessage: true },
+    });
+    if (!job) return null;
+    if (!["queued", "running"].includes(job.state)) {
+      return { state: job.state as ScanJobState, reviewRunId: job.reviewRunId, errorMessage: job.errorMessage };
+    }
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+  }
+  return null;
 }
 
 export async function cancelScanJob(prId: string): Promise<boolean> {

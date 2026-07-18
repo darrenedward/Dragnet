@@ -28,6 +28,7 @@ import {
 import { logReview } from "@/src/services/deterministicChecks/logging";
 import { admitScanJob } from "@/src/services/scanQueue";
 import { completePrReviewIfCurrent } from "@/src/lib/prRevisionStatus";
+import { retryFailedChunks } from "@/src/services/largePrReview";
 
 export async function POST(req: Request, { params }: { params: Promise<{ prId: string }> }) {
   const queueWorkerToken = process.env.DRAGNET_MASTER_KEY;
@@ -60,6 +61,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
       if (!current || current.commitHash !== queuedCommit) {
         return NextResponse.json({ error: "QUEUE_REVISION_CHANGED" }, { status: 409 });
       }
+    }
+    const retryRunId = new URL(req.url).searchParams.get("retryRunId");
+    if (retryRunId) {
+      const result = await retryFailedChunks(retryRunId);
+      return NextResponse.json({ ...result, runId: retryRunId });
     }
   }
   // Keep older route-contract tests and pre-migration development databases
@@ -427,7 +433,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
       diffHash: currentDiffHash,
       reviewConfigHash: currentConfigHash,
       model: chatChain[0]?.model ?? null,
-      triggerReason: "manual",
+        triggerReason,
       forced: force,
       createdByUserId: authUserId,
     });
@@ -478,6 +484,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
     if (result.interrupted) {
       return NextResponse.json({
         ...result,
+        runId: reviewRunId,
         sizeProfile,
         interrupted: true,
       });
@@ -520,7 +527,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
     } catch (priorErr) {
       console.warn(`[scan] route: failed to load priorReviewRun for prId=${prId}:`, priorErr);
     }
-    return NextResponse.json({ ...result, sizeProfile, priorReviewRun });
+    return NextResponse.json({ ...result, runId: reviewRunId, sizeProfile, priorReviewRun });
   } catch (err: any) {
     console.error(`[scan] route: ERROR:`, err);
     if (acquired) endReview(prId);

@@ -8,6 +8,10 @@ const mocks = vi.hoisted(() => ({
   mockEnqueue: vi.fn(),
   mockCheckDelivery: vi.fn(),
   mockRunPrScan: vi.fn(),
+  mockAdmitScanJobForPr: vi.fn((input: { prId: string }) => {
+    mocks.mockRunPrScan(input.prId);
+    return Promise.resolve({ jobId: `job-${input.prId}`, prId: input.prId, state: "queued", queuePosition: 1 });
+  }),
   mockTriggerHostedScan: vi.fn(),
   mockCreateDeliveryLog: vi.fn(),
   mockUpdateDeliveryStatus: vi.fn(),
@@ -32,6 +36,10 @@ vi.mock("../src/lib/webhookReplay", () => ({
 
 vi.mock("@/reviewService", () => ({
   runPrScan: mocks.mockRunPrScan,
+}));
+
+vi.mock("@/src/services/scanQueue", () => ({
+  admitScanJobForPr: mocks.mockAdmitScanJobForPr,
 }));
 
 vi.mock("../src/services/hostedScan/orchestrator", () => ({

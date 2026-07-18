@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { verifyGitlabToken, findRepoByCloneUrl, gitFetch, scanRepoPrs, getOpenPrIds } from "../../../../lib/webhook";
 import { enqueue } from "@/src/services/remoteFetchWorker";
 import { checkDelivery } from "../../../../lib/webhookReplay";
-import { runPrScan } from "../../../../../reviewService";
+import { admitScanJobForPr } from "@/src/services/scanQueue";
 import { triggerHostedScan } from "@/src/services/hostedScan/orchestrator";
 import { createDeliveryLog, updateDeliveryStatus } from "../../../../lib/webhookDelivery";
 import type { HostedPrData } from "@/src/services/hostedScan/orchestrator";
@@ -52,7 +52,7 @@ export async function POST(request: Request) {
 
   const triggerAfkScans = (prIds: string[]) => {
     for (const prId of prIds) {
-      runPrScan(prId).catch((err) =>
+      admitScanJobForPr({ prId, triggerReason: "webhook" }).catch((err) =>
         console.error(`[webhook] AFK scan failed for ${prId}:`, err),
       );
     }
@@ -123,7 +123,7 @@ export async function POST(request: Request) {
     if (matched.hostedMode) {
       const prIds = await getOpenPrIds(matched.id);
       for (const prId of prIds) {
-        runPrScan(prId).catch((err) =>
+        admitScanJobForPr({ prId, triggerReason: "webhook" }).catch((err) =>
           console.error(`[webhook] hosted push scan failed for ${prId}:`, err),
         );
       }
