@@ -1,34 +1,12 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-
-const prismaMocks = vi.hoisted(() => ({
-  reviewRunFindFirst: vi.fn(),
-  reviewRunCreate: vi.fn(),
-}));
-
-vi.mock("../src/lib/prisma", () => ({
-  prisma: {
-    reviewRun: {
-      findFirst: prismaMocks.reviewRunFindFirst,
-      create: prismaMocks.reviewRunCreate,
-    },
-  },
-}));
+import { describe, it, expect } from "vitest";
 
 import {
-  assertReviewFreshness,
   computeDiffHash,
   computeReviewConfigHash,
-  createReviewRun,
-  parseIterationLogs,
   shortHash,
-} from "../src/lib/reviewFreshness";
+} from "../../../src/lib/reviewFreshness";
 
-beforeEach(() => {
-  prismaMocks.reviewRunFindFirst.mockReset();
-  prismaMocks.reviewRunCreate.mockReset();
-});
-
-describe("reviewFreshness", () => {
+describe("reviewFreshness > diffHash", () => {
   describe("computeDiffHash", () => {
     it("returns empty string when no files have diffs", () => {
       expect(computeDiffHash([])).toBe("");
@@ -68,22 +46,45 @@ describe("reviewFreshness", () => {
       expect(hash).toMatch(/^[a-f0-9]{16}$/);
     });
 
-    it("treats different commit hints as different hashes even when the diff is byte-identical (issue #13)", () => {
-      // Reproduces the #13 scenario: a force-push that moves the PR commit
-      // but leaves the resulting diff text byte-identical (e.g. cherry-pick
-      // to a new HEAD). Without the commit hint, both pushes hash the same
-      // and the second scan silently reuses the first scan's findings.
+    it("produces identical hashes for identical diff content even when commit hints differ (issue #33)", () => {
+      // #33 inverts #13: a no-op rebase (new commit hash, byte-identical
+      // diff text — e.g. cherry-pick to a new HEAD, or a force-push that
+      // leaves the diff unchanged) MUST produce the same diffHash so the
+      // cached review is reused instead of triggering a wasted rescan.
       const files = [{ filename: "src/foo.ts", diff: "@@ -1 +1 @@\n-x\n+y" }];
       const hashA = computeDiffHash(files, "aaa111");
       const hashB = computeDiffHash(files, "bbb222");
-      expect(hashA).not.toBe(hashB);
+      const hashC = computeDiffHash(files, "ccc333");
+      expect(hashA).toBe(hashB);
+      expect(hashA).toBe(hashC);
       expect(hashA).toMatch(/^[a-f0-9]{16}$/);
-      expect(hashB).toMatch(/^[a-f0-9]{16}$/);
     });
 
-    it("treats the empty commit-hint the same as a missing one (back-compat)", () => {
+    it("produces identical hashes for identical diff content with the same commit hint (regression guard)", () => {
+      const files = [
+        { filename: "src/a.ts", diff: "+added" },
+        { filename: "src/b.ts", diff: "-removed\n+added" },
+      ];
+      expect(computeDiffHash(files, "abc123")).toBe(computeDiffHash(files, "abc123"));
+      expect(computeDiffHash(files)).toBe(computeDiffHash(files, "abc123"));
+    });
+
+    it("produces different hashes when diff content changes (regression guard)", () => {
+      const a = [{ filename: "src/foo.ts", diff: "@@ -1 +1 @@\n-x\n+y" }];
+      const b = [{ filename: "src/foo.ts", diff: "@@ -1 +1 @@\n-x\n+z" }];
+      expect(computeDiffHash(a, "abc123")).not.toBe(computeDiffHash(b, "abc123"));
+      expect(computeDiffHash(a)).not.toBe(computeDiffHash(b));
+    });
+
+    it("ignores the commitHint parameter entirely (back-compat with existing callers)", () => {
+      // All 5 production callers pass `pr.commitHash` as the second
+      // argument. The argument is now intentionally unused — verify
+      // both the empty string and arbitrary hashes produce the same
+      // content-only hash as the no-arg call.
       const files = [{ filename: "a.ts", diff: "+x" }];
-      expect(computeDiffHash(files, "")).toBe(computeDiffHash(files));
+      const base = computeDiffHash(files);
+      expect(computeDiffHash(files, "")).toBe(base);
+      expect(computeDiffHash(files, "any-commit-hash")).toBe(base);
     });
   });
 
@@ -181,111 +182,6 @@ describe("reviewFreshness", () => {
 
     it("differs across inputs", () => {
       expect(shortHash("a")).not.toBe(shortHash("b"));
-    });
-  });
-
-  describe("assertReviewFreshness", () => {
-    const pr = { id: "pr-1", commitHash: "commit-current" };
-    const matchingRun = {
-      id: "run-1",
-      commitHash: "commit-current",
-      diffHash: "diff-current",
-      reviewConfigHash: "config-current",
-      rating: 8,
-      reliability: null,
-    };
-
-    it("reuses a matching completed run with a concrete rating", async () => {
-      prismaMocks.reviewRunFindFirst.mockResolvedValue(matchingRun);
-
-      await expect(
-        assertReviewFreshness(pr, "diff-current", "config-current"),
-      ).resolves.toEqual({ ok: true, runId: "run-1", rating: 8 });
-    });
-
-    it("does not reuse a matching completed run with null rating", async () => {
-      prismaMocks.reviewRunFindFirst.mockResolvedValue({ ...matchingRun, rating: null });
-
-      const result = await assertReviewFreshness(pr, "diff-current", "config-current");
-
-      expect(result.ok).toBe(false);
-      if (!("kind" in result)) throw new Error("expected cache miss for null rating");
-      expect(result.kind).toBe("STALE_RUN");
-      expect(result.message).toContain("rating=null");
-    });
-
-    it("does not reuse a matching completed run with partial reliability", async () => {
-      prismaMocks.reviewRunFindFirst.mockResolvedValue({ ...matchingRun, reliability: "partial" });
-
-      const result = await assertReviewFreshness(pr, "diff-current", "config-current");
-
-      expect(result.ok).toBe(false);
-      if (!("kind" in result)) throw new Error("expected cache miss for partial reliability");
-      expect(result.kind).toBe("STALE_RUN");
-      expect(result.message).toContain("reliability=partial");
-    });
-  });
-
-  describe("parseIterationLogs", () => {
-    it("resets displayed progress when a fallback provider starts its own budget", () => {
-      const parsed = parseIterationLogs([
-        { message: "Iteration 1/4 — NVIDIA", reviewChunkId: "chunk-a" },
-        { message: "Iteration 2/4 — NVIDIA", reviewChunkId: "chunk-a" },
-        { message: "Iteration 3/4 — NVIDIA", reviewChunkId: "chunk-a" },
-        { message: "Iteration 4/4 — NVIDIA", reviewChunkId: "chunk-a" },
-        { message: "Loop exhausted — no submitReview after 4 iterations", reviewChunkId: "chunk-a" },
-        { message: "Iteration 1/16 — Minimax", reviewChunkId: "chunk-a" },
-        { message: "Iteration 2/16 — Minimax", reviewChunkId: "chunk-a" },
-      ]);
-
-      expect(parsed["chunk-a"]).toEqual({ current: 2, max: 16, provider: "Minimax" });
-    });
-
-    it("tracks each chunk independently", () => {
-      const parsed = parseIterationLogs([
-        { message: "Iteration 4/4 — NVIDIA", reviewChunkId: "chunk-a" },
-        { message: "Iteration 1/16 — Minimax", reviewChunkId: "chunk-a" },
-        { message: "Iteration 3/4 — NVIDIA", reviewChunkId: "chunk-b" },
-      ]);
-
-      expect(parsed["chunk-a"]).toEqual({ current: 1, max: 16, provider: "Minimax" });
-      expect(parsed["chunk-b"]).toEqual({ current: 3, max: 4, provider: "NVIDIA" });
-    });
-  });
-
-  describe("createReviewRun", () => {
-    it("persists createdByUserId when provided", async () => {
-      prismaMocks.reviewRunCreate.mockResolvedValue({ id: "run-new" });
-      const id = await createReviewRun({
-        prId: "pr-1",
-        repoId: "repo-1",
-        commitHash: "abc",
-        diffHash: "def",
-        reviewConfigHash: "ghi",
-        createdByUserId: "user-42",
-      });
-      expect(id).toMatch(/^run-/);
-      expect(prismaMocks.reviewRunCreate).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({ createdByUserId: "user-42" }),
-        }),
-      );
-    });
-
-    it("persists createdByUserId as null when omitted (legacy/webhook runs)", async () => {
-      prismaMocks.reviewRunCreate.mockResolvedValue({ id: "run-new" });
-      await createReviewRun({
-        prId: "pr-1",
-        repoId: "repo-1",
-        commitHash: "abc",
-        diffHash: "def",
-        reviewConfigHash: "ghi",
-      });
-      expect(prismaMocks.reviewRunCreate).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({ createdByUserId: null }),
-        }),
-      );
     });
   });
 });

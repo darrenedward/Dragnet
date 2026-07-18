@@ -257,6 +257,7 @@ export default function App() {
                   reviewRun={d.reviewRun}
                   chunks={d.reviewChunks}
                   activeScan={d.activeScan}
+                  queueJob={d.queueJob}
                   activeChunks={d.activeScanChunks}
                   activeFindings={d.activeFindings}
                   activeIterations={d.activeIterations}

@@ -10,7 +10,7 @@ import { computePrSizeProfile } from "@/src/lib/prSizeProfile";
 import { readPrCommitCount } from "@/src/lib/prSizeProfile.server";
 import { assertTier, buildDiffManifest, runLargePrReview } from "@/src/services/largePrReview";
 import { readLimits } from "@/src/lib/prSizeConfig";
-import { authenticateSessionOrKey, enforcePrRepoScope } from "@/src/lib/apiAuth";
+import { authenticateSessionOrKey, enforcePrRepoScope, type AuthResult } from "@/src/lib/apiAuth";
 import {
   computeDiffHash,
   computeReviewConfigHash,
@@ -26,18 +26,60 @@ import {
   type CheckpointState,
 } from "@/src/services/checkpointStore";
 import { logReview } from "@/src/services/deterministicChecks/logging";
+import { admitScanJob } from "@/src/services/scanQueue";
 
 export async function POST(req: Request, { params }: { params: Promise<{ prId: string }> }) {
+  const queueWorkerToken = process.env.DRAGNET_MASTER_KEY;
+  const isQueueWorker = Boolean(
+    queueWorkerToken && req.headers.get("x-dragnet-queue-worker") === queueWorkerToken,
+  );
   // Route-level auth: this is the UI scan trigger (the API-key path is
   // /api/command via the /dragnet skill). proxy.ts is cookie-PRESENCE only.
-  const auth = await authenticateSessionOrKey(req);
-  if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: 401 });
+  let authUserId: string | null = null;
+  let authResult: AuthResult | null = null;
+  const queueAvailable = typeof (prisma as typeof prisma & { scanJob?: unknown }).scanJob !== "undefined";
+  if (!isQueueWorker) {
+    authResult = await authenticateSessionOrKey(req);
+    if (!authResult.ok) return NextResponse.json({ error: authResult.error }, { status: 401 });
+    authUserId = authResult.userId;
+  }
   const { prId } = await params;
-  const prScopeErr = await enforcePrRepoScope(auth, prId);
+  const prScopeErr = authResult ? await enforcePrRepoScope(authResult, prId) : null;
   if (prScopeErr) return NextResponse.json(prScopeErr, { status: 403 });
   await req.json().catch(() => ({}));
   console.log(`[scan] route: POST received for prId=${prId}`);
   const force = new URL(req.url).searchParams.get("force") === "true";
+  const resume = new URL(req.url).searchParams.get("resume") === "true";
+  const fresh = new URL(req.url).searchParams.get("fresh") === "true";
+  if (isQueueWorker) {
+    const queuedCommit = new URL(req.url).searchParams.get("queuedCommit");
+    if (queuedCommit) {
+      const current = await prisma.pullRequest.findUnique({ where: { id: prId }, select: { commitHash: true } });
+      if (!current || current.commitHash !== queuedCommit) {
+        return NextResponse.json({ error: "QUEUE_REVISION_CHANGED" }, { status: 409 });
+      }
+    }
+  }
+  // Keep older route-contract tests and pre-migration development databases
+  // on the legacy path until the ScanJob table is available. Normal runtime
+  // instances have the generated delegate and use the durable queue.
+  if (!isQueueWorker && queueAvailable) {
+    const queuedPr = await prisma.pullRequest.findUnique({
+      where: { id: prId },
+      select: { repoId: true, commitHash: true },
+    });
+    if (!queuedPr) return NextResponse.json({ error: "PR not found." }, { status: 404 });
+    const job = await admitScanJob({
+      prId,
+      repoId: queuedPr.repoId,
+      commitHash: queuedPr.commitHash,
+      forced: force,
+      resumeRequested: resume,
+      freshRequested: fresh,
+      createdByUserId: authUserId,
+    });
+    return NextResponse.json({ accepted: true, ...job }, { status: 202 });
+  }
   void logReview(prId, `> Scan requested via /api/prs/.../scan (force=${force})`, "info");
   // Phase 7 resume parameters. `resume=true` loads the prior run's
   // checkpoint and continues at the saved iteration. `fresh=true` marks
@@ -45,9 +87,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
   // starts a brand new scan. Both are mutually exclusive with each
   // other and with plain `force=true` (which is the legacy "abort and
   // restart" semantics — no checkpoint inspection).
-  const resume = new URL(req.url).searchParams.get("resume") === "true";
-  const fresh = new URL(req.url).searchParams.get("fresh") === "true";
-
   // Tracks whether THIS request acquired the review lock, so a failure
   // before acquisition never clears a concurrent scan's lock.
   let acquired = false;
@@ -387,7 +426,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
       model: chatChain[0]?.model ?? null,
       triggerReason: "manual",
       forced: force,
-      createdByUserId: auth.userId,
+      createdByUserId: authUserId,
     });
     if (resumeRunId) {
       // Resume re-uses the prior run row — flip it back to in_progress

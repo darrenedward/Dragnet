@@ -97,6 +97,11 @@ interface Props {
     chunksFailed?: number;
     chunksSkipped?: number;
   } | null;
+  queueJob?: {
+    jobId: string;
+    state: string;
+    queuePosition: number | null;
+  } | null;
   activeChunks?: ReviewChunk[];
   activeFindings?: ReviewFinding[];
   activeIterations?: Record<string, { current: number; max: number }>;
@@ -143,6 +148,7 @@ export default function PrsView({
   stability,
   chunks,
   activeScan,
+  queueJob,
   activeChunks,
   activeFindings,
   activeIterations,
@@ -194,6 +200,7 @@ export default function PrsView({
           interruptedScan={interruptedScan}
           onContinueScan={onContinueScan}
           onStartFreshScan={onStartFreshScan}
+          queueJob={queueJob}
         />
 
         <div className="space-y-4 min-w-0 mt-4 flex-1 overflow-y-auto overflow-x-hidden min-h-0 pr-1">
@@ -266,6 +273,7 @@ function PrHeader({
   interruptedScan,
   onContinueScan,
   onStartFreshScan,
+  queueJob,
 }: {
   activePR: PullRequest | undefined;
   isScanning: boolean;
@@ -290,8 +298,10 @@ function PrHeader({
   interruptedScan?: InterruptedScan | null;
   onContinueScan?: (prId: string) => void;
   onStartFreshScan?: (prId: string) => void;
+  queueJob?: { jobId: string; state: string; queuePosition: number | null } | null;
 }) {
   const scanning = isScanning || activePR?.status === "In Progress";
+  const queued = queueJob?.state === "queued";
   // Label/color/tooltip decision tree for the "Run PR Review" button.
   // Pure function of the selected PR's persisted scan state — no
   // dashboard-level sticky memory, so switching PRs can never leak a
@@ -328,6 +338,11 @@ function PrHeader({
             </span>
             {activePR.sizeProfile && (
               <PrSizeProfileChip profile={activePR.sizeProfile} />
+            )}
+            {queued && (
+              <span className="px-2 py-0.5 rounded uppercase font-extrabold text-[9px] font-mono bg-amber-500/10 text-amber-300 border border-amber-500/25">
+                QUEUED{queueJob?.queuePosition ? ` #${queueJob.queuePosition}` : ""}
+              </span>
             )}
             <span
               className={`px-2 py-0.5 rounded uppercase font-extrabold text-[9px] font-mono flex items-center gap-1.5 shrink-0 select-none ${getStatusBadgeStyle(activePR.status)}`}

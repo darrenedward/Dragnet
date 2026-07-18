@@ -22,6 +22,38 @@ export async function register(): Promise<void> {
   const { reapStaleRuns } = await import("./services/runReaper");
   void reapStaleRuns();
 
+  // The queue worker is always enabled in the Node runtime. It claims jobs
+  // with a durable lease and invokes the scan route through its internal
+  // worker-authenticated path, so queued work survives request completion and
+  // a server restart.
+  if (process.env.DRAGNET_MASTER_KEY) {
+    try {
+      const { startScanQueueWorker } = await import("./services/scanQueue");
+      const baseUrl = (process.env.DRAGNET_URL || process.env.DRAGNET_PUBLIC_URL || "http://localhost:3300").replace(/\/$/, "");
+      const workerKey = process.env.DRAGNET_MASTER_KEY;
+      startScanQueueWorker({
+        execute: async (job) => {
+          const query = new URLSearchParams({
+            queuedCommit: job.commitHash,
+            ...(job.forced ? { force: "true" } : {}),
+            ...(job.resumeRequested ? { resume: "true" } : {}),
+            ...(job.freshRequested ? { fresh: "true" } : {}),
+          });
+          const res = await fetch(`${baseUrl}/api/prs/${encodeURIComponent(job.prId)}/scan?${query}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "x-dragnet-queue-worker": workerKey },
+            body: "{}",
+          });
+          const body = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(body.error || `scan route returned ${res.status}`);
+          return { state: body.interrupted ? "interrupted" : "completed" };
+        },
+      });
+    } catch (err: any) {
+      console.warn("[instrumentation] scan queue worker failed to start:", err.message);
+    }
+  }
+
   // Seed LLM presets from legacy file if DB is empty, then preload cache.
   const { seedFromLegacyFile, preloadCache } = await import("./lib/llmPresets");
   void seedFromLegacyFile().then(() => preloadCache());

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/src/lib/prisma";
 import { abortScan } from "@/src/lib/reviewLocks";
+import { cancelScanJob } from "@/src/services/scanQueue";
 import { authenticateSessionOrKey, enforcePrRepoScope } from "@/src/lib/apiAuth";
 
 export async function POST(req: Request, { params }: { params: Promise<{ prId: string }> }) {
@@ -13,7 +14,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
   console.log(`[scan] stop: POST received for prId=${prId}`);
 
   // 1. Abort the in-memory controller (signals the running scan to stop).
-  const aborted = abortScan(prId);
+    const aborted = abortScan(prId);
+    await cancelScanJob(prId);
 
   // 2. Mark the active ReviewRun as failed in the DB so subsequent
   //    assertNoActiveScan doesn't see it as still in_progress.

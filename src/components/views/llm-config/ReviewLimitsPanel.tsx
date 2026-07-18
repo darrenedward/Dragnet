@@ -16,6 +16,7 @@ import type { ReviewLimits } from "../../../lib/prSizeConfig";
  *  - Tail-skip (off by default): Greptile-style file cap
  */
 const DEFAULTS: ReviewLimits = {
+  maxConcurrentScans: 1,
   chunkLineCap: 600,
   minUsefulChunkLines: 100,
   normalMaxLines: 800,
@@ -26,6 +27,7 @@ const DEFAULTS: ReviewLimits = {
 };
 
 const BOUNDS = {
+  maxConcurrentScans: { min: 1, max: 32 },
   chunkLineCap: { min: 300, max: 3000 },
   minUsefulChunkLines: { min: 50, max: 500 },
   normalMaxLines: { min: 200, max: 5000 },
@@ -146,6 +148,19 @@ export default function ReviewLimitsPanel() {
 
   return (
     <div className="space-y-6">
+      <SectionCard
+        title="Scan queue"
+        subtitle="The maximum number of PR reviews that can run at once across the server."
+      >
+        <NumberInput
+          label="Max concurrent scans"
+          value={limits.maxConcurrentScans ?? 1}
+          min={BOUNDS.maxConcurrentScans.min}
+          max={BOUNDS.maxConcurrentScans.max}
+          onChange={(v) => updateField("maxConcurrentScans", v)}
+        />
+      </SectionCard>
+
       <SectionCard
         title="Chunking"
         subtitle="How big each LLM call's input is. Effective cap = max(Lines per chunk, Normal max lines)."
@@ -269,6 +284,7 @@ function labelFor(key: FieldKey): string {
     case "oversizedLines": return "Oversized — max lines";
     case "oversizedCodeFiles": return "Oversized — max code files";
     case "maxFilesPerReview": return "Max files per review";
+    case "maxConcurrentScans": return "Max concurrent scans";
   }
 }
 

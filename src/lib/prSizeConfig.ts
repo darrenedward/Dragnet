@@ -38,6 +38,8 @@ import {
  */
 
 export interface ReviewLimits {
+  /** Maximum number of scans a queue worker may run concurrently. */
+  maxConcurrentScans?: number;
   /** Max lines per chunk (chunker.ts: CHUNK_LINE_CAP). */
   chunkLineCap: number;
   /** Min lines for a chunk to be worth its own LLM call (chunker.ts). */
@@ -75,6 +77,7 @@ function limitsTmp(): string {
 
 /** Default values match the pre-config constants so v1 is invisible. */
 export const DEFAULT_LIMITS: ReviewLimits = {
+  maxConcurrentScans: 1,
   chunkLineCap: CHUNK_LINE_CAP,
   minUsefulChunkLines: MIN_USEFUL_CHUNK_LINES,
   normalMaxLines: NORMAL_MAX_LINES,
@@ -168,6 +171,7 @@ function coerceLimits(input: unknown): ReviewLimits | null {
     return v;
   };
   return {
+    maxConcurrentScans: Math.max(1, Math.floor(num("maxConcurrentScans") ?? DEFAULT_LIMITS.maxConcurrentScans)),
     chunkLineCap: num("chunkLineCap") ?? DEFAULT_LIMITS.chunkLineCap,
     minUsefulChunkLines: num("minUsefulChunkLines") ?? DEFAULT_LIMITS.minUsefulChunkLines,
     normalMaxLines: num("normalMaxLines") ?? DEFAULT_LIMITS.normalMaxLines,

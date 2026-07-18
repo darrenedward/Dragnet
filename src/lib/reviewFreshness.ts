@@ -193,16 +193,15 @@ export const REVIEW_ENGINE_CACHE_VERSION = "review-engine-v2-finalizer-safe-tran
  * sorts by filename for stability, concatenates with a separator,
  * sha256, first 16 hex chars.
  *
- * `commitHint` is mixed into the seed so two pushes of the same PR to
- * different commits CANNOT produce the same hash even if the resulting
- * patch text is byte-identical (e.g. cherry-picked to a new HEAD, or
- * a force-push that leaves the diff unchanged but moves the commit).
- * Without this, the cache would silently treat a different commit as
- * a cache hit; #13 reproduced exactly that — same diffHash, different
- * commits, stale findings reused.
+ * The hash is content-addressed over the diff body alone — the
+ * `commitHint` parameter is intentionally unused. A no-op rebase
+ * (new commit hash, byte-identical diff text) reuses the cached
+ * review; only a real diff change invalidates the cache (#33).
  *
- * Pass `commitHint = ""` when no commit context is available — the
- * hash still works, just without the cross-commit collision guard.
+ * `commitHint` is kept in the signature for back-compat with the 5
+ * callers that already pass `pr.commitHash` — accepting and ignoring
+ * the argument avoids a noisy multi-file refactor while preserving
+ * the new content-only contract.
  *
  * Returns "" on empty input (no files / no diffs) — callers should
  * treat this as "can't compute, don't cache" since it will never
@@ -210,6 +209,7 @@ export const REVIEW_ENGINE_CACHE_VERSION = "review-engine-v2-finalizer-safe-tran
  */
 export function computeDiffHash(
   files: DiffHashInput[],
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   commitHint: string = "",
 ): string {
   const withDiff = files
@@ -222,12 +222,7 @@ export function computeDiffHash(
     .map((f) => `--- ${f.filename} ---\n${f.diff!.trim()}`)
     .join("\n\n");
 
-  // Prefix the commit hint so any subsequent diff-text change after the
-  // commit hint is part of the same hash space. Kept in a single update()
-  // call so the hash is computed once.
-  const seed = commitHint ? `commit:${commitHint}\n${diffSeed}` : diffSeed;
-
-  return crypto.createHash("sha256").update(seed).digest("hex").slice(0, 16);
+  return crypto.createHash("sha256").update(diffSeed).digest("hex").slice(0, 16);
 }
 
 /**
@@ -279,8 +274,16 @@ export function shortHash(input: string): string {
 
 /**
  * Returns the latest completed ReviewRun for the given PR if its
- * (commitHash, diffHash, reviewConfigHash) all match the current
- * values. Otherwise returns a STALE_RUN or NO_RUN signal.
+ * (diffHash, reviewConfigHash) match the current values. Otherwise
+ * returns a STALE_RUN or NO_RUN signal.
+ *
+ * The commitHash is intentionally NOT part of the match tuple (#33):
+ * the diffHash is now content-addressed, so a no-op rebase (new commit
+ * hash, byte-identical diff text) reuses the cached review. Only a
+ * real diff change or a config change invalidates the cache.
+ *
+ * `pr.commitHash` is still accepted in the argument for caller back-
+ * compat (the scan route passes it) but the value is not consulted.
  *
  * Empty input hashes (from fail-open computeDiffHash) never match —
  * treated as STALE_RUN so the scan proceeds.
@@ -312,7 +315,6 @@ export async function assertReviewFreshness(
   }
 
   const matches =
-    latest.commitHash === pr.commitHash &&
     latest.diffHash === currentDiffHash &&
     latest.reviewConfigHash === currentConfigHash &&
     currentDiffHash !== ""; // empty hash = can't verify, don't cache
@@ -330,9 +332,9 @@ export async function assertReviewFreshness(
     kind: "STALE_RUN",
     message: !reusable
       ? `Prior review run is not reusable (rating=${latest.rating ?? "null"}, reliability=${latest.reliability ?? "unknown"}).`
-      : `Prior review run was for commit ${latest.commitHash.slice(0, 7)} ` +
-        `(diffHash ${latest.diffHash.slice(0, 8) || "(unknown)"}). ` +
-        `Current state: commit ${pr.commitHash.slice(0, 7)}, diffHash ${currentDiffHash.slice(0, 8) || "(unknown)"}.`,
+      : `Prior review run (diffHash ${latest.diffHash.slice(0, 8) || "(unknown)"}) ` +
+        `does not match current diffHash ${currentDiffHash.slice(0, 8) || "(unknown)"} ` +
+        `or configHash ${currentConfigHash.slice(0, 8) || "(empty)"}.`,
   };
 }
 
@@ -705,14 +707,23 @@ export async function getLatestCompletedReview(
   const [findings, rejectedFindings, regressionRows] = await Promise.all([
     prisma.reviewFinding.findMany({
       where: {
-        reviewRunId: latestRun.id,
+        // Surviving priors: matched-new was deleted during reconcile and
+        // prior.lastSeenRunId was bumped to latestRun.id. The prior's
+        // reviewRunId still points at the FIRST run it was detected in,
+        // so we OR-match on either column (issue #31).
         OR: [
-          { verificationStatus: null },
-          { verificationStatus: { not: "rejected" } },
+          { reviewRunId: latestRun.id },
+          { lastSeenRunId: latestRun.id },
         ],
-        // Skeptic rejects mirror the verifier pattern: persisted for audit,
-        // excluded from the active findings list.
         AND: [
+          {
+            OR: [
+              { verificationStatus: null },
+              { verificationStatus: { not: "rejected" } },
+            ],
+          },
+          // Skeptic rejects mirror the verifier pattern: persisted for audit,
+          // excluded from the active findings list.
           {
             OR: [
               { skepticVerdict: null },
@@ -727,10 +738,19 @@ export async function getLatestCompletedReview(
     }),
     prisma.reviewFinding.findMany({
       where: {
-        reviewRunId: latestRun.id,
+        // Same issue #31 OR-match — surviving priors whose verdict flipped
+        // to "rejected" in the latest run must show up here.
         OR: [
-          { verificationStatus: "rejected" },
-          { skepticVerdict: "rejected" },
+          { reviewRunId: latestRun.id },
+          { lastSeenRunId: latestRun.id },
+        ],
+        AND: [
+          {
+            OR: [
+              { verificationStatus: "rejected" },
+              { skepticVerdict: "rejected" },
+            ],
+          },
         ],
       },
       orderBy: { line: "asc" },
