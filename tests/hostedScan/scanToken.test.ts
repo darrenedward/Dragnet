@@ -42,7 +42,8 @@ describe("ScanToken validation", () => {
 
   it("rejects a tampered token", () => {
     const token = generateScanTokenRaw();
-    const tampered = token.raw.slice(0, -1) + "0";
+    const replacement = token.raw.endsWith("0") ? "1" : "0";
+    const tampered = token.raw.slice(0, -1) + replacement;
     const computed = hashScanToken(tampered);
     expect(computed).not.toBe(token.hash);
   });

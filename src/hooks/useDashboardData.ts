@@ -12,6 +12,7 @@ import {
 } from "../lib/types";
 import { fetchJson, NetworkError } from "../lib/http";
 import { toast } from "../lib/toast";
+import { usePrWorkspace } from "./usePrWorkspace";
 
 /**
  * Single source of truth for the dashboard's data state, polling, and
@@ -26,8 +27,6 @@ import { toast } from "../lib/toast";
  */
 export function useDashboardData() {
   const pollInFlight = useRef(false);
-  const latestPrsRequest = useRef(0);
-  const latestDetailsRequest = useRef(0);
   // True between handleTriggerPrScan's first await and its finally block.
   // The isScanning-sync useEffect below reads this — when a scan request
   // is in flight, the 15s poller can return server data where PR.status
@@ -55,9 +54,16 @@ export function useDashboardData() {
 
   // ===== Repositories & PRs =====
   const [repos, setRepos] = useState<Repository[]>([]);
-  const [selectedRepoId, setSelectedRepoId] = useState<string>("");
+  const {
+    coordinator: workspaceCoordinator,
+    selectedRepoId,
+    setSelectedRepoId,
+    selectedPrId,
+    setSelectedPrId,
+    selectRepository,
+    selectPullRequest,
+  } = usePrWorkspace({ repos });
   const [prs, setPrs] = useState<PullRequest[]>([]);
-  const [selectedPrId, setSelectedPrId] = useState<string>("");
   const [prFiles, setPrFiles] = useState<PRFile[]>([]);
   const [selectedFilename, setSelectedFilename] = useState<string>("");
   const [findings, setFindings] = useState<ReviewFinding[]>([]);
@@ -228,21 +234,6 @@ export function useDashboardData() {
       const data = await res.json();
       if (Array.isArray(data)) {
         setRepos(data);
-        // Reset selection if it points at a repo that no longer exists
-        // (covers the "dragnet-core" bootstrap default and deleted repos).
-        //
-        // Read current selection from a ref, not the state closure. The
-        // background poller (below) captures the FIRST render's fetchRepos,
-        // which closes over selectedRepoId="" — reading the state directly
-        // here would always see "" and force selection back to data[0]
-        // every 15 seconds ("bam! another project opens" symptom).
-        const currentSelected = repoIdRef.current;
-        if (data.length > 0) {
-          const stillExists = data.some((r: Repository) => r.id === currentSelected);
-          if (!currentSelected || !stillExists) {
-            setSelectedRepoId(data[0].id);
-          }
-        }
       }
     } catch (e) {
       console.error("Failed loading repositories", e);
@@ -250,9 +241,8 @@ export function useDashboardData() {
   };
 
   const fetchPrsForSelectedRepo = async (repoId: string, retainSelection = true) => {
-    const requestId = ++latestPrsRequest.current;
+    const request = workspaceCoordinator.current.beginPrList(repoId);
     if (!retainSelection) {
-      latestDetailsRequest.current += 1;
       setPrs([]);
       setSelectedPrId("");
       setPrFiles([]);
@@ -272,12 +262,12 @@ export function useDashboardData() {
     try {
       const res = await fetchJson(`/api/repos/${repoId}/prs`);
       const data = await res.json();
-      if (requestId !== latestPrsRequest.current) return;
+      if (!workspaceCoordinator.current.isCurrentPrList(request)) return;
 
       const prsData = Array.isArray(data) && data.length === 0
-        ? await refreshPrsAfterEmptySnapshot(repoId, requestId)
+        ? await refreshPrsAfterEmptySnapshot(repoId, request)
         : data;
-      if (requestId !== latestPrsRequest.current) return;
+      if (!workspaceCoordinator.current.isCurrentPrList(request)) return;
 
       if (Array.isArray(prsData)) {
         if (retainSelection && prs.length > 0 && prsData.length === 0) {
@@ -285,12 +275,10 @@ export function useDashboardData() {
         }
         setPrs(prsData);
         if (prsData.length > 0) {
-          setSelectedPrId((prev) => {
-            if (retainSelection && prev && prsData.some((p: PullRequest) => p.id === prev)) {
-              return prev;
-            }
-            return prsData[0].id;
-          });
+          setSelectedPrId((prev) => workspaceCoordinator.current.selectPr(
+            retainSelection ? prev : "",
+            prsData.map((p: PullRequest) => p.id),
+          ));
         } else {
           setSelectedPrId("");
           setPrFiles([]);
@@ -304,17 +292,22 @@ export function useDashboardData() {
         }
       }
     } catch (e) {
+      setStale(true);
       console.error("Failed loading PR list for repo " + repoId, e);
     }
   };
 
-  const refreshPrsAfterEmptySnapshot = async (repoId: string, requestId: number) => {
+  const refreshPrsAfterEmptySnapshot = async (
+    repoId: string,
+    request: { repoId: string; revision: number },
+  ) => {
     try {
       const refreshRes = await fetchJson(`/api/repos/${repoId}/prs`, { method: "POST" });
       const refreshData = await refreshRes.json();
-      if (requestId !== latestPrsRequest.current) return [];
+      if (!workspaceCoordinator.current.isCurrentPrList(request)) return [];
       return Array.isArray(refreshData) ? refreshData : [];
     } catch (err) {
+      setStale(true);
       console.warn("Failed refreshing empty PR snapshot for repo " + repoId, err);
       return [];
     }
@@ -322,7 +315,7 @@ export function useDashboardData() {
 
   const fetchPrDetails = async (prId: string, clearBeforeLoad = true) => {
     if (!prId) return;
-    const requestId = ++latestDetailsRequest.current;
+    const request = workspaceCoordinator.current.beginDetails(prId);
     if (clearBeforeLoad) {
       setPrFiles([]);
       setSelectedFilename("");
@@ -340,7 +333,7 @@ export function useDashboardData() {
     try {
       const filesRes = await fetchJson(`/api/prs/${prId}/files`);
       const filesData = await filesRes.json();
-      if (requestId !== latestDetailsRequest.current) return;
+      if (!workspaceCoordinator.current.isCurrentDetails(request)) return;
       if (Array.isArray(filesData)) {
         setPrFiles(filesData);
         if (filesData.length > 0) {
@@ -355,7 +348,7 @@ export function useDashboardData() {
 
       const findingsRes = await fetchJson(`/api/prs/${prId}/findings`);
       const findingsData = await findingsRes.json();
-      if (requestId !== latestDetailsRequest.current) return;
+      if (!workspaceCoordinator.current.isCurrentDetails(request)) return;
       if (findingsData && typeof findingsData === "object" && "findings" in findingsData) {
         setFindings(findingsData.findings);
         setReviewRun(findingsData.reviewRun ?? null);
@@ -389,6 +382,7 @@ export function useDashboardData() {
         setStale(false);
       }
     } catch (e) {
+      setStale(true);
       console.error("Failed retrieving PR files/findings detailed block", e);
     }
   };
@@ -934,7 +928,7 @@ export function useDashboardData() {
       if (res.ok) {
         setErrorFeedback(null);
         await fetchRepos();
-        setSelectedRepoId(data.id);
+        selectRepository(data.id);
         await fetchPrsForSelectedRepo(data.id, false);
 
         if (data.apiKey) {
@@ -1076,9 +1070,11 @@ export function useDashboardData() {
     repos,
     selectedRepoId,
     setSelectedRepoId,
+    selectRepository,
     prs,
     selectedPrId,
     setSelectedPrId,
+    selectPullRequest,
     prFiles,
     selectedFilename,
     setSelectedFilename,

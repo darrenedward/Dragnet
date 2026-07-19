@@ -39,7 +39,7 @@ export function canonicalizeUrl(remoteUrl) {
  *
  * Previously this wrote `.dragnet/repo.json` + updated `.gitignore`. Per the
  * Per-Project API Keys PRD (#33), the agent skill and pre-push hook now read
- * `$DRAGNET_API_KEY` + `$DRAGNET_URL` directly from the environment — no
+ * `$DRAGNET_REPO_KEY` + `$DRAGNET_URL` directly from the environment — no
  * filesystem config. This CLI just resolves the values; the bin script prints
  * the `export ...` lines for the user to paste into their shell.
  */

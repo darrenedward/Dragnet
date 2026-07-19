@@ -69,12 +69,11 @@ Ensure you have read access to the repos you'll be reviewing.
 ### Step 3: Generate an API Key
 
 1. Open the Dragnet dashboard at `http://localhost:3300`
-2. Navigate to **Settings → API Keys**
-3. Click **Generate key**
-4. Give it a descriptive name (e.g., "alice@company.com")
-5. Copy the generated key (starts with `dr_`)
+2. Find the project in the sidebar
+3. Click that project's key icon
+4. Generate a project key and copy the displayed variables
 
-**Important:** API keys are per-user, per-install. Each teammate needs their own key.
+**Important:** Project API keys are scoped to the project and should be kept private. Each teammate or automation client should use an appropriate project key.
 
 ### Step 4: Configure Environment Variables
 

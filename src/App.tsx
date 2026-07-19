@@ -163,7 +163,7 @@ export default function App() {
           repos={d.repos}
           selectedRepoId={d.selectedRepoId}
           onSelectRepo={(repoId) => {
-            d.setSelectedRepoId(repoId);
+            d.selectRepository(repoId);
             d.fetchPrsForSelectedRepo(repoId, false);
           }}
           onEditRepo={(repo) => ed.openEditor(repo)}
@@ -173,11 +173,10 @@ export default function App() {
           prs={d.prs}
           selectedPrId={d.selectedPrId}
           onSelectPr={(prId) => {
-            d.setSelectedPrId(prId);
+            d.selectPullRequest(prId);
             setActiveTab("prs");
             if (typeof window !== "undefined" && window.innerWidth < 768) setIsSidebarOpen(false);
           }}
-          onOpenLlmSettings={() => setActiveTab("llm_config")}
         />
 
         {/* Content Body Viewport */}
@@ -257,7 +256,7 @@ export default function App() {
                   <GitWatcher
                     onTriggerReviewPass={d.handleTriggerReviewPass}
                     activeRepoId={d.selectedRepoId}
-                    onRepoChange={(id) => d.setSelectedRepoId(id)}
+                    onRepoChange={(id) => d.selectRepository(id)}
                   />
                 </motion.div>
               )}

@@ -6,8 +6,7 @@ import { fetchJson } from "../../../lib/http";
 
 /**
  * One-shot modal that mints a per-repo API key for the current user
- * (a UserRepo-scoped key, distinct from the project-level key created
- * at repo-add time). The key is shown exactly once — copy it before
+ * (a UserRepo-scoped key for this project). The key is shown exactly once — copy it before
  * closing, like every other API-key reveal flow in the dashboard.
  *
  * Extracted from `MyReposView` (#69 PR 3) so the same modal can be
@@ -24,8 +23,8 @@ export default function RepoKeyModal({
   onClose: () => void;
 }) {
   const [generating, setGenerating] = useState(false);
-  const [generated, setGenerated] = useState<{ key: string; prefix: string } | null>(null);
-  const [copied, setCopied] = useState(false);
+  const [generated, setGenerated] = useState<{ key: string; prefix: string; url: string } | null>(null);
+  const [copied, setCopied] = useState<"key" | "env" | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const handleGenerate = async () => {
@@ -43,7 +42,7 @@ export default function RepoKeyModal({
         return;
       }
       if (data.key && data.prefix) {
-        setGenerated({ key: data.key, prefix: data.prefix });
+        setGenerated({ key: data.key, prefix: data.prefix, url: window.location.origin });
       } else {
         setError("Server returned an unexpected response.");
       }
@@ -99,16 +98,16 @@ export default function RepoKeyModal({
               <div className="flex items-center gap-1.5">
                 <span className="font-bold">New API key — save it now</span>
                 <button
-                  onClick={() => {
+                  onClick={async () => {
                     try {
-                      navigator.clipboard.writeText(generated.key);
+                      await navigator.clipboard.writeText(generated.key);
+                      setCopied("key");
+                      setTimeout(() => setCopied(null), 2000);
                     } catch {}
-                    setCopied(true);
-                    setTimeout(() => setCopied(false), 2000);
                   }}
                   className="ml-auto p-1 hover:bg-amber-500/10 rounded text-amber-400 hover:text-amber-300 transition-colors"
                 >
-                  {copied ? "✓" : "Copy"}
+                  {copied === "key" ? "✓ Copied" : "Copy key"}
                 </button>
               </div>
               <code className="block bg-black/60 p-2 rounded text-[11px] break-all select-all font-mono">
@@ -117,6 +116,30 @@ export default function RepoKeyModal({
               <div className="text-[10px] text-amber-400/70 font-mono">
                 Prefix: {generated.prefix}
               </div>
+            </div>
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[10px] text-slate-500 uppercase tracking-wider font-mono">Dragnet CLI configuration</span>
+                <button
+                  onClick={async () => {
+                    const env = `DRAGNET_URL=${generated.url}\nDRAGNET_REPO_KEY=${generated.key}`;
+                    try {
+                      await navigator.clipboard.writeText(env);
+                      setCopied("env");
+                      setTimeout(() => setCopied(null), 2000);
+                    } catch {}
+                  }}
+                  className="text-[10px] text-cyan-400 hover:text-cyan-300 font-mono"
+                >
+                  {copied === "env" ? "✓ Copied" : "Copy variables"}
+                </button>
+              </div>
+              <code className="block bg-black/60 border border-white/5 p-2 rounded text-[10px] break-all whitespace-pre-wrap select-all font-mono text-cyan-300">
+                {`DRAGNET_URL=${generated.url}\nDRAGNET_REPO_KEY=${generated.key}`}
+              </code>
+              <p className="text-[9px] text-slate-600 font-mono">
+                Keep this project key private. It is shown once and can be regenerated from project settings.
+              </p>
             </div>
             <button
               onClick={onClose}

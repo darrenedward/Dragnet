@@ -15,7 +15,7 @@ function ask(question) {
 function printExportInstructions(apiKeyValue, apiBase, keySourceHint) {
   console.log("Add these to your shell profile (~/.zshrc, ~/.bashrc) or .env:");
   console.log("");
-  console.log(`  export DRAGNET_API_KEY=${apiKeyValue}`);
+  console.log(`  export DRAGNET_REPO_KEY=${apiKeyValue}`);
   console.log(`  export DRAGNET_URL=${apiBase}`);
   console.log("");
   console.log(keySourceHint);

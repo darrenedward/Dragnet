@@ -1,11 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { LlmPresetsState, PullRequest, Repository } from "../lib/types";
+import type { PullRequest, Repository } from "../lib/types";
 import { splitSidebarRepos, type SidebarUserRepo } from "../lib/sidebarFilters";
 import { fetchJson } from "../lib/http";
 import { ProjectsSidebar } from "./sidebar/ProjectsSidebar";
-import { GithubConnectionPane, LlmRouterPane } from "./sidebar/UtilityPanes";
+import { AccountMenuPane, GithubConnectionPane } from "./sidebar/UtilityPanes";
 
 interface Props {
   isSidebarOpen: boolean;
@@ -20,7 +20,6 @@ interface Props {
   prs: PullRequest[];
   selectedPrId: string;
   onSelectPr: (prId: string) => void;
-  onOpenLlmSettings: () => void;
 }
 
 /**
@@ -47,35 +46,8 @@ export default function DashboardSidebar({
   prs,
   selectedPrId,
   onSelectPr,
-  onOpenLlmSettings,
 }: Props) {
-  const [llmPresets, setLlmPresets] = useState<LlmPresetsState | null>(null);
   const [userRepos, setUserRepos] = useState<SidebarUserRepo[]>([]);
-
-  useEffect(() => {
-    let cancelled = false;
-    const fetchLlmPresets = async () => {
-      try {
-        const res = await fetchJson("/api/llm/presets");
-        if (!cancelled && res.ok) setLlmPresets(await res.json());
-      } catch {
-        // silently leave pane empty — the LLM Settings tab is the source of truth
-      }
-    };
-    fetchLlmPresets();
-    // Re-poll every 10s as a safety net so the sidebar eventually reflects
-    // saves done elsewhere. The LlmConfigView also dispatches
-    // `dragnet:llm-presets-changed` on save, which triggers an immediate
-    // refresh via the handler below — that's the primary sync mechanism.
-    const poller = setInterval(fetchLlmPresets, 10000);
-    const onChanged = () => fetchLlmPresets();
-    window.addEventListener("dragnet:llm-presets-changed", onChanged);
-    return () => {
-      cancelled = true;
-      clearInterval(poller);
-      window.removeEventListener("dragnet:llm-presets-changed", onChanged);
-    };
-  }, []);
 
   useEffect(() => {
     if (!currentUserId) {
@@ -134,7 +106,7 @@ export default function DashboardSidebar({
       />
 
       <GithubConnectionPane />
-      <LlmRouterPane state={llmPresets} onOpenSettings={onOpenLlmSettings} />
+      <AccountMenuPane />
     </aside>
   );
 }
