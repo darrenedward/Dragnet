@@ -46,7 +46,6 @@ export function useDashboardData() {
     username: "",
     password: "",
     database: "",
-    sqliteFile: "data.db",
   });
   const [dbTestResult, setDbTestResult] = useState<{ success: boolean; message: string } | null>(null);
   const [dbSaveResult, setDbSaveResult] = useState<{ success: boolean; message: string } | null>(null);
@@ -215,7 +214,6 @@ export function useDashboardData() {
           username: data.username || "",
           password: "",
           database: data.database || "",
-          sqliteFile: data.sqliteFile || "data.db",
         });
         setDbStatus(data.configured ? "configured" : "unconfigured");
       }

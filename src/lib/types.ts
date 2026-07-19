@@ -129,7 +129,6 @@ export interface DbConfig {
   username: string;
   password: string;
   database: string;
-  sqliteFile: string;
 }
 
 export interface ConfigHealthItem {

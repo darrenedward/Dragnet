@@ -10,7 +10,6 @@ export interface DbConfigForm {
   username: string;
   password: string;
   database: string;
-  sqliteFile?: string;
 }
 
 export interface DbConfigView {
@@ -20,7 +19,6 @@ export interface DbConfigView {
   username: string;
   database: string;
   hasPassword: boolean;
-  sqliteFile: string;
   isSupabase: boolean;
   configured: boolean;
 }
@@ -88,7 +86,6 @@ export function viewFromEnv(): DbConfigView {
       username: parsed.username,
       database: parsed.database,
       hasPassword: Boolean(parsed.password),
-      sqliteFile: "data.db",
       isSupabase: true,
       configured: Boolean(cs),
     };
@@ -100,7 +97,6 @@ export function viewFromEnv(): DbConfigView {
     username: parsed.username,
     database: parsed.database,
     hasPassword: Boolean(parsed.password),
-    sqliteFile: "data.db",
     isSupabase: false,
     configured: Boolean(cs),
   };
