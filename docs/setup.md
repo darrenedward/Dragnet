@@ -115,6 +115,29 @@ Repos need to be registered in Dragnet before they can be reviewed:
 
 Once indexed, the repo appears in the dashboard and reviews can be triggered.
 
+## Scan queue and automatic rescans
+
+The durable scan queue is shared by dashboard, CLI, webhook, polling, and
+pre-push triggers. The global **Max concurrent scans** setting is configured in
+LLM Settings. A repository may optionally set a lower cap in its repository
+settings; the effective limit is always the lower of the two values. Leaving
+the repository field blank uses the global limit.
+
+Automatic rescans are disabled globally by default. Each repository can
+inherit that default, explicitly enable automatic rescans, or explicitly
+disable them. When enabled, a new PR head commit or a changed head commit is
+queued once by its PR-plus-commit identity. Comments, labels, and title edits
+do not trigger a scan when the head commit is unchanged.
+
+Queued work can be cancelled or retried from the Scan Queue view. If a worker
+stops after writing a valid checkpoint, the lease is recovered and the job is
+resumed from that checkpoint rather than creating a second active review run.
+An interrupted or cancelled review leaves the PR `Pending`; a PR is
+`Completed` only after a review finishes for its current head commit. If a
+newer commit arrives while an older scan is queued or running, the older scan
+cannot mark the newer revision completed, so the PR remains `Pending` until
+the new revision is reviewed.
+
 ## Client vs Server Configuration
 
 | Aspect | Client-side | Server-side |

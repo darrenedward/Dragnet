@@ -54,6 +54,10 @@ export default function RepoSettingsModal({ repo, onClose, onResetIndex, onRefre
   const [webhookError, setWebhookError] = useState<string | null>(null);
   const [autoRescanPolicy, setAutoRescanPolicy] = useState<"inherit" | "enabled" | "disabled">(repo.autoRescanPolicy ?? "inherit");
   const [autoRescanSaving, setAutoRescanSaving] = useState(false);
+  const [maxConcurrentScans, setMaxConcurrentScans] = useState(
+    repo.maxConcurrentScans == null ? "" : String(repo.maxConcurrentScans),
+  );
+  const [concurrencySaving, setConcurrencySaving] = useState(false);
 
   const saveAutoRescanPolicy = async (next: "inherit" | "enabled" | "disabled") => {
     setAutoRescanPolicy(next);
@@ -71,6 +75,26 @@ export default function RepoSettingsModal({ repo, onClose, onResetIndex, onRefre
       setAutoRescanPolicy(repo.autoRescanPolicy ?? "inherit");
     } finally {
       setAutoRescanSaving(false);
+    }
+  };
+
+  const saveConcurrencyLimit = async (value: string) => {
+    setMaxConcurrentScans(value);
+    setConcurrencySaving(true);
+    try {
+      const parsed = value.trim() === "" ? null : Number(value);
+      const res = await fetch(`/api/repos/${repo.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ maxConcurrentScans: parsed }),
+      });
+      if (!res.ok) throw new Error("Failed to save the repository scan limit.");
+      onRefresh();
+    } catch (err: any) {
+      setWebhookError(err.message);
+      setMaxConcurrentScans(repo.maxConcurrentScans == null ? "" : String(repo.maxConcurrentScans));
+    } finally {
+      setConcurrencySaving(false);
     }
   };
 
@@ -255,6 +279,20 @@ export default function RepoSettingsModal({ repo, onClose, onResetIndex, onRefre
                 <option value="enabled">Enabled</option>
                 <option value="disabled">Disabled</option>
               </select>
+            </div>
+            <div className="bg-slate-900/40 border border-white/10 rounded-lg p-3 space-y-2">
+              <div className="text-xs font-bold text-white">Repository concurrency</div>
+              <p className="text-[10px] text-slate-500">Optional cap for scans from this repository. The global queue limit still applies.</p>
+              <input
+                type="number"
+                min={1}
+                max={32}
+                placeholder="Use global limit"
+                value={maxConcurrentScans}
+                disabled={concurrencySaving}
+                onChange={(event) => void saveConcurrencyLimit(event.target.value)}
+                className="w-full bg-slate-950 border border-white/10 rounded px-2 py-1.5 text-xs text-slate-200"
+              />
             </div>
           </div>
 

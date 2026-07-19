@@ -72,6 +72,7 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
       testCommand,
       isPollingEnabled,
       autoRescanPolicy,
+      maxConcurrentScans,
       webhookEnabled,
       skipTier2,
       hostedMode,
@@ -104,6 +105,19 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
         return NextResponse.json({ error: "autoRescanPolicy must be inherit, enabled, or disabled." }, { status: 400 });
       }
       updateData.autoRescanPolicy = autoRescanPolicy;
+    }
+    if (maxConcurrentScans !== undefined) {
+      if (maxConcurrentScans !== null &&
+        (typeof maxConcurrentScans !== "number" ||
+          !Number.isInteger(maxConcurrentScans) ||
+          maxConcurrentScans < 1 ||
+          maxConcurrentScans > 32)) {
+        return NextResponse.json(
+          { error: "maxConcurrentScans must be null or an integer between 1 and 32." },
+          { status: 400 },
+        );
+      }
+      updateData.maxConcurrentScans = maxConcurrentScans;
     }
     if (webhookEnabled !== undefined) updateData.webhookEnabled = Boolean(webhookEnabled);
     if (skipTier2 !== undefined) updateData.skipTier2 = Boolean(skipTier2);

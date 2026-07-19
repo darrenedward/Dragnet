@@ -222,6 +222,37 @@ describe("PUT /api/repos/[id]", () => {
     );
   });
 
+  it("accepts and persists an optional repository concurrency cap", async () => {
+    const res = await PUT(
+      makeReq({ maxConcurrentScans: 3 }, "PUT"),
+      { params: Promise.resolve({ id: "repo-1" }) },
+    );
+    expect(res.status).toBe(200);
+    expect(mocks.mockUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ maxConcurrentScans: 3 }) }),
+    );
+  });
+
+  it("allows clearing the repository concurrency cap", async () => {
+    const res = await PUT(
+      makeReq({ maxConcurrentScans: null }, "PUT"),
+      { params: Promise.resolve({ id: "repo-1" }) },
+    );
+    expect(res.status).toBe(200);
+    expect(mocks.mockUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ maxConcurrentScans: null }) }),
+    );
+  });
+
+  it("rejects an invalid repository concurrency cap", async () => {
+    const res = await PUT(
+      makeReq({ maxConcurrentScans: 33 }, "PUT"),
+      { params: Promise.resolve({ id: "repo-1" }) },
+    );
+    expect(res.status).toBe(400);
+    expect(mocks.mockUpdate).not.toHaveBeenCalled();
+  });
+
   it("does not switch a local repo to remote when mode is not sent", async () => {
     mocks.mockFindUnique.mockResolvedValue({
       id: "repo-1", name: "Test", provider: "local", cloneUrl: null, cloneUrlHttps: null,
