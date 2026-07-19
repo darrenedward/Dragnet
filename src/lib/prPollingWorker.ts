@@ -32,11 +32,19 @@ let pollingTimer: ReturnType<typeof setInterval> | null = null;
 /** ETag cache keyed by `repoId` for the /pulls list endpoint. */
 const etagCache = new Map<string, string>();
 
+/** Revisions whose queue admission failed and must be retried next cycle. */
+const admissionRetries = new Set<string>();
+
 const POLL_INTERVAL_MS =
   Number(process.env.DRAGNET_POLL_INTERVAL_MS) || 60_000;
 
 interface GhPullsEntry {
   number: number;
+  title?: string;
+  body?: string | null;
+  user?: { login?: string } | null;
+  created_at?: string;
+  base?: { ref?: string } | null;
   head: { sha: string; ref: string };
   state: string;
 }
@@ -66,10 +74,74 @@ export function fetchGhTargetBranch(prNumber: number): string | null {
 /** Internal type for the DB shape returned by fetchPollingRepos. */
 interface LocalPrRow {
   id: string;
+  githubPrNumber: number | null;
   sourceBranch: string;
   commitHash: string;
   targetBranch: string;
   status: string;
+}
+
+type LocalPrMatch =
+  | { kind: "match"; pr: LocalPrRow }
+  | { kind: "missing" }
+  | { kind: "ambiguous" };
+
+function matchLocalPr(
+  localPrs: LocalPrRow[],
+  githubPrNumber: number,
+  sourceBranch: string,
+): LocalPrMatch {
+  const numberedMatches = localPrs.filter((pr) => pr.githubPrNumber === githubPrNumber);
+  if (numberedMatches.length > 1) return { kind: "ambiguous" };
+  if (numberedMatches.length === 1) return { kind: "match", pr: numberedMatches[0] };
+
+  const branchMatches = localPrs.filter(
+    (pr) => pr.githubPrNumber == null && pr.sourceBranch === sourceBranch,
+  );
+  if (branchMatches.length > 1) return { kind: "ambiguous" };
+  if (branchMatches.length === 1) return { kind: "match", pr: branchMatches[0] };
+  return { kind: "missing" };
+}
+
+function admissionKey(repoId: string, prId: string, commitHash: string): string {
+  return `${repoId}:${prId}:${commitHash}`;
+}
+
+async function admitRevision(
+  triggerScan: TriggerScan,
+  repoId: string,
+  prId: string,
+  commitHash: string,
+): Promise<void> {
+  const key = admissionKey(repoId, prId, commitHash);
+  try {
+    await triggerScan(repoId, prId, commitHash);
+    admissionRetries.delete(key);
+  } catch (err) {
+    admissionRetries.add(key);
+    throw err;
+  }
+}
+
+async function admissionNeeded(
+  repoId: string,
+  prId: string,
+  commitHash: string,
+): Promise<boolean> {
+  if (admissionRetries.has(admissionKey(repoId, prId, commitHash))) return true;
+  const scanJob = (prisma as typeof prisma & {
+    scanJob?: { findUnique: (args: unknown) => Promise<unknown> };
+  }).scanJob;
+  if (!scanJob) return false;
+  try {
+    const job = await scanJob.findUnique({
+      where: { prId_commitHash: { prId, commitHash } },
+      select: { id: true },
+    });
+    return !job;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -138,13 +210,47 @@ export async function pollOnce(triggerScan: TriggerScan): Promise<void> {
 
     // Match GitHub PRs to local DB records by sourceBranch.
     for (const ghPr of ghPrs) {
-      const localPr = repo.pullRequests.find(
-        (p) => p.sourceBranch === ghPr.head.ref,
-      ) as LocalPrRow | undefined;
-      if (!localPr) continue; // PR not yet registered in Dragnet
+      const targetBranch = ghPr.base?.ref ?? repo.baseBranch;
+      if (targetBranch !== repo.baseBranch) continue;
+
+      const matchResult = matchLocalPr(repo.pullRequests as LocalPrRow[], ghPr.number, ghPr.head.ref);
+      if (matchResult.kind === "ambiguous") {
+        console.warn(
+          `[poll] ambiguous local PR match for ${repo.name}/#${ghPr.number} on branch ${ghPr.head.ref}; skipping`,
+        );
+        continue;
+      }
+      const localPr = matchResult.kind === "match" ? matchResult.pr : undefined;
+
+      if (!localPr) {
+        const prId = `poll-pr-${repo.id}-${ghPr.number}`;
+        try {
+          await prisma.pullRequest.create({
+            data: {
+              id: prId,
+              repoId: repo.id,
+              githubPrNumber: ghPr.number,
+              title: ghPr.title ?? `PR #${ghPr.number}`,
+              sourceBranch: ghPr.head.ref,
+              targetBranch: ghPr.base?.ref ?? repo.baseBranch,
+              status: "Pending",
+              author: ghPr.user?.login ?? "GitHub",
+              commitHash: ghPr.head.sha,
+              createdAt: ghPr.created_at ?? new Date().toISOString(),
+              description: ghPr.body ?? null,
+            },
+          });
+          if (isAutoRescanEnabled(repo.autoRescanPolicy)) {
+            await admitRevision(triggerScan, repo.id, prId, ghPr.head.sha);
+          }
+        } catch (err: any) {
+          console.warn(`[poll] registration failed for ${repo.name}/#${ghPr.number}:`, err.message);
+        }
+        continue;
+      }
 
       // ── Sync targetBranch from GitHub (stale in stacked-PR workflows) ──
-      const liveTargetBranch = fetchGhTargetBranch(ghPr.number);
+      const liveTargetBranch = ghPr.base?.ref ?? fetchGhTargetBranch(ghPr.number);
       if (liveTargetBranch && liveTargetBranch !== localPr.targetBranch) {
         console.log(
           `[poll] ${repo.name} #${ghPr.number} targetBranch changed: ` +
@@ -163,7 +269,23 @@ export async function pollOnce(triggerScan: TriggerScan): Promise<void> {
         }
       }
 
-      if (ghPr.head.sha === localPr.commitHash) continue; // no change
+      const revisionKey = admissionKey(repo.id, localPr.id, ghPr.head.sha);
+      if (ghPr.head.sha === localPr.commitHash) {
+        if (!(await admissionNeeded(repo.id, localPr.id, ghPr.head.sha))) continue;
+        if (!isAutoRescanEnabled(repo.autoRescanPolicy)) {
+          admissionRetries.delete(revisionKey);
+          continue;
+        }
+        try {
+          await admitRevision(triggerScan, repo.id, localPr.id, ghPr.head.sha);
+        } catch (err: any) {
+          console.warn(
+            `[poll] retry admission failed for ${repo.name}/${localPr.id}:`,
+            err.message,
+          );
+        }
+        continue;
+      }
 
       console.log(
         `[poll] ${repo.name} #${ghPr.number} (${ghPr.head.ref}) advanced ` +
@@ -179,7 +301,9 @@ export async function pollOnce(triggerScan: TriggerScan): Promise<void> {
           },
         });
         if (isAutoRescanEnabled(repo.autoRescanPolicy)) {
-          await triggerScan(repo.id, localPr.id, ghPr.head.sha);
+          await admitRevision(triggerScan, repo.id, localPr.id, ghPr.head.sha);
+        } else {
+          admissionRetries.delete(revisionKey);
         }
       } catch (err: any) {
         console.warn(
@@ -205,7 +329,14 @@ async function fetchPollingRepos() {
       patTag: true,
       autoRescanPolicy: true,
       pullRequests: {
-        select: { id: true, sourceBranch: true, commitHash: true, targetBranch: true, status: true },
+        select: {
+          id: true,
+          githubPrNumber: true,
+          sourceBranch: true,
+          commitHash: true,
+          targetBranch: true,
+          status: true,
+        },
       },
     },
   });
@@ -214,10 +345,15 @@ async function fetchPollingRepos() {
 /** Start the background polling loop. Idempotent. */
 export function startPolling(triggerScan: TriggerScan): void {
   if (pollingTimer) return;
+  let pollingInFlight = false;
   pollingTimer = setInterval(() => {
-    pollOnce(triggerScan).catch((err) =>
-      console.warn("[poll] unhandled error in pollOnce:", err),
-    );
+    if (pollingInFlight) return;
+    pollingInFlight = true;
+    void pollOnce(triggerScan)
+      .catch((err) => console.warn("[poll] unhandled error in pollOnce:", err))
+      .finally(() => {
+        pollingInFlight = false;
+      });
   }, POLL_INTERVAL_MS);
   console.log(`[poll] polling started (interval: ${POLL_INTERVAL_MS}ms)`);
 }

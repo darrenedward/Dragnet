@@ -2,12 +2,16 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 type PrRow = {
   id: string;
+  githubPrNumber?: number;
   sourceBranch: string;
   commitHash: string;
   status: string;
   targetBranch?: string;
+  title?: string;
+  author?: string;
+  description?: string | null;
+  createdAt?: string;
 };
-
 type RepoRow = {
   id: string;
   name: string;
@@ -17,9 +21,9 @@ type RepoRow = {
   patCipher: string | null;
   patIv: string | null;
   patTag: string | null;
+  autoRescanPolicy: string;
   pullRequests: PrRow[];
 };
-
 type PrismaFindManyArgs = {
   where: { isPollingEnabled: boolean };
   select: {
@@ -28,8 +32,9 @@ type PrismaFindManyArgs = {
     };
   };
 };
-
 const mockExecFileSync = vi.hoisted(() => vi.fn<(...args: any[]) => string>());
+const mockPullRequestCreate = vi.hoisted(() => vi.fn());
+const mockPullRequestUpdate = vi.hoisted(() => vi.fn());
 
 vi.mock("child_process", () => ({
   execFileSync: mockExecFileSync,
@@ -42,7 +47,6 @@ const mockState = vi.hoisted(() => ({
 }));
 
 vi.mock("../src/lib/prisma", () => {
-  const pullRequestUpdate = vi.fn().mockResolvedValue({});
   return {
     prisma: {
       repository: {
@@ -62,7 +66,8 @@ vi.mock("../src/lib/prisma", () => {
         }),
       },
       pullRequest: {
-        update: pullRequestUpdate,
+        create: mockPullRequestCreate,
+        update: mockPullRequestUpdate,
       },
     },
   };
@@ -85,6 +90,7 @@ describe("pollOnce", () => {
     patCipher: null,
     patIv: null,
     patTag: null,
+    autoRescanPolicy: "enabled",
   };
 
   const triggerScan = vi.fn();
@@ -95,6 +101,10 @@ describe("pollOnce", () => {
     mockState.dbFixtures = [];
     mockState.dbShouldThrow = null;
     mockState.autoRescanEnabled = true;
+    mockPullRequestCreate.mockReset();
+    mockPullRequestUpdate.mockReset();
+    mockPullRequestCreate.mockResolvedValue({});
+    mockPullRequestUpdate.mockResolvedValue({});
   });
 
   afterEach(() => {
@@ -118,7 +128,16 @@ describe("pollOnce", () => {
   }
 
   function ghResponse(
-    prs: { number: number; ref: string; sha: string }[],
+    prs: {
+      number: number;
+      ref: string;
+      sha: string;
+      title?: string;
+      body?: string | null;
+      author?: string;
+      baseRef?: string;
+      createdAt?: string;
+    }[],
   ): Response {
     return {
       ok: true,
@@ -127,6 +146,11 @@ describe("pollOnce", () => {
       json: async () =>
         prs.map((p) => ({
           number: p.number,
+          title: p.title ?? `PR #${p.number}`,
+          body: p.body ?? null,
+          user: { login: p.author ?? "octocat" },
+          created_at: p.createdAt ?? "2026-07-19T00:00:00Z",
+          ...(p.baseRef ? { base: { ref: p.baseRef } } : {}),
           head: { sha: p.sha, ref: p.ref },
           state: "open",
         })),
@@ -143,8 +167,6 @@ describe("pollOnce", () => {
       formData: async () => new FormData(),
     } as Response;
   }
-
-  // ─── Core regression test ──────────────────────────────────────────
 
   it("re-scans a Completed PR when a new commit is pushed on the same branch", async () => {
     mockState.dbFixtures = [
@@ -167,8 +189,6 @@ describe("pollOnce", () => {
       expect.objectContaining({ data: { commitHash: "new-sha", status: "Pending" } }),
     );
   });
-
-  // ─── No-change guard ───────────────────────────────────────────────
 
   it("does not re-scan if commit hash has not changed", async () => {
     mockState.dbFixtures = [
@@ -205,8 +225,6 @@ describe("pollOnce", () => {
     );
   });
 
-  // ─── Pending PR still works ────────────────────────────────────────
-
   it("re-scans a Pending PR when commit changes", async () => {
     mockState.dbFixtures = [
       repoWithPrs({
@@ -226,9 +244,7 @@ describe("pollOnce", () => {
     expect(triggerScan).toHaveBeenCalledWith("repo-1", "pr-1", "new-sha");
   });
 
-  // ─── Unregistered branch ───────────────────────────────────────────
-
-  it("skips PRs from GitHub that are not yet registered in Dragnet", async () => {
+  it("registers PRs from GitHub that are not yet registered in Dragnet", async () => {
     mockState.dbFixtures = [
       repoWithPrs({
         pullRequests: [
@@ -250,10 +266,28 @@ describe("pollOnce", () => {
 
     await pollOnce(triggerScan);
 
-    expect(triggerScan).not.toHaveBeenCalled();
+    expect(mockPullRequestCreate).toHaveBeenCalledTimes(1);
+    expect(triggerScan).toHaveBeenCalledWith("repo-1", "poll-pr-repo-1-2", "other-sha");
   });
 
-  // ─── Graceful error handling ───────────────────────────────────────
+  it("skips an ambiguous branch fallback instead of updating the wrong PR", async () => {
+    mockState.dbFixtures = [
+      repoWithPrs({
+        pullRequests: [
+          { id: "pr-1", githubPrNumber: null, sourceBranch: "stacked", commitHash: "sha-1", status: "Pending" },
+          { id: "pr-2", githubPrNumber: null, sourceBranch: "stacked", commitHash: "sha-2", status: "Pending" },
+        ],
+      }),
+    ];
+    fetchSpy = vi.spyOn(global, "fetch")
+      .mockResolvedValueOnce(ghResponse([{ number: 99, ref: "stacked", sha: "new-sha" }]));
+
+    await pollOnce(triggerScan);
+
+    expect(mockPullRequestCreate).not.toHaveBeenCalled();
+    expect(mockPullRequestUpdate).not.toHaveBeenCalled();
+    expect(triggerScan).not.toHaveBeenCalled();
+  });
 
   it("handles DB query failure gracefully", async () => {
     mockState.dbShouldThrow = "DB down";
@@ -349,8 +383,6 @@ describe("pollOnce", () => {
     expect(triggerScan).not.toHaveBeenCalled();
   });
 
-  // ─── Multi-repo cycle ──────────────────────────────────────────────
-
   it("processes multiple repos in a single cycle", async () => {
     mockState.dbFixtures = [
       repoWithPrs({
@@ -380,8 +412,6 @@ describe("pollOnce", () => {
     expect(triggerScan).toHaveBeenCalledTimes(1);
     expect(triggerScan).toHaveBeenCalledWith("repo-1", "pr-1", "new-sha");
   });
-
-  // ─── targetBranch sync ────────────────────────────────────────────
 
   it("updates targetBranch when gh returns a different value", async () => {
     mockState.dbFixtures = [
@@ -448,14 +478,12 @@ describe("pollOnce", () => {
 
     await pollOnce(triggerScan);
 
-    // targetBranch was NOT updated (graceful skip — no call with targetBranch in data)
     expect(prisma.pullRequest.update).not.toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ targetBranch: expect.any(String) }),
       }),
     );
 
-    // commitHash WAS updated (sync cycle continues despite gh failure)
     expect(prisma.pullRequest.update).toHaveBeenCalledWith({
       where: { id: "pr-1" },
       data: { commitHash: "new-sha", status: "Pending" },

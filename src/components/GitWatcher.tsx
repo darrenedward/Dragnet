@@ -67,7 +67,7 @@ export default function GitWatcher({ onTriggerReviewPass, activeRepoId, onRepoCh
   // Selected repo ID for detail / target controls
   const [selectedId, setSelectedId] = useState<string>(activeRepoId || '');
 
-  // Helper to fetch/reload repository list from SQLite database
+  // Helper to fetch/reload repository list from PostgreSQL-backed API
   const fetchReposFromDb = () => {
     fetch('/api/repos')
       .then(res => res.json())
@@ -87,10 +87,10 @@ export default function GitWatcher({ onTriggerReviewPass, activeRepoId, onRepoCh
           }
         }
       })
-      .catch(err => console.error("Error downloading SQLite repositories:", err));
+      .catch(err => console.error("Error downloading repositories:", err));
   };
 
-  // On mount, pull repositories from SQLite
+  // On mount, pull repositories from the server
   useEffect(() => {
     fetchReposFromDb();
   }, []);
@@ -113,7 +113,7 @@ export default function GitWatcher({ onTriggerReviewPass, activeRepoId, onRepoCh
   const [pollingIntervalMs, setPollingIntervalMs] = useState(2000);
   const [logs, setLogs] = useState<WatcherLog[]>([
     { id: '1', timestamp: new Date().toLocaleTimeString(), type: 'info', message: 'Dragnet Git Watcher Daemon initialized.' },
-    { id: '2', timestamp: new Date().toLocaleTimeString(), type: 'info', message: 'Connected to local SQLite database: data.db' },
+    { id: '2', timestamp: new Date().toLocaleTimeString(), type: 'info', message: 'Connected to PostgreSQL-backed repository service.' },
     { id: '3', timestamp: new Date().toLocaleTimeString(), type: 'success', message: 'Connection to local git service established.' }
   ]);
 
@@ -399,7 +399,7 @@ export default function GitWatcher({ onTriggerReviewPass, activeRepoId, onRepoCh
         onRepoChange(cleanName);
       }
 
-      addLog('success', `Registered Watched Project [${cleanName}] successfully in SQLite database.`);
+      addLog('success', `Registered Watched Project [${cleanName}] successfully.`);
       addLog('info', `Daemon scanning index paths: ${cleanPath}/.git/refs/heads`, cleanName);
     })
     .catch(err => {
@@ -438,11 +438,11 @@ export default function GitWatcher({ onTriggerReviewPass, activeRepoId, onRepoCh
           }
         }
         if (repoToDelete) {
-          addLog('warn', `Unlinked and stopped watching repository from SQLite: '${repoToDelete.name}'`);
+          addLog('warn', `Unlinked and stopped watching repository: '${repoToDelete.name}'`);
         }
       })
       .catch(err => {
-        console.error("Error unlinking repository from SQLite:", err);
+        console.error("Error unlinking repository:", err);
       });
   };
 

@@ -40,7 +40,7 @@ describe("getConfigHealth", () => {
     );
   });
 
-  it("requires DRAGNET_API_KEY only when polling is enabled", () => {
+  it("does not require an external API key for server-side polling", () => {
     expect(
       itemIds({
         DATABASE_URL: "postgresql://postgres:secret@localhost:5432/dragnet",
@@ -54,7 +54,7 @@ describe("getConfigHealth", () => {
         DRAGNET_MASTER_KEY: VALID_MASTER_KEY,
         DRAGNET_POLLING_ENABLED: "1",
       }),
-    ).toContain("polling-api-key");
+    ).not.toContain("polling-api-key");
   });
 
   it("flags partial GitHub App configuration", () => {

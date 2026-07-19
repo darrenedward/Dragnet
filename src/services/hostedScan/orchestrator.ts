@@ -17,6 +17,8 @@ export type HostedScanResult =
   | { ok: true; prId: string; runId?: string }
   | { ok: false; error: string };
 
+export type HostedScanTriggerReason = "polling" | "webhook" | "hosted";
+
 type ValidateResult = { ok: true } | { ok: false; error: string };
 
 export async function validateHostedMode(repoId: string): Promise<ValidateResult> {
@@ -32,13 +34,23 @@ export async function validateHostedMode(repoId: string): Promise<ValidateResult
 export async function triggerHostedScan(
   repoId: string,
   data: HostedPrData,
-  options?: { automatic?: boolean },
+  options?: { automatic?: boolean; triggerReason?: HostedScanTriggerReason },
 ): Promise<HostedScanResult> {
   const mode = await validateHostedMode(repoId);
   if (!mode.ok) return { ok: false, error: (mode as { error: string }).error };
 
   const existingPr = await prisma.pullRequest.findFirst({
-    where: { repoId, sourceBranch: data.headBranch, targetBranch: data.baseBranch },
+    where: {
+      repoId,
+      OR: [
+        { githubPrNumber: data.prNumber },
+        {
+          githubPrNumber: null,
+          sourceBranch: data.headBranch,
+          targetBranch: data.baseBranch,
+        },
+      ],
+    },
     orderBy: { createdAt: "desc" },
   });
 
@@ -57,6 +69,7 @@ export async function triggerHostedScan(
         data: {
           id: crypto.randomUUID(),
           repoId,
+          githubPrNumber: data.prNumber,
           title: data.title,
           sourceBranch: data.headBranch,
           targetBranch: data.baseBranch,
@@ -73,7 +86,7 @@ export async function triggerHostedScan(
 
   const job = await admitScanJobForPr({
     prId: pr.id,
-    triggerReason: "hosted",
+    triggerReason: options?.triggerReason ?? "hosted",
   });
   if (!job) return { ok: false, error: "Pull request disappeared before scan admission" };
 

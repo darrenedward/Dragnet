@@ -217,7 +217,11 @@ function YourProjectsPane({
                   onMintKey={() => onMintKey({ id: repo.id, name: repo.name })}
                 />
                 {isRepoSelected && (
-                  <PrList prs={prs} selectedPrId={selectedPrId} onSelectPr={onSelectPr} />
+                  <PrList
+                    prs={prs.filter((pr) => pr.repoId === repo.id)}
+                    selectedPrId={selectedPrId}
+                    onSelectPr={onSelectPr}
+                  />
                 )}
               </div>
             );
@@ -280,7 +284,11 @@ function SharedProjectsPane({
                   onMintKey={() => onMintKey({ id: full.id, name: full.name })}
                 />
                 {isRepoSelected && (
-                  <PrList prs={prs} selectedPrId={selectedPrId} onSelectPr={onSelectPr} />
+                  <PrList
+                    prs={prs.filter((pr) => pr.repoId === sp.id)}
+                    selectedPrId={selectedPrId}
+                    onSelectPr={onSelectPr}
+                  />
                 )}
               </div>
             );

@@ -60,7 +60,7 @@ vi.mock("../../src/services/hostedScan/orchestrator", () => ({
   triggerHostedScan: vi.fn(() => Promise.resolve(mockState.hostedScanResult)),
 }));
 
-import { pollHostedRepos, startHostedPoller, stopHostedPoller } from "../../src/services/hostedScan/poller";
+import { pollHostedRepos } from "../../src/services/hostedScan/poller";
 import { triggerHostedScan } from "../../src/services/hostedScan/orchestrator";
 
 describe("pollHostedRepos", () => {
@@ -93,11 +93,15 @@ describe("pollHostedRepos", () => {
 
   function ghResponse(
     prs: { number: number; title: string; ref: string; sha: string; baseRef: string; login?: string; body?: string }[],
+    options: { status?: number; etag?: string } = {},
   ): Response {
+    const status = options.status ?? 200;
+    const headers = new Map<string, string>();
+    if (options.etag) headers.set("etag", options.etag);
     return {
-      ok: true,
-      status: 200,
-      headers: new Map() as unknown as Headers,
+      ok: status >= 200 && status < 300,
+      status,
+      headers: headers as unknown as Headers,
       json: async () =>
         prs.map((p) => ({
           number: p.number,
@@ -178,7 +182,7 @@ describe("pollHostedRepos", () => {
       commitHash: "abc123",
       author: "octocat",
       description: undefined,
-    }, { automatic: true });
+    }, { automatic: true, triggerReason: "polling" });
   });
 
   it("does not re-scan if commit hash has not changed", async () => {
@@ -400,7 +404,28 @@ describe("pollHostedRepos", () => {
       commitHash: "gl-sha-123",
       author: "gl-user",
       description: "MR description",
-    }, { automatic: true });
+    }, { automatic: true, triggerReason: "polling" });
+  });
+
+  it("ignores hosted PRs targeting a different base branch", async () => {
+    mockState.dbFixtures = [baseRepo];
+    mockState.existingPrs.set("repo-1:feature:main", null);
+    fetchSpy = vi.spyOn(global, "fetch").mockResolvedValueOnce(
+      ghResponse([
+        { number: 5, title: "Release fix", ref: "feature", sha: "release-sha", baseRef: "release" },
+        { number: 6, title: "Main fix", ref: "feature", sha: "main-sha", baseRef: "main" },
+      ]),
+    );
+
+    const result = await pollHostedRepos();
+
+    expect(result.scanned).toBe(1);
+    expect(triggerHostedScan).toHaveBeenCalledTimes(1);
+    expect(triggerHostedScan).toHaveBeenCalledWith(
+      "repo-1",
+      expect.objectContaining({ prNumber: 6, baseBranch: "main" }),
+      { automatic: true, triggerReason: "polling" },
+    );
   });
 
   // ─── HostedScan errors ───────────────────────────────────────────
@@ -424,50 +449,57 @@ describe("pollHostedRepos", () => {
     expect(result.errors).toHaveLength(1);
     expect(result.errors[0]).toContain("triggerHostedScan failed");
   });
-});
 
-// ─── startHostedPoller / stopHostedPoller ─────────────────────────────
+  it("isolates a repository fetch failure and continues with later repositories", async () => {
+    mockState.dbFixtures = [
+      baseRepo,
+      { ...baseRepo, id: "repo-2", name: "later-repo", cloneUrlHttps: "https://github.com/other/later.git" },
+    ];
+    mockState.existingPrs.set("repo-2:feature:main", null);
+    fetchSpy = vi
+      .spyOn(global, "fetch")
+      .mockRejectedValueOnce(new Error("first repository unavailable"))
+      .mockResolvedValueOnce(ghResponse([{ number: 2, title: "Later", ref: "feature", sha: "later-sha", baseRef: "main" }]));
 
-describe("startHostedPoller / stopHostedPoller", () => {
-  afterEach(() => {
-    stopHostedPoller();
-    vi.useRealTimers();
+    const result = await pollHostedRepos();
+
+    expect(result.total).toBe(2);
+    expect(result.errors).toEqual(["test-repo: first repository unavailable"]);
+    expect(result.synced).toBe(1);
+    expect(triggerHostedScan).toHaveBeenCalledTimes(1);
   });
 
-  it("starts an interval and calls pollHostedRepos", () => {
-    vi.useFakeTimers();
+  it("reuses each repository ETag and skips processing on a 304", async () => {
+    const repo = { ...baseRepo, id: "etag-repo", name: "etag-repo" };
+    mockState.dbFixtures = [repo];
+    mockState.existingPrs.set("etag-repo:feature:main", null);
+    fetchSpy = vi
+      .spyOn(global, "fetch")
+      .mockResolvedValueOnce(ghResponse([{ number: 3, title: "Cached", ref: "feature", sha: "etag-sha", baseRef: "main" }], { etag: '"etag-1"' }))
+      .mockResolvedValueOnce(ghResponse([], { status: 304 }));
 
-    const pollSpy = vi.spyOn(global, "setInterval");
+    await pollHostedRepos();
+    await pollHostedRepos();
 
-    startHostedPoller();
-
-    expect(pollSpy).toHaveBeenCalled();
-    expect(pollSpy.mock.calls[0][1]).toBe(120_000);
-
-    pollSpy.mockRestore();
+    expect(fetchSpy.mock.calls[1][1]).toEqual(expect.objectContaining({
+      headers: expect.objectContaining({ "If-None-Match": '"etag-1"' }),
+    }));
+    expect(triggerHostedScan).toHaveBeenCalledTimes(1);
   });
 
-  it("is idempotent — calling start twice does not start a second interval", () => {
-    vi.useFakeTimers();
+  it("tries the repository again on a later cycle after a transient failure", async () => {
+    mockState.dbFixtures = [baseRepo];
+    mockState.existingPrs.set("repo-1:feature:main", null);
+    fetchSpy = vi
+      .spyOn(global, "fetch")
+      .mockRejectedValueOnce(new Error("temporary outage"))
+      .mockResolvedValueOnce(ghResponse([{ number: 4, title: "Retry", ref: "feature", sha: "retry-sha", baseRef: "main" }]));
 
-    const pollSpy = vi.spyOn(global, "setInterval");
+    const first = await pollHostedRepos();
+    const second = await pollHostedRepos();
 
-    startHostedPoller();
-    startHostedPoller();
-
-    expect(pollSpy).toHaveBeenCalledTimes(1);
-
-    pollSpy.mockRestore();
-  });
-
-  it("stopHostedPoller clears the interval", () => {
-    vi.useFakeTimers();
-
-    startHostedPoller();
-    stopHostedPoller();
-
-    // After stopping, no more intervals should fire
-    vi.advanceTimersByTime(300_000);
-    // No assertion needed — just verifying no crash
+    expect(first.errors).toHaveLength(1);
+    expect(second.errors).toEqual([]);
+    expect(second.scanned).toBe(1);
   });
 });

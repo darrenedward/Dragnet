@@ -221,6 +221,7 @@ model ReviewChunk {
 model PullRequest {
   id             String          @id
   repoId         String
+  githubPrNumber Int?
   title          String
   sourceBranch   String
   targetBranch   String
@@ -237,6 +238,7 @@ model PullRequest {
   scanJobs       ScanJob[]
   bugFixEvents   BugFixEvent[]
 
+  @@unique([repoId, githubPrNumber])
   @@map("pull_requests")
 }
 

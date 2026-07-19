@@ -308,7 +308,7 @@ export default function App() {
             <div className="flex gap-4 text-[10px] text-slate-500 uppercase font-mono">
               <span>ACTIVE PIPELINE: <strong className="text-[#10b981] animate-pulse">daemon.listener</strong></span>
               <span>COMPLIANCE POLICY: <strong className="text-indigo-400">Sleek Dragnet compliance v1.6.2</strong></span>
-              <span>SQLite Cache Status: <strong className="text-cyan-400">Online</strong></span>
+              <span>PostgreSQL Status: <strong className="text-cyan-400">Configured</strong></span>
             </div>
 
             <div className="flex items-center gap-2">

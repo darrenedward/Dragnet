@@ -3,9 +3,11 @@ import { triggerHostedScan } from "./orchestrator";
 import type { HostedPrData } from "./orchestrator";
 
 let pollingTimer: ReturnType<typeof setInterval> | null = null;
+let pollingInFlight = false;
+const etagCache = new Map<string, string>();
 
 const POLL_INTERVAL_MS =
-  Number(process.env.DRAGNET_HOSTED_POLL_INTERVAL_MS) || 120_000;
+  Number(process.env.DRAGNET_HOSTED_POLL_INTERVAL_MS) || 60_000;
 
 interface PollResult {
   total: number;
@@ -38,7 +40,7 @@ interface NormalizedPrItem {
 }
 
 interface ProviderAdapter {
-  fetchPrs(repo: HostedRepoRow, pat: string | undefined): Promise<NormalizedPrItem[]>;
+  fetchPrs(repo: HostedRepoRow, pat: string | undefined): Promise<NormalizedPrItem[] | null>;
 }
 
 function parseOwnerRepo(cloneUrl: string): { owner: string; repo: string } | null {
@@ -84,12 +86,15 @@ const githubAdapter: ProviderAdapter = {
       "User-Agent": "dragnet-hosted-poller/1.0",
     };
     if (pat) headers["Authorization"] = `Bearer ${pat}`;
+    const etag = etagCache.get(repo.id);
+    if (etag) headers["If-None-Match"] = etag;
 
     const res = await fetch(
       `https://api.github.com/repos/${parsed.owner}/${parsed.repo}/pulls?state=open&per_page=100`,
       { headers },
     );
 
+    if (res.status === 304) return null;
     if (!res.ok) {
       console.warn(
         `[hosted-poller] GitHub ${res.status} for ${repo.name}:`,
@@ -97,6 +102,8 @@ const githubAdapter: ProviderAdapter = {
       );
       return [];
     }
+    const newEtag = res.headers.get("etag");
+    if (newEtag) etagCache.set(repo.id, newEtag);
 
     const raw = (await res.json()) as {
       number: number; title: string; head: { sha: string; ref: string };
@@ -128,12 +135,15 @@ const gitlabAdapter: ProviderAdapter = {
       "User-Agent": "dragnet-hosted-poller/1.0",
     };
     if (pat) headers["PRIVATE-TOKEN"] = pat;
+    const etag = etagCache.get(repo.id);
+    if (etag) headers["If-None-Match"] = etag;
 
     const res = await fetch(
       `https://gitlab.com/api/v4/projects/${encoded}/merge_requests?state=opened&per_page=100`,
       { headers },
     );
 
+    if (res.status === 304) return null;
     if (!res.ok) {
       console.warn(
         `[hosted-poller] GitLab ${res.status} for ${repo.name}:`,
@@ -141,6 +151,8 @@ const gitlabAdapter: ProviderAdapter = {
       );
       return [];
     }
+    const newEtag = res.headers.get("etag");
+    if (newEtag) etagCache.set(repo.id, newEtag);
 
     const raw = (await res.json()) as {
       iid: number; title: string; source_branch: string;
@@ -190,7 +202,10 @@ async function syncPr(
   const needsScan = isNew || isUpdated;
 
   if (needsScan) {
-    const res = await triggerHostedScan(repoId, prData, { automatic: true });
+    const res = await triggerHostedScan(repoId, prData, {
+      automatic: true,
+      triggerReason: "polling",
+    });
     if (!res.ok) {
       throw new Error(`triggerHostedScan failed: ${(res as { error: string }).error}`);
     }
@@ -237,8 +252,10 @@ export async function pollHostedRepos(): Promise<PollResult> {
 
     try {
       const items = await adapter.fetchPrs(repo, pat);
+      if (items === null) continue;
 
       for (const item of items) {
+        if (item.baseBranch !== repo.baseBranch) continue;
         if (!matchBranchPattern(item.headBranch, repo.branchPattern)) continue;
 
         const proc = await syncPr(repo.id, item);
@@ -257,9 +274,13 @@ export async function pollHostedRepos(): Promise<PollResult> {
 export function startHostedPoller(): void {
   if (pollingTimer) return;
   pollingTimer = setInterval(() => {
-    pollHostedRepos().catch((err) =>
-      console.warn("[hosted-poller] unhandled error:", err),
-    );
+    if (pollingInFlight) return;
+    pollingInFlight = true;
+    void pollHostedRepos()
+      .catch((err) => console.warn("[hosted-poller] unhandled error:", err))
+      .finally(() => {
+        pollingInFlight = false;
+      });
   }, POLL_INTERVAL_MS);
   console.log(`[hosted-poller] polling started (interval: ${POLL_INTERVAL_MS}ms)`);
 }
