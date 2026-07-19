@@ -32,3 +32,15 @@ export class PrWorkspaceCoordinator {
     return this.selectPr(currentPrId, availablePrIds);
   }
 }
+
+export interface PrWorkspaceTarget {
+  repoId: string;
+  prId: string;
+}
+
+export function isActivePrWorkspace(
+  active: PrWorkspaceTarget,
+  target: PrWorkspaceTarget,
+): boolean {
+  return active.repoId === target.repoId && active.prId === target.prId;
+}
