@@ -61,6 +61,7 @@ export function useDashboardData() {
     selectedPrId,
     setSelectedPrId,
     selectRepository,
+    selectPullRequest,
   } = usePrWorkspace({ repos });
   const [prs, setPrs] = useState<PullRequest[]>([]);
   const [prFiles, setPrFiles] = useState<PRFile[]>([]);
@@ -291,6 +292,7 @@ export function useDashboardData() {
         }
       }
     } catch (e) {
+      setStale(true);
       console.error("Failed loading PR list for repo " + repoId, e);
     }
   };
@@ -305,6 +307,7 @@ export function useDashboardData() {
       if (!workspaceCoordinator.current.isCurrentPrList(request)) return [];
       return Array.isArray(refreshData) ? refreshData : [];
     } catch (err) {
+      setStale(true);
       console.warn("Failed refreshing empty PR snapshot for repo " + repoId, err);
       return [];
     }
@@ -379,6 +382,7 @@ export function useDashboardData() {
         setStale(false);
       }
     } catch (e) {
+      setStale(true);
       console.error("Failed retrieving PR files/findings detailed block", e);
     }
   };
@@ -1066,9 +1070,11 @@ export function useDashboardData() {
     repos,
     selectedRepoId,
     setSelectedRepoId,
+    selectRepository,
     prs,
     selectedPrId,
     setSelectedPrId,
+    selectPullRequest,
     prFiles,
     selectedFilename,
     setSelectedFilename,
