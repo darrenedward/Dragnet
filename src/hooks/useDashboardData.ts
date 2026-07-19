@@ -14,7 +14,6 @@ import { fetchJson, NetworkError } from "../lib/http";
 import { toast } from "../lib/toast";
 import { usePrWorkspace } from "./usePrWorkspace";
 import { isActivePrWorkspace } from "../lib/prWorkspaceCoordinator";
-import { createPrWorkspaceContract } from "../lib/prWorkspaceContract";
 
 /**
  * Single source of truth for the dashboard's data state, polling, and
@@ -1080,51 +1079,6 @@ export function useDashboardData() {
     setTimeout(() => setCopyFeedback(null), 2000);
   };
 
-  const activeRepo = repos.find((repo) => repo.id === selectedRepoId) ?? null;
-  const activePR = prs.find((pr) => pr.id === selectedPrId && pr.repoId === selectedRepoId) ?? null;
-  const activeFile = prFiles.find((file) => file.filename === selectedFilename) ?? prFiles[0] ?? null;
-  const workspace = createPrWorkspaceContract(
-    {
-      selectedRepoId,
-      selectedPrId,
-      selectedRepository: activeRepo,
-      selectedPullRequest: activePR,
-      files: prFiles,
-      selectedFilename,
-      activeFile,
-      findings,
-      reviewRun,
-      reviewChunks,
-      activeScan,
-      queueJob,
-      activeScanChunks,
-      activeFindings,
-      activeIterations,
-      rejectedCount,
-      rejectedFindings,
-      stale,
-      stability,
-      repoIndexedAt: activeRepo?.indexedAt ?? null,
-      interruptedScan,
-      progress: { isScanning, isRetryingChunks },
-      feedback: { scanResult, copyFeedback, trivialSkipNotice, exportStatus },
-    },
-    {
-      selectRepository,
-      selectPullRequest,
-      selectFile: setSelectedFilename,
-      dismissScanResult: () => setScanResult(null),
-      dismissTrivialSkipNotice: () => setTrivialSkipNotice(null),
-      startScan: handleTriggerPrScan,
-      stopScan: handleStopScan,
-      continueScan: handleContinueScan,
-      startFreshScan: handleStartFreshScan,
-      retryFailedChunks: handleRetryFailedChunks,
-      exportReview: handleExportMarkdown,
-      copySuggestion: handleCopyCode,
-    },
-  );
-
   return {
     // db config
     dbConfig,
@@ -1143,6 +1097,7 @@ export function useDashboardData() {
     prs,
     selectedPrId,
     selectPullRequest,
+    selectFile: setSelectedFilename,
     prFiles,
     selectedFilename,
     findings,
@@ -1163,6 +1118,9 @@ export function useDashboardData() {
     isScanning,
     isRetryingChunks,
     scanResult,
+    dismissScanResult: () => setScanResult(null),
+    trivialSkipNotice,
+    dismissTrivialSkipNotice: () => setTrivialSkipNotice(null),
     handleTriggerPrScan,
     handleStopScan,
     handleRetryFailedChunks,
@@ -1174,7 +1132,6 @@ export function useDashboardData() {
     interruptedScan,
     handleContinueScan,
     handleStartFreshScan,
-    workspace,
     // add repo modal
     showAddRepoModal,
     setShowAddRepoModal,

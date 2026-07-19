@@ -51,7 +51,8 @@ export default function App() {
   const currentUserId = (sessionData?.user as { id?: string } | undefined)?.id ?? null;
 
   const d = useDashboardData();
-  const { readModel: workspace, commands: workspaceCommands } = d.workspace;
+  // PR review state and named commands are exposed directly by the dashboard
+  // hook; setup/catalog state remains alongside it for the non-PR surfaces.
   const ed = useEditRepo({
     onUpdated: async () => {
       await d.fetchPrsForSelectedRepo(d.selectedRepoId, true);
@@ -96,9 +97,9 @@ export default function App() {
     fetchConfigHealth();
   }, []);
 
-  const activeRepo = workspace.selectedRepository;
-  const activeAPR = workspace.selectedPullRequest;
-  const activeFile = workspace.activeFile;
+  const activeRepo = d.repos.find((repo) => repo.id === d.selectedRepoId) ?? null;
+  const activeAPR = d.prs.find((pr) => pr.id === d.selectedPrId && pr.repoId === d.selectedRepoId) ?? null;
+  const activeFile = d.prFiles.find((file) => file.filename === d.selectedFilename) ?? d.prFiles[0] ?? null;
 
   return (
     <ErrorBoundary>
@@ -162,9 +163,9 @@ export default function App() {
           isSidebarOpen={isSidebarOpen}
           onAddProject={() => d.setShowAddRepoModal(true)}
           repos={d.repos}
-          selectedRepoId={workspace.selectedRepoId}
+          selectedRepoId={d.selectedRepoId}
           onSelectRepo={(repoId) => {
-            workspaceCommands.selectRepository(repoId);
+            d.selectRepository(repoId);
             d.fetchPrsForSelectedRepo(repoId, false);
           }}
           onEditRepo={(repo) => ed.openEditor(repo)}
@@ -172,9 +173,9 @@ export default function App() {
           onMintKey={(repo) => setKeyModalRepo(repo)}
           currentUserId={currentUserId}
           prs={d.prs}
-          selectedPrId={workspace.selectedPrId}
+          selectedPrId={d.selectedPrId}
           onSelectPr={(prId) => {
-            workspaceCommands.selectPullRequest(prId);
+            d.selectPullRequest(prId);
             setActiveTab("prs");
             if (typeof window !== "undefined" && window.innerWidth < 768) setIsSidebarOpen(false);
           }}
@@ -186,7 +187,7 @@ export default function App() {
             activeTab={activeTab}
             setActiveTab={setActiveTab}
             activeRepo={activeRepo}
-            selectedRepoId={workspace.selectedRepoId}
+            selectedRepoId={d.selectedRepoId}
           />
 
           {/* Core Content Switching Frame */}
@@ -225,8 +226,8 @@ export default function App() {
                   className="flex flex-col flex-1 overflow-y-auto"
                 >
                   <CodebaseGraph
-                    repoId={workspace.selectedRepoId}
-                    repoName={activeRepo?.name || workspace.selectedRepoId}
+                    repoId={d.selectedRepoId}
+                    repoName={activeRepo?.name || d.selectedRepoId}
                     onIndexComplete={d.handleTriggerReviewPass}
                   />
                 </motion.div>
@@ -256,48 +257,48 @@ export default function App() {
                 >
                   <GitWatcher
                     onTriggerReviewPass={d.handleTriggerReviewPass}
-                    activeRepoId={workspace.selectedRepoId}
-                    onRepoChange={workspaceCommands.selectRepository}
+                    activeRepoId={d.selectedRepoId}
+                    onRepoChange={d.selectRepository}
                   />
                 </motion.div>
               )}
 
               {activeTab === "prs" && (
                 <PrsView
-                  activePR={workspace.selectedPullRequest}
-                  isScanning={workspace.progress.isScanning}
-                  onTriggerScan={workspaceCommands.startScan}
-                  onStopScan={workspaceCommands.stopScan}
-                  onExportMarkdown={workspaceCommands.exportReview}
-                  exportStatus={workspace.feedback.exportStatus}
-                  scanResult={workspace.feedback.scanResult}
-                  onDismissScanResult={workspaceCommands.dismissScanResult}
-                  findings={workspace.findings}
-                  reviewRun={workspace.reviewRun}
-                  chunks={workspace.reviewChunks}
-                  activeScan={workspace.activeScan}
-                  queueJob={workspace.queueJob}
-                  activeChunks={workspace.activeScanChunks}
-                  activeFindings={workspace.activeFindings}
-                  activeIterations={workspace.activeIterations}
-                  isRetryingChunks={workspace.progress.isRetryingChunks}
-                  onRetryFailedChunks={workspaceCommands.retryFailedChunks}
-                  stability={workspace.stability}
-                  rejectedCount={workspace.rejectedCount}
-                  rejectedFindings={workspace.rejectedFindings}
-                  stale={workspace.stale}
-                  onCopySuggestion={workspaceCommands.copySuggestion}
-                  copyFeedback={workspace.feedback.copyFeedback}
-                  prFiles={workspace.files}
-                  selectedFilename={workspace.selectedFilename}
-                  onSelectFilename={workspaceCommands.selectFile}
-                  activeFile={workspace.activeFile}
-                  repoIndexedAt={workspace.repoIndexedAt}
-                  repoId={workspace.selectedRepoId}
+                  activePR={activeAPR}
+                  isScanning={d.isScanning}
+                  onTriggerScan={d.handleTriggerPrScan}
+                  onStopScan={d.handleStopScan}
+                  onExportMarkdown={d.handleExportMarkdown}
+                  exportStatus={d.exportStatus}
+                  scanResult={d.scanResult}
+                  onDismissScanResult={d.dismissScanResult}
+                  findings={d.findings}
+                  reviewRun={d.reviewRun}
+                  chunks={d.reviewChunks}
+                  activeScan={d.activeScan}
+                  queueJob={d.queueJob}
+                  activeChunks={d.activeScanChunks}
+                  activeFindings={d.activeFindings}
+                  activeIterations={d.activeIterations}
+                  isRetryingChunks={d.isRetryingChunks}
+                  onRetryFailedChunks={d.handleRetryFailedChunks}
+                  stability={d.stability}
+                  rejectedCount={d.rejectedCount}
+                  rejectedFindings={d.rejectedFindings}
+                  stale={d.stale}
+                  onCopySuggestion={d.handleCopyCode}
+                  copyFeedback={d.copyFeedback}
+                  prFiles={d.prFiles}
+                  selectedFilename={d.selectedFilename}
+                  onSelectFilename={d.selectFile}
+                  activeFile={activeFile}
+                  repoIndexedAt={activeRepo?.indexedAt ?? null}
+                  repoId={d.selectedRepoId}
                   onIndexComplete={d.handleTriggerReviewPass}
-                  interruptedScan={workspace.interruptedScan}
-                  onContinueScan={workspaceCommands.continueScan}
-                  onStartFreshScan={workspaceCommands.startFreshScan}
+                  interruptedScan={d.interruptedScan}
+                  onContinueScan={d.handleContinueScan}
+                  onStartFreshScan={d.handleStartFreshScan}
                 />
               )}
             </AnimatePresence>
@@ -314,7 +315,7 @@ export default function App() {
             <div className="flex items-center gap-2">
               <button
                 onClick={() => {
-                  toast.info(`Direct Workspace Diff View: showing changes from base path for ${activeRepo ? activeRepo.name : workspace.selectedRepoId}`);
+                  toast.info(`Direct Workspace Diff View: showing changes from base path for ${activeRepo ? activeRepo.name : d.selectedRepoId}`);
                 }}
                 className="px-3 py-1.5 text-xs font-semibold bg-cyan-500 text-black rounded hover:bg-cyan-400 transition-colors cursor-pointer"
               >
@@ -445,12 +446,12 @@ export default function App() {
           state leaks (the source of truth is the clear in the
           [selectedRepoId, selectedPrId] effect in useDashboardData). */}
       <AnimatePresence>
-        {workspace.feedback.trivialSkipNotice && workspace.feedback.trivialSkipNotice.prId === workspace.selectedPrId && (
+        {d.trivialSkipNotice && d.trivialSkipNotice.prId === d.selectedPrId && (
           <TrivialSkipNotice
             open
-            lastRating={workspace.feedback.trivialSkipNotice.lastRating}
-            lastScanAt={workspace.feedback.trivialSkipNotice.lastScanAt}
-            onClose={workspaceCommands.dismissTrivialSkipNotice}
+            lastRating={d.trivialSkipNotice.lastRating}
+            lastScanAt={d.trivialSkipNotice.lastScanAt}
+            onClose={d.dismissTrivialSkipNotice}
           />
         )}
       </AnimatePresence>
