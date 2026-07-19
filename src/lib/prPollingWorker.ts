@@ -37,6 +37,11 @@ const POLL_INTERVAL_MS =
 
 interface GhPullsEntry {
   number: number;
+  title?: string;
+  body?: string | null;
+  user?: { login?: string } | null;
+  created_at?: string;
+  base?: { ref?: string } | null;
   head: { sha: string; ref: string };
   state: string;
 }
@@ -66,10 +71,33 @@ export function fetchGhTargetBranch(prNumber: number): string | null {
 /** Internal type for the DB shape returned by fetchPollingRepos. */
 interface LocalPrRow {
   id: string;
+  githubPrNumber: number | null;
   sourceBranch: string;
   commitHash: string;
   targetBranch: string;
   status: string;
+}
+
+type LocalPrMatch =
+  | { kind: "match"; pr: LocalPrRow }
+  | { kind: "missing" }
+  | { kind: "ambiguous" };
+
+function matchLocalPr(
+  localPrs: LocalPrRow[],
+  githubPrNumber: number,
+  sourceBranch: string,
+): LocalPrMatch {
+  const numberedMatches = localPrs.filter((pr) => pr.githubPrNumber === githubPrNumber);
+  if (numberedMatches.length > 1) return { kind: "ambiguous" };
+  if (numberedMatches.length === 1) return { kind: "match", pr: numberedMatches[0] };
+
+  const branchMatches = localPrs.filter(
+    (pr) => pr.githubPrNumber == null && pr.sourceBranch === sourceBranch,
+  );
+  if (branchMatches.length > 1) return { kind: "ambiguous" };
+  if (branchMatches.length === 1) return { kind: "match", pr: branchMatches[0] };
+  return { kind: "missing" };
 }
 
 /**
@@ -138,13 +166,44 @@ export async function pollOnce(triggerScan: TriggerScan): Promise<void> {
 
     // Match GitHub PRs to local DB records by sourceBranch.
     for (const ghPr of ghPrs) {
-      const localPr = repo.pullRequests.find(
-        (p) => p.sourceBranch === ghPr.head.ref,
-      ) as LocalPrRow | undefined;
-      if (!localPr) continue; // PR not yet registered in Dragnet
+      const matchResult = matchLocalPr(repo.pullRequests as LocalPrRow[], ghPr.number, ghPr.head.ref);
+      if (matchResult.kind === "ambiguous") {
+        console.warn(
+          `[poll] ambiguous local PR match for ${repo.name}/#${ghPr.number} on branch ${ghPr.head.ref}; skipping`,
+        );
+        continue;
+      }
+      const localPr = matchResult.kind === "match" ? matchResult.pr : undefined;
+
+      if (!localPr) {
+        const prId = `poll-pr-${repo.id}-${ghPr.number}`;
+        try {
+          await prisma.pullRequest.create({
+            data: {
+              id: prId,
+              repoId: repo.id,
+              githubPrNumber: ghPr.number,
+              title: ghPr.title ?? `PR #${ghPr.number}`,
+              sourceBranch: ghPr.head.ref,
+              targetBranch: ghPr.base?.ref ?? repo.baseBranch,
+              status: "Pending",
+              author: ghPr.user?.login ?? "GitHub",
+              commitHash: ghPr.head.sha,
+              createdAt: ghPr.created_at ?? new Date().toISOString(),
+              description: ghPr.body ?? null,
+            },
+          });
+          if (isAutoRescanEnabled(repo.autoRescanPolicy)) {
+            await triggerScan(repo.id, prId, ghPr.head.sha);
+          }
+        } catch (err: any) {
+          console.warn(`[poll] registration failed for ${repo.name}/#${ghPr.number}:`, err.message);
+        }
+        continue;
+      }
 
       // ── Sync targetBranch from GitHub (stale in stacked-PR workflows) ──
-      const liveTargetBranch = fetchGhTargetBranch(ghPr.number);
+      const liveTargetBranch = ghPr.base?.ref ?? fetchGhTargetBranch(ghPr.number);
       if (liveTargetBranch && liveTargetBranch !== localPr.targetBranch) {
         console.log(
           `[poll] ${repo.name} #${ghPr.number} targetBranch changed: ` +
@@ -205,7 +264,14 @@ async function fetchPollingRepos() {
       patTag: true,
       autoRescanPolicy: true,
       pullRequests: {
-        select: { id: true, sourceBranch: true, commitHash: true, targetBranch: true, status: true },
+        select: {
+          id: true,
+          githubPrNumber: true,
+          sourceBranch: true,
+          commitHash: true,
+          targetBranch: true,
+          status: true,
+        },
       },
     },
   });

@@ -2,10 +2,15 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 type PrRow = {
   id: string;
+  githubPrNumber?: number;
   sourceBranch: string;
   commitHash: string;
   status: string;
   targetBranch?: string;
+  title?: string;
+  author?: string;
+  description?: string | null;
+  createdAt?: string;
 };
 
 type RepoRow = {
@@ -17,6 +22,7 @@ type RepoRow = {
   patCipher: string | null;
   patIv: string | null;
   patTag: string | null;
+  autoRescanPolicy: string;
   pullRequests: PrRow[];
 };
 
@@ -30,6 +36,8 @@ type PrismaFindManyArgs = {
 };
 
 const mockExecFileSync = vi.hoisted(() => vi.fn<(...args: any[]) => string>());
+const mockPullRequestCreate = vi.hoisted(() => vi.fn());
+const mockPullRequestUpdate = vi.hoisted(() => vi.fn());
 
 vi.mock("child_process", () => ({
   execFileSync: mockExecFileSync,
@@ -42,7 +50,6 @@ const mockState = vi.hoisted(() => ({
 }));
 
 vi.mock("../src/lib/prisma", () => {
-  const pullRequestUpdate = vi.fn().mockResolvedValue({});
   return {
     prisma: {
       repository: {
@@ -62,7 +69,8 @@ vi.mock("../src/lib/prisma", () => {
         }),
       },
       pullRequest: {
-        update: pullRequestUpdate,
+        create: mockPullRequestCreate,
+        update: mockPullRequestUpdate,
       },
     },
   };
@@ -85,6 +93,7 @@ describe("pollOnce", () => {
     patCipher: null,
     patIv: null,
     patTag: null,
+    autoRescanPolicy: "enabled",
   };
 
   const triggerScan = vi.fn();
@@ -95,6 +104,10 @@ describe("pollOnce", () => {
     mockState.dbFixtures = [];
     mockState.dbShouldThrow = null;
     mockState.autoRescanEnabled = true;
+    mockPullRequestCreate.mockReset();
+    mockPullRequestUpdate.mockReset();
+    mockPullRequestCreate.mockResolvedValue({});
+    mockPullRequestUpdate.mockResolvedValue({});
   });
 
   afterEach(() => {
@@ -118,7 +131,16 @@ describe("pollOnce", () => {
   }
 
   function ghResponse(
-    prs: { number: number; ref: string; sha: string }[],
+    prs: {
+      number: number;
+      ref: string;
+      sha: string;
+      title?: string;
+      body?: string | null;
+      author?: string;
+      baseRef?: string;
+      createdAt?: string;
+    }[],
   ): Response {
     return {
       ok: true,
@@ -127,6 +149,11 @@ describe("pollOnce", () => {
       json: async () =>
         prs.map((p) => ({
           number: p.number,
+          title: p.title ?? `PR #${p.number}`,
+          body: p.body ?? null,
+          user: { login: p.author ?? "octocat" },
+          created_at: p.createdAt ?? "2026-07-19T00:00:00Z",
+          ...(p.baseRef ? { base: { ref: p.baseRef } } : {}),
           head: { sha: p.sha, ref: p.ref },
           state: "open",
         })),
@@ -228,7 +255,7 @@ describe("pollOnce", () => {
 
   // ─── Unregistered branch ───────────────────────────────────────────
 
-  it("skips PRs from GitHub that are not yet registered in Dragnet", async () => {
+  it("registers PRs from GitHub that are not yet registered in Dragnet", async () => {
     mockState.dbFixtures = [
       repoWithPrs({
         pullRequests: [
@@ -250,6 +277,26 @@ describe("pollOnce", () => {
 
     await pollOnce(triggerScan);
 
+    expect(mockPullRequestCreate).toHaveBeenCalledTimes(1);
+    expect(triggerScan).toHaveBeenCalledWith("repo-1", "poll-pr-repo-1-2", "other-sha");
+  });
+
+  it("skips an ambiguous branch fallback instead of updating the wrong PR", async () => {
+    mockState.dbFixtures = [
+      repoWithPrs({
+        pullRequests: [
+          { id: "pr-1", githubPrNumber: null, sourceBranch: "stacked", commitHash: "sha-1", status: "Pending" },
+          { id: "pr-2", githubPrNumber: null, sourceBranch: "stacked", commitHash: "sha-2", status: "Pending" },
+        ],
+      }),
+    ];
+    fetchSpy = vi.spyOn(global, "fetch")
+      .mockResolvedValueOnce(ghResponse([{ number: 99, ref: "stacked", sha: "new-sha" }]));
+
+    await pollOnce(triggerScan);
+
+    expect(mockPullRequestCreate).not.toHaveBeenCalled();
+    expect(mockPullRequestUpdate).not.toHaveBeenCalled();
     expect(triggerScan).not.toHaveBeenCalled();
   });
 
