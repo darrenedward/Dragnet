@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { getStatusBadgeStyle } from "../src/lib/types";
+import { getPullRequestStatusPresentation, getStatusBadgeStyle } from "../src/lib/types";
 
 describe("getStatusBadgeStyle", () => {
   it("returns blue styling for In Progress", () => {
@@ -22,5 +22,26 @@ describe("getStatusBadgeStyle", () => {
     expect(getStatusBadgeStyle("Pending")).toContain("amber");
     expect(getStatusBadgeStyle("open")).toContain("amber");
     expect(getStatusBadgeStyle("anything-else")).toContain("amber");
+  });
+
+  it("uses compact Pending text with yellow styling for never-reviewed PRs", () => {
+    expect(getPullRequestStatusPresentation("Pending", null)).toEqual({
+      label: "Pending",
+      className: expect.stringContaining("amber"),
+    });
+  });
+
+  it("uses compact Pending text with orange styling when a review exists", () => {
+    expect(getPullRequestStatusPresentation("Pending", 8)).toEqual({
+      label: "Pending",
+      className: expect.stringContaining("orange"),
+    });
+  });
+
+  it("keeps Completed labels compact and green", () => {
+    expect(getPullRequestStatusPresentation("Completed", 10)).toEqual({
+      label: "Completed",
+      className: expect.stringContaining("emerald"),
+    });
   });
 });

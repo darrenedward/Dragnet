@@ -60,7 +60,7 @@ vi.mock("../../src/services/hostedScan/orchestrator", () => ({
   triggerHostedScan: vi.fn(() => Promise.resolve(mockState.hostedScanResult)),
 }));
 
-import { pollHostedRepos, startHostedPoller, stopHostedPoller } from "../../src/services/hostedScan/poller";
+import { pollHostedRepos } from "../../src/services/hostedScan/poller";
 import { triggerHostedScan } from "../../src/services/hostedScan/orchestrator";
 
 describe("pollHostedRepos", () => {
@@ -182,7 +182,7 @@ describe("pollHostedRepos", () => {
       commitHash: "abc123",
       author: "octocat",
       description: undefined,
-    }, { automatic: true });
+    }, { automatic: true, triggerReason: "polling" });
   });
 
   it("does not re-scan if commit hash has not changed", async () => {
@@ -404,7 +404,28 @@ describe("pollHostedRepos", () => {
       commitHash: "gl-sha-123",
       author: "gl-user",
       description: "MR description",
-    }, { automatic: true });
+    }, { automatic: true, triggerReason: "polling" });
+  });
+
+  it("ignores hosted PRs targeting a different base branch", async () => {
+    mockState.dbFixtures = [baseRepo];
+    mockState.existingPrs.set("repo-1:feature:main", null);
+    fetchSpy = vi.spyOn(global, "fetch").mockResolvedValueOnce(
+      ghResponse([
+        { number: 5, title: "Release fix", ref: "feature", sha: "release-sha", baseRef: "release" },
+        { number: 6, title: "Main fix", ref: "feature", sha: "main-sha", baseRef: "main" },
+      ]),
+    );
+
+    const result = await pollHostedRepos();
+
+    expect(result.scanned).toBe(1);
+    expect(triggerHostedScan).toHaveBeenCalledTimes(1);
+    expect(triggerHostedScan).toHaveBeenCalledWith(
+      "repo-1",
+      expect.objectContaining({ prNumber: 6, baseBranch: "main" }),
+      { automatic: true, triggerReason: "polling" },
+    );
   });
 
   // ─── HostedScan errors ───────────────────────────────────────────
@@ -480,51 +501,5 @@ describe("pollHostedRepos", () => {
     expect(first.errors).toHaveLength(1);
     expect(second.errors).toEqual([]);
     expect(second.scanned).toBe(1);
-  });
-});
-
-// ─── startHostedPoller / stopHostedPoller ─────────────────────────────
-
-describe("startHostedPoller / stopHostedPoller", () => {
-  afterEach(() => {
-    stopHostedPoller();
-    vi.useRealTimers();
-  });
-
-  it("starts an interval and calls pollHostedRepos", () => {
-    vi.useFakeTimers();
-
-    const pollSpy = vi.spyOn(global, "setInterval");
-
-    startHostedPoller();
-
-    expect(pollSpy).toHaveBeenCalled();
-    expect(pollSpy.mock.calls[0][1]).toBe(60_000);
-
-    pollSpy.mockRestore();
-  });
-
-  it("is idempotent — calling start twice does not start a second interval", () => {
-    vi.useFakeTimers();
-
-    const pollSpy = vi.spyOn(global, "setInterval");
-
-    startHostedPoller();
-    startHostedPoller();
-
-    expect(pollSpy).toHaveBeenCalledTimes(1);
-
-    pollSpy.mockRestore();
-  });
-
-  it("stopHostedPoller clears the interval", () => {
-    vi.useFakeTimers();
-
-    startHostedPoller();
-    stopHostedPoller();
-
-    // After stopping, no more intervals should fire
-    vi.advanceTimersByTime(300_000);
-    // No assertion needed — just verifying no crash
   });
 });

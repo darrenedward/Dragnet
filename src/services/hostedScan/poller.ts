@@ -202,7 +202,10 @@ async function syncPr(
   const needsScan = isNew || isUpdated;
 
   if (needsScan) {
-    const res = await triggerHostedScan(repoId, prData, { automatic: true });
+    const res = await triggerHostedScan(repoId, prData, {
+      automatic: true,
+      triggerReason: "polling",
+    });
     if (!res.ok) {
       throw new Error(`triggerHostedScan failed: ${(res as { error: string }).error}`);
     }
@@ -252,6 +255,7 @@ export async function pollHostedRepos(): Promise<PollResult> {
       if (items === null) continue;
 
       for (const item of items) {
+        if (item.baseBranch !== repo.baseBranch) continue;
         if (!matchBranchPattern(item.headBranch, repo.branchPattern)) continue;
 
         const proc = await syncPr(repo.id, item);

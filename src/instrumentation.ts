@@ -70,31 +70,10 @@ export async function register(): Promise<void> {
   // API calls for deployments that rely exclusively on webhooks.
   if (process.env.DRAGNET_POLLING_ENABLED === "1") {
     try {
-      const apiKey = process.env.DRAGNET_API_KEY;
-      if (!apiKey) {
-        console.warn("[instrumentation] polling disabled: DRAGNET_API_KEY is required to trigger scans.");
-        return;
-      }
-      const baseUrl = (
-        process.env.DRAGNET_URL ||
-        process.env.DRAGNET_PUBLIC_URL ||
-        "http://localhost:3300"
-      ).replace(/\/$/, "");
-
       const { startPolling } = await import("./lib/prPollingWorker");
-      startPolling(async (_repoId, prId, _commitHash) => {
-        const res = await fetch(`${baseUrl}/api/prs/${encodeURIComponent(prId)}/scan?triggerReason=auto`, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${apiKey}`,
-            "Content-Type": "application/json",
-          },
-          body: "{}",
-        });
-        if (!res.ok) {
-          const body = await res.text().catch(() => "");
-          throw new Error(`scan route returned ${res.status}: ${body.slice(0, 200)}`);
-        }
+      const { admitPollingScan } = await import("./lib/pollingScanAdmission");
+      startPolling(async (repoId, prId, commitHash) => {
+        await admitPollingScan({ repoId, prId, commitHash });
       });
     } catch (err: any) {
       console.warn("[instrumentation] polling worker failed to start:", err.message);

@@ -100,6 +100,35 @@ function matchLocalPr(
   return { kind: "missing" };
 }
 
+async function admitRevision(
+  triggerScan: TriggerScan,
+  repoId: string,
+  prId: string,
+  commitHash: string,
+): Promise<void> {
+  await triggerScan(repoId, prId, commitHash);
+}
+
+async function admissionNeeded(
+  repoId: string,
+  prId: string,
+  commitHash: string,
+): Promise<boolean> {
+  const scanJob = (prisma as typeof prisma & {
+    scanJob?: { findUnique: (args: unknown) => Promise<unknown> };
+  }).scanJob;
+  if (!scanJob) return false;
+  try {
+    const job = await scanJob.findUnique({
+      where: { prId_commitHash: { prId, commitHash } },
+      select: { id: true },
+    });
+    return !job;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Poll all remote repos with `isPollingEnabled = true` and trigger scans
  * for PRs whose head commit has advanced since the last recorded hash.
@@ -166,6 +195,9 @@ export async function pollOnce(triggerScan: TriggerScan): Promise<void> {
 
     // Match GitHub PRs to local DB records by sourceBranch.
     for (const ghPr of ghPrs) {
+      const targetBranch = ghPr.base?.ref ?? repo.baseBranch;
+      if (targetBranch !== repo.baseBranch) continue;
+
       const matchResult = matchLocalPr(repo.pullRequests as LocalPrRow[], ghPr.number, ghPr.head.ref);
       if (matchResult.kind === "ambiguous") {
         console.warn(
@@ -194,7 +226,7 @@ export async function pollOnce(triggerScan: TriggerScan): Promise<void> {
             },
           });
           if (isAutoRescanEnabled(repo.autoRescanPolicy)) {
-            await triggerScan(repo.id, prId, ghPr.head.sha);
+            await admitRevision(triggerScan, repo.id, prId, ghPr.head.sha);
           }
         } catch (err: any) {
           console.warn(`[poll] registration failed for ${repo.name}/#${ghPr.number}:`, err.message);
@@ -222,7 +254,21 @@ export async function pollOnce(triggerScan: TriggerScan): Promise<void> {
         }
       }
 
-      if (ghPr.head.sha === localPr.commitHash) continue; // no change
+      if (ghPr.head.sha === localPr.commitHash) {
+        if (!(await admissionNeeded(repo.id, localPr.id, ghPr.head.sha))) continue;
+        if (!isAutoRescanEnabled(repo.autoRescanPolicy)) {
+          continue;
+        }
+        try {
+          await admitRevision(triggerScan, repo.id, localPr.id, ghPr.head.sha);
+        } catch (err: any) {
+          console.warn(
+            `[poll] retry admission failed for ${repo.name}/${localPr.id}:`,
+            err.message,
+          );
+        }
+        continue;
+      }
 
       console.log(
         `[poll] ${repo.name} #${ghPr.number} (${ghPr.head.ref}) advanced ` +
@@ -238,7 +284,7 @@ export async function pollOnce(triggerScan: TriggerScan): Promise<void> {
           },
         });
         if (isAutoRescanEnabled(repo.autoRescanPolicy)) {
-          await triggerScan(repo.id, localPr.id, ghPr.head.sha);
+          await admitRevision(triggerScan, repo.id, localPr.id, ghPr.head.sha);
         }
       } catch (err: any) {
         console.warn(
@@ -280,10 +326,15 @@ async function fetchPollingRepos() {
 /** Start the background polling loop. Idempotent. */
 export function startPolling(triggerScan: TriggerScan): void {
   if (pollingTimer) return;
+  let pollingInFlight = false;
   pollingTimer = setInterval(() => {
-    pollOnce(triggerScan).catch((err) =>
-      console.warn("[poll] unhandled error in pollOnce:", err),
-    );
+    if (pollingInFlight) return;
+    pollingInFlight = true;
+    void pollOnce(triggerScan)
+      .catch((err) => console.warn("[poll] unhandled error in pollOnce:", err))
+      .finally(() => {
+        pollingInFlight = false;
+      });
   }, POLL_INTERVAL_MS);
   console.log(`[poll] polling started (interval: ${POLL_INTERVAL_MS}ms)`);
 }

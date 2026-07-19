@@ -29,7 +29,6 @@ export function getConfigHealth(env: EnvMap = process.env): ConfigHealthReport {
   const items: ConfigHealthItem[] = [
     databaseUrlHealth(env),
     masterKeyHealth(env),
-    pollingApiKeyHealth(env),
     githubAppHealth(env),
     publicUrlHealth(env),
   ].filter((item): item is ConfigHealthItem => item !== null);
@@ -97,35 +96,6 @@ function masterKeyHealth(env: EnvMap): ConfigHealthItem | null {
       feature: "Remote repo credentials, PATs, deploy keys, GitHub OAuth tokens",
       message: "DRAGNET_MASTER_KEY must decode to exactly 32 bytes.",
       action: "Replace DRAGNET_MASTER_KEY with a 32-byte base64 key, then restart Dragnet.",
-      severity: "blocking",
-    });
-  }
-  return null;
-}
-
-function pollingApiKeyHealth(env: EnvMap): ConfigHealthItem | null {
-  if (env.DRAGNET_POLLING_ENABLED !== "1") return null;
-
-  const raw = env.DRAGNET_API_KEY?.trim();
-  if (!raw) {
-    return missingItem({
-      id: "polling-api-key",
-      label: "Polling scan API key",
-      variables: ["DRAGNET_API_KEY"],
-      feature: "Background polling scans",
-      message: "DRAGNET_POLLING_ENABLED is on, but DRAGNET_API_KEY is missing. Polling can detect PR changes but cannot trigger scans.",
-      action: "Generate an API key in Settings, add DRAGNET_API_KEY to .env.local, then restart Dragnet.",
-      severity: "blocking",
-    });
-  }
-  if (!raw.startsWith("dr_") || PLACEHOLDER_RE.test(raw)) {
-    return invalidItem({
-      id: "polling-api-key",
-      label: "Polling scan API key",
-      variables: ["DRAGNET_API_KEY"],
-      feature: "Background polling scans",
-      message: "DRAGNET_API_KEY does not look like a generated Dragnet API key.",
-      action: "Generate a fresh API key in Settings, add it to .env.local, then restart Dragnet.",
       severity: "blocking",
     });
   }

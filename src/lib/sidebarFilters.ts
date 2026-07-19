@@ -5,7 +5,7 @@
  *
  *   - `yourProjects`: repos where `ownerId === currentUserId`
  *   - `sharedProjects`: repos the user has a `UserRepo` row for,
- *     but is NOT the owner of. Ordered by `invitedAt` desc.
+ *     but is NOT the owner of. Ordered alphabetically by project name.
  *
  * Sidebar rendering and component tests should consume the
  * `splitSidebarRepos` output — keep the JSX dumb.
@@ -74,11 +74,9 @@ export function splitSidebarRepos(
     });
   }
 
-  const sharedProjects = [...sharedMap.values()].sort((a, b) => {
-    if (!a.invitedAt) return 1;
-    if (!b.invitedAt) return -1;
-    return b.invitedAt.localeCompare(a.invitedAt);
-  });
+  const sharedProjects = [...sharedMap.values()].sort((a, b) =>
+    a.name.localeCompare(b.name),
+  );
 
   return { yourProjects, sharedProjects };
 }

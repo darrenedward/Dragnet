@@ -12,7 +12,6 @@ type PrRow = {
   description?: string | null;
   createdAt?: string;
 };
-
 type RepoRow = {
   id: string;
   name: string;
@@ -25,7 +24,6 @@ type RepoRow = {
   autoRescanPolicy: string;
   pullRequests: PrRow[];
 };
-
 type PrismaFindManyArgs = {
   where: { isPollingEnabled: boolean };
   select: {
@@ -34,7 +32,6 @@ type PrismaFindManyArgs = {
     };
   };
 };
-
 const mockExecFileSync = vi.hoisted(() => vi.fn<(...args: any[]) => string>());
 const mockPullRequestCreate = vi.hoisted(() => vi.fn());
 const mockPullRequestUpdate = vi.hoisted(() => vi.fn());
@@ -171,8 +168,6 @@ describe("pollOnce", () => {
     } as Response;
   }
 
-  // ─── Core regression test ──────────────────────────────────────────
-
   it("re-scans a Completed PR when a new commit is pushed on the same branch", async () => {
     mockState.dbFixtures = [
       repoWithPrs({
@@ -194,8 +189,6 @@ describe("pollOnce", () => {
       expect.objectContaining({ data: { commitHash: "new-sha", status: "Pending" } }),
     );
   });
-
-  // ─── No-change guard ───────────────────────────────────────────────
 
   it("does not re-scan if commit hash has not changed", async () => {
     mockState.dbFixtures = [
@@ -232,8 +225,6 @@ describe("pollOnce", () => {
     );
   });
 
-  // ─── Pending PR still works ────────────────────────────────────────
-
   it("re-scans a Pending PR when commit changes", async () => {
     mockState.dbFixtures = [
       repoWithPrs({
@@ -252,8 +243,6 @@ describe("pollOnce", () => {
     expect(triggerScan).toHaveBeenCalledTimes(1);
     expect(triggerScan).toHaveBeenCalledWith("repo-1", "pr-1", "new-sha");
   });
-
-  // ─── Unregistered branch ───────────────────────────────────────────
 
   it("registers PRs from GitHub that are not yet registered in Dragnet", async () => {
     mockState.dbFixtures = [
@@ -299,8 +288,6 @@ describe("pollOnce", () => {
     expect(mockPullRequestUpdate).not.toHaveBeenCalled();
     expect(triggerScan).not.toHaveBeenCalled();
   });
-
-  // ─── Graceful error handling ───────────────────────────────────────
 
   it("handles DB query failure gracefully", async () => {
     mockState.dbShouldThrow = "DB down";
@@ -396,8 +383,6 @@ describe("pollOnce", () => {
     expect(triggerScan).not.toHaveBeenCalled();
   });
 
-  // ─── Multi-repo cycle ──────────────────────────────────────────────
-
   it("processes multiple repos in a single cycle", async () => {
     mockState.dbFixtures = [
       repoWithPrs({
@@ -427,8 +412,6 @@ describe("pollOnce", () => {
     expect(triggerScan).toHaveBeenCalledTimes(1);
     expect(triggerScan).toHaveBeenCalledWith("repo-1", "pr-1", "new-sha");
   });
-
-  // ─── targetBranch sync ────────────────────────────────────────────
 
   it("updates targetBranch when gh returns a different value", async () => {
     mockState.dbFixtures = [
@@ -495,14 +478,12 @@ describe("pollOnce", () => {
 
     await pollOnce(triggerScan);
 
-    // targetBranch was NOT updated (graceful skip — no call with targetBranch in data)
     expect(prisma.pullRequest.update).not.toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ targetBranch: expect.any(String) }),
       }),
     );
 
-    // commitHash WAS updated (sync cycle continues despite gh failure)
     expect(prisma.pullRequest.update).toHaveBeenCalledWith({
       where: { id: "pr-1" },
       data: { commitHash: "new-sha", status: "Pending" },

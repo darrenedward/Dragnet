@@ -51,7 +51,7 @@ describe("splitSidebarRepos", () => {
     expect(out.sharedProjects).toEqual([]);
   });
 
-  it("'Shared with you' is ordered by invitedAt desc (most recent first)", () => {
+  it("'Shared with you' remains alphabetically ordered as projects change", () => {
     const repos = [
       repo("r1", "Old", "u2"),
       repo("r2", "New", "u2"),
@@ -63,7 +63,7 @@ describe("splitSidebarRepos", () => {
       userRepo("u1", "r3", "member", "2026-02-01T00:00:00Z"),
     ];
     const out = splitSidebarRepos(repos, userRepos, "u1");
-    expect(out.sharedProjects.map((r) => r.id)).toEqual(["r2", "r3", "r1"]);
+    expect(out.sharedProjects.map((r) => r.id)).toEqual(["r3", "r2", "r1"]);
   });
 
   it("shared repos with no matching Repository row are dropped", () => {
