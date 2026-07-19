@@ -46,7 +46,14 @@ vi.mock("../src/lib/prisma", () => ({
         ),
       ),
     },
-    pullRequest: { create: mockCreate, update: mockUpdate },
+      pullRequest: { create: mockCreate, update: mockUpdate },
+      scanJob: {
+        findUnique: vi.fn(async ({ where }: { where: { prId_commitHash: { prId: string; commitHash: string } } }) =>
+          [...mockState.queueJobs].some((key) => key.endsWith(`:${where.prId_commitHash.prId}:${where.prId_commitHash.commitHash}`))
+            ? { id: "job-existing" }
+            : null,
+        ),
+      },
   },
 }));
 

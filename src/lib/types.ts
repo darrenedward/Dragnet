@@ -57,7 +57,7 @@ export interface PullRequest {
   author: string;
   commitHash: string;
   createdAt: string;
-  description: string;
+  description: string | null;
   rating?: number | null;
   sizeProfile?: PrSizeProfile;
 }

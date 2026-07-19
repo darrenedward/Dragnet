@@ -32,9 +32,6 @@ let pollingTimer: ReturnType<typeof setInterval> | null = null;
 /** ETag cache keyed by `repoId` for the /pulls list endpoint. */
 const etagCache = new Map<string, string>();
 
-/** Revisions whose queue admission failed and must be retried next cycle. */
-const admissionRetries = new Set<string>();
-
 const POLL_INTERVAL_MS =
   Number(process.env.DRAGNET_POLL_INTERVAL_MS) || 60_000;
 
@@ -103,24 +100,13 @@ function matchLocalPr(
   return { kind: "missing" };
 }
 
-function admissionKey(repoId: string, prId: string, commitHash: string): string {
-  return `${repoId}:${prId}:${commitHash}`;
-}
-
 async function admitRevision(
   triggerScan: TriggerScan,
   repoId: string,
   prId: string,
   commitHash: string,
 ): Promise<void> {
-  const key = admissionKey(repoId, prId, commitHash);
-  try {
-    await triggerScan(repoId, prId, commitHash);
-    admissionRetries.delete(key);
-  } catch (err) {
-    admissionRetries.add(key);
-    throw err;
-  }
+  await triggerScan(repoId, prId, commitHash);
 }
 
 async function admissionNeeded(
@@ -128,7 +114,6 @@ async function admissionNeeded(
   prId: string,
   commitHash: string,
 ): Promise<boolean> {
-  if (admissionRetries.has(admissionKey(repoId, prId, commitHash))) return true;
   const scanJob = (prisma as typeof prisma & {
     scanJob?: { findUnique: (args: unknown) => Promise<unknown> };
   }).scanJob;
@@ -269,11 +254,9 @@ export async function pollOnce(triggerScan: TriggerScan): Promise<void> {
         }
       }
 
-      const revisionKey = admissionKey(repo.id, localPr.id, ghPr.head.sha);
       if (ghPr.head.sha === localPr.commitHash) {
         if (!(await admissionNeeded(repo.id, localPr.id, ghPr.head.sha))) continue;
         if (!isAutoRescanEnabled(repo.autoRescanPolicy)) {
-          admissionRetries.delete(revisionKey);
           continue;
         }
         try {
@@ -302,8 +285,6 @@ export async function pollOnce(triggerScan: TriggerScan): Promise<void> {
         });
         if (isAutoRescanEnabled(repo.autoRescanPolicy)) {
           await admitRevision(triggerScan, repo.id, localPr.id, ghPr.head.sha);
-        } else {
-          admissionRetries.delete(revisionKey);
         }
       } catch (err: any) {
         console.warn(
