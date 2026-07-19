@@ -192,3 +192,16 @@ export const getStatusBadgeStyle = (status: string): string => {
       return "bg-amber-500/10 text-amber-400 border border-amber-500/20";
   }
 };
+
+export function getPullRequestStatusPresentation(
+  status: string,
+  rating?: number | null,
+): { label: string; className: string } {
+  if (status === "Pending" && rating !== undefined && rating !== null) {
+    return {
+      label: "Pending",
+      className: "bg-orange-500/10 text-orange-400 border border-orange-500/20",
+    };
+  }
+  return { label: status, className: getStatusBadgeStyle(status) };
+}

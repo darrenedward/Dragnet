@@ -2,7 +2,7 @@
 
 import { GitBranch } from "lucide-react";
 import type { PullRequest } from "../../lib/types";
-import { getStatusBadgeStyle } from "../../lib/types";
+import { getPullRequestStatusPresentation } from "../../lib/types";
 import PrSizeProfileChip from "../PrSizeProfileChip";
 
 /**
@@ -42,9 +42,7 @@ export function PrList({
 function PrRow({ pr, isPrSelected, onSelect }: { pr: PullRequest; isPrSelected: boolean; onSelect: () => void }) {
   const hasPriorReview = pr.rating !== undefined && pr.rating !== null;
   const isPending = pr.status === "Pending";
-  const statusClass = isPending && hasPriorReview
-    ? "bg-orange-500/10 text-orange-400 border-orange-500/20"
-    : getStatusBadgeStyle(pr.status);
+  const statusPresentation = getPullRequestStatusPresentation(pr.status, pr.rating);
   return (
     <button
       onClick={onSelect}
@@ -78,13 +76,13 @@ function PrRow({ pr, isPrSelected, onSelect }: { pr: PullRequest; isPrSelected: 
               </span>
             )}
             <span
-              className={`px-1 py-0.2 rounded uppercase font-extrabold text-[7px] tracking-wide flex items-center gap-1 leading-none ${statusClass}`}
+              className={`px-1 py-0.2 rounded uppercase font-extrabold text-[7px] tracking-wide flex items-center gap-1 leading-none ${statusPresentation.className}`}
             >
               {pr.status === "In Progress" && (
                 <span className="inline-block w-1 h-1 rounded-full bg-blue-400 animate-pulse shrink-0" />
               )}
               <span title={isPending ? (hasPriorReview ? "Code changed since the last completed review" : "This PR has not been reviewed yet") : undefined}>
-                {pr.status}
+                {statusPresentation.label}
               </span>
             </span>
           </div>
