@@ -21,9 +21,9 @@ selection, refresh, scan lifecycle, interrupted-scan recovery, export, and
 copy feedback. It uses the existing authenticated browser transport and the
 existing server endpoints.
 
-The migration is incremental. The current dashboard data hook temporarily
-adapts the workspace into the existing `App` data contract. Once consumers are
-migrated, the compatibility facade and obsolete direct setters can be removed.
+The migration is complete. `useDashboardData` now exposes the PR workspace
+read model and named commands directly alongside repository catalog and setup
+operations; there is no second compatibility contract for `App` to consume.
 
 ## User Stories
 
@@ -117,12 +117,12 @@ migrated, the compatibility facade and obsolete direct setters can be removed.
   recoverable error state.
 - Scan state is scoped by PR ID. Optimistic state may protect an in-flight
   request but must not appear on a different selected PR.
-- The existing dashboard hook remains a compatibility facade while the
-  dashboard and PR views migrate. The facade is removed only after no caller
-  depends on the old shape.
-- The first implementation slice is already present: the workspace hook,
-  pure coordinator, race-condition tests, and ADR. Remaining work is to move
-  read-model state and scan commands behind the workspace boundary.
+- The dashboard and PR views consume the workspace read model and named
+  commands directly. Repository registration, database configuration, and
+  activity history remain dashboard-owned.
+- The workspace hook, pure coordinator, race-condition tests, lifecycle
+  commands, and consumer migration are complete. Runtime verification rebuilds
+  the production container before probing it.
 
 ## Testing Decisions
 
@@ -151,7 +151,8 @@ migrated, the compatibility facade and obsolete direct setters can be removed.
   configuration.
 - Replacing the existing authenticated transport.
 - Adding new review providers, scan algorithms, or database schema changes.
-- Removing the compatibility facade before all consumers are migrated.
+- Keeping a compatibility facade or unscoped PR lifecycle setters after the
+  consumer migration.
 
 ## Further Notes
 

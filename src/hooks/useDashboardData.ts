@@ -14,7 +14,6 @@ import { fetchJson, NetworkError } from "../lib/http";
 import { toast } from "../lib/toast";
 import { usePrWorkspace } from "./usePrWorkspace";
 import { isActivePrWorkspace } from "../lib/prWorkspaceCoordinator";
-import { createPrWorkspaceContract } from "../lib/prWorkspaceContract";
 
 /**
  * Single source of truth for the dashboard's data state, polling, and
@@ -1080,18 +1079,16 @@ export function useDashboardData() {
     setTimeout(() => setCopyFeedback(null), 2000);
   };
 
-  const activeRepo = repos.find((repo) => repo.id === selectedRepoId) ?? null;
-  const activePR = prs.find((pr) => pr.id === selectedPrId && pr.repoId === selectedRepoId) ?? null;
-  const activeFile = prFiles.find((file) => file.filename === selectedFilename) ?? prFiles[0] ?? null;
-  const workspace = createPrWorkspaceContract(
-    {
+  const workspace = {
+    readModel: {
       selectedRepoId,
       selectedPrId,
-      selectedRepository: activeRepo,
-      selectedPullRequest: activePR,
+      selectedRepository: repos.find((repo) => repo.id === selectedRepoId) ?? null,
+      selectedPullRequest: prs.find((pr) => pr.id === selectedPrId && pr.repoId === selectedRepoId) ?? null,
+      pullRequests: prs,
       files: prFiles,
       selectedFilename,
-      activeFile,
+      activeFile: prFiles.find((file) => file.filename === selectedFilename) ?? prFiles[0] ?? null,
       findings,
       reviewRun,
       reviewChunks,
@@ -1104,15 +1101,17 @@ export function useDashboardData() {
       rejectedFindings,
       stale,
       stability,
-      repoIndexedAt: activeRepo?.indexedAt ?? null,
+      repoIndexedAt: repos.find((repo) => repo.id === selectedRepoId)?.indexedAt ?? null,
       interruptedScan,
       progress: { isScanning, isRetryingChunks },
       feedback: { scanResult, copyFeedback, trivialSkipNotice, exportStatus },
     },
-    {
+    commands: {
       selectRepository,
       selectPullRequest,
       selectFile: setSelectedFilename,
+      refreshPullRequests: fetchPrsForSelectedRepo,
+      refresh: handleTriggerReviewPass,
       dismissScanResult: () => setScanResult(null),
       dismissTrivialSkipNotice: () => setTrivialSkipNotice(null),
       startScan: handleTriggerPrScan,
@@ -1123,7 +1122,7 @@ export function useDashboardData() {
       exportReview: handleExportMarkdown,
       copySuggestion: handleCopyCode,
     },
-  );
+  };
 
   return {
     // db config
@@ -1138,42 +1137,7 @@ export function useDashboardData() {
     handleSaveDbConfig,
     // repos + prs
     repos,
-    selectedRepoId,
-    selectRepository,
-    prs,
-    selectedPrId,
-    selectPullRequest,
-    prFiles,
-    selectedFilename,
-    findings,
-    reviewRun,
-    reviewChunks,
-    activeScan,
-    queueJob,
-    activeScanChunks,
-    activeFindings,
-    activeIterations,
-    rejectedCount,
-    rejectedFindings,
-    stale,
-    stability,
     logs,
-    fetchPrsForSelectedRepo,
-    // scan
-    isScanning,
-    isRetryingChunks,
-    scanResult,
-    handleTriggerPrScan,
-    handleStopScan,
-    handleRetryFailedChunks,
-    handleExportMarkdown,
-    exportStatus,
-    handleCopyCode,
-    copyFeedback,
-    // Phase 7 — interrupted-scan banner
-    interruptedScan,
-    handleContinueScan,
-    handleStartFreshScan,
     workspace,
     // add repo modal
     showAddRepoModal,

@@ -54,7 +54,7 @@ export default function App() {
   const { readModel: workspace, commands: workspaceCommands } = d.workspace;
   const ed = useEditRepo({
     onUpdated: async () => {
-      await d.fetchPrsForSelectedRepo(d.selectedRepoId, true);
+      await workspaceCommands.refreshPullRequests(workspace.selectedRepoId, true);
     },
     onWebhookPrompt: ({ id, name, hasPat }) => {
       setPendingWebhook({ repoId: id, repoName: name, hasPat });
@@ -142,7 +142,7 @@ export default function App() {
 
           <div className="hidden lg:flex items-center gap-4">
             <span className="text-[11px] font-mono text-slate-500 uppercase">Registered Projects: <strong className="text-white">{d.repos.length}</strong></span>
-            <span className="text-[11px] font-mono text-slate-500 uppercase">Queued PR requests: <strong className="text-cyan-400">{d.prs.length}</strong></span>
+            <span className="text-[11px] font-mono text-slate-500 uppercase">Queued PR requests: <strong className="text-cyan-400">{workspace.pullRequests.length}</strong></span>
           </div>
         </div>
       </header>
@@ -165,13 +165,13 @@ export default function App() {
           selectedRepoId={workspace.selectedRepoId}
           onSelectRepo={(repoId) => {
             workspaceCommands.selectRepository(repoId);
-            d.fetchPrsForSelectedRepo(repoId, false);
+            workspaceCommands.refreshPullRequests(repoId, false);
           }}
           onEditRepo={(repo) => ed.openEditor(repo)}
           onRepoSettings={(repo) => setSettingsRepo(repo)}
           onMintKey={(repo) => setKeyModalRepo(repo)}
           currentUserId={currentUserId}
-          prs={d.prs}
+          prs={workspace.pullRequests}
           selectedPrId={workspace.selectedPrId}
           onSelectPr={(prId) => {
             workspaceCommands.selectPullRequest(prId);
@@ -199,7 +199,7 @@ export default function App() {
                   setDbConfig={d.setDbConfig}
                   dbStatus={d.dbStatus}
                   reposCount={d.repos.length}
-                  prsCount={d.prs.length}
+                  prsCount={workspace.pullRequests.length}
                   isTestingDb={d.isTestingDb}
                   isSavingDb={d.isSavingDb}
                   dbTestResult={d.dbTestResult}
@@ -227,7 +227,7 @@ export default function App() {
                   <CodebaseGraph
                     repoId={workspace.selectedRepoId}
                     repoName={activeRepo?.name || workspace.selectedRepoId}
-                    onIndexComplete={d.handleTriggerReviewPass}
+                    onIndexComplete={workspaceCommands.refresh}
                   />
                 </motion.div>
               )}
@@ -255,7 +255,7 @@ export default function App() {
                   className="flex flex-col flex-1 overflow-hidden"
                 >
                   <GitWatcher
-                    onTriggerReviewPass={d.handleTriggerReviewPass}
+                    onTriggerReviewPass={workspaceCommands.refresh}
                     activeRepoId={workspace.selectedRepoId}
                     onRepoChange={workspaceCommands.selectRepository}
                   />
@@ -264,7 +264,7 @@ export default function App() {
 
               {activeTab === "prs" && (
                 <PrsView
-                  activePR={workspace.selectedPullRequest}
+                  activePR={activeAPR}
                   isScanning={workspace.progress.isScanning}
                   onTriggerScan={workspaceCommands.startScan}
                   onStopScan={workspaceCommands.stopScan}
@@ -291,10 +291,10 @@ export default function App() {
                   prFiles={workspace.files}
                   selectedFilename={workspace.selectedFilename}
                   onSelectFilename={workspaceCommands.selectFile}
-                  activeFile={workspace.activeFile}
-                  repoIndexedAt={workspace.repoIndexedAt}
+                  activeFile={activeFile}
+                  repoIndexedAt={activeRepo?.indexedAt ?? null}
                   repoId={workspace.selectedRepoId}
-                  onIndexComplete={d.handleTriggerReviewPass}
+                  onIndexComplete={workspaceCommands.refresh}
                   interruptedScan={workspace.interruptedScan}
                   onContinueScan={workspaceCommands.continueScan}
                   onStartFreshScan={workspaceCommands.startFreshScan}
@@ -418,9 +418,9 @@ export default function App() {
               }
             }}
             onRefresh={async () => {
-              d.handleTriggerReviewPass();
-              if (d.selectedRepoId) {
-                await d.fetchPrsForSelectedRepo(d.selectedRepoId, true);
+              workspaceCommands.refresh();
+              if (workspace.selectedRepoId) {
+                await workspaceCommands.refreshPullRequests(workspace.selectedRepoId, true);
               }
             }}
           />
