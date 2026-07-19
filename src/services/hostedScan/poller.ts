@@ -190,7 +190,10 @@ async function syncPr(
   const needsScan = isNew || isUpdated;
 
   if (needsScan) {
-    const res = await triggerHostedScan(repoId, prData, { automatic: true });
+    const res = await triggerHostedScan(repoId, prData, {
+      automatic: true,
+      triggerReason: "polling",
+    });
     if (!res.ok) {
       throw new Error(`triggerHostedScan failed: ${(res as { error: string }).error}`);
     }

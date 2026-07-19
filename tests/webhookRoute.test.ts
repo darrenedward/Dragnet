@@ -437,7 +437,7 @@ describe("webhooks/github/route POST", () => {
         commitHash: "abc123",
         author: "octocat",
         description: "Description here",
-      }, { automatic: true });
+      }, { automatic: true, triggerReason: "webhook" });
 
       expect(mocks.mockGitFetch).not.toHaveBeenCalled();
       expect(mocks.mockScanRepoPrs).not.toHaveBeenCalled();
@@ -467,7 +467,7 @@ describe("webhooks/github/route POST", () => {
         commitHash: "def456",
         author: "webhook",
         description: undefined,
-      }, { automatic: true });
+      }, { automatic: true, triggerReason: "webhook" });
     });
 
     it("returns 400 when pull_request data is missing head/ref fields", async () => {

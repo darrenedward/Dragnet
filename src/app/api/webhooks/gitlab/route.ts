@@ -95,7 +95,10 @@ export async function POST(request: Request) {
         author: payload.user?.name || "webhook",
         description: mr.description || undefined,
       };
-      const result = await triggerHostedScan(matched.id, prData, { automatic: true });
+      const result = await triggerHostedScan(matched.id, prData, {
+        automatic: true,
+        triggerReason: "webhook",
+      });
       if (!result.ok) {
         if (logDelivery) await updateDeliveryStatus(logDelivery, "failed", (result as { error: string }).error);
         return NextResponse.json({ error: (result as { error: string }).error }, { status: 400 });

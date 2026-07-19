@@ -365,7 +365,7 @@ describe("webhooks/gitlab/route POST", () => {
         commitHash: "abc123",
         author: "gitlab_user",
         description: "Fixes the critical bug",
-      }, { automatic: true });
+      }, { automatic: true, triggerReason: "webhook" });
       expect(mocks.mockGitFetch).not.toHaveBeenCalled();
       expect(mocks.mockEnqueue).not.toHaveBeenCalled();
     });
@@ -394,7 +394,7 @@ describe("webhooks/gitlab/route POST", () => {
         commitHash: "def456",
         author: "webhook",
         description: undefined,
-      }, { automatic: true });
+      }, { automatic: true, triggerReason: "webhook" });
     });
 
     it("returns 400 when object_attributes is missing head fields", async () => {
