@@ -45,7 +45,7 @@ function view(job: {
   freshRequested: boolean;
   priority?: number;
   triggerReason?: string;
-  repository?: { name: string } | null;
+  repository?: { name?: string; maxConcurrentScans?: number | null } | null;
   pullRequest?: { title: string; sourceBranch: string } | null;
   createdAt: Date;
   completedAt?: Date | null;
@@ -213,17 +213,37 @@ export async function claimNextScanJob(options?: {
     });
     if (active >= maxConcurrent) return null;
 
-    const next = await tx.scanJob.findFirst({
-      where: { state: "queued" },
-      orderBy: [{ priority: "desc" }, { createdAt: "asc" }, { id: "asc" }],
-    });
-    if (!next) return null;
-    const claimed = await tx.scanJob.updateMany({
-      where: { id: next.id, state: "queued" },
-      data: { state: "running", workerId, claimedAt: now, leaseExpiresAt },
-    });
-    if (claimed.count !== 1) return null;
-    return view({ ...next, state: "running", claimedAt: now, leaseExpiresAt }, null, next.forced, next.resumeRequested, next.freshRequested);
+    const excludedJobIds: string[] = [];
+    while (true) {
+      const next = await tx.scanJob.findFirst({
+        where: {
+          state: "queued",
+          ...(excludedJobIds.length > 0 ? { id: { notIn: excludedJobIds } } : {}),
+        },
+        orderBy: [{ priority: "desc" }, { createdAt: "asc" }, { id: "asc" }],
+        include: { repository: { select: { name: true, maxConcurrentScans: true } } },
+      });
+      if (!next) return null;
+
+      const repoLimit = next.repository?.maxConcurrentScans;
+      if (repoLimit != null) {
+        const effectiveRepoLimit = Math.min(maxConcurrent, Math.max(1, Math.floor(repoLimit)));
+        const activeInRepo = await tx.scanJob.count({
+          where: { repoId: next.repoId, state: "running", leaseExpiresAt: { gt: now } },
+        });
+        if (activeInRepo >= effectiveRepoLimit) {
+          excludedJobIds.push(next.id);
+          continue;
+        }
+      }
+
+      const claimed = await tx.scanJob.updateMany({
+        where: { id: next.id, state: "queued" },
+        data: { state: "running", workerId, claimedAt: now, leaseExpiresAt },
+      });
+      if (claimed.count !== 1) return null;
+      return view({ ...next, state: "running", claimedAt: now, leaseExpiresAt }, null, next.forced, next.resumeRequested, next.freshRequested);
+    }
   });
 }
 
@@ -239,7 +259,13 @@ export async function renewScanJobLease(jobId: string, workerId: string, leaseMs
 export async function recoverExpiredScanJobs(now = new Date()): Promise<number> {
   const result = await prisma.scanJob.updateMany({
     where: { state: "running", leaseExpiresAt: { lt: now } },
-    data: { state: "queued", workerId: null, claimedAt: null, leaseExpiresAt: null },
+    data: {
+      state: "queued",
+      workerId: null,
+      claimedAt: null,
+      leaseExpiresAt: null,
+      resumeRequested: true,
+    },
   });
   return result.count;
 }

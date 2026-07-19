@@ -66,6 +66,49 @@ describe("scan queue", () => {
     expect(scanJob.findFirst).not.toHaveBeenCalled();
   });
 
+  it("does not exceed a repository cap while preserving the global cap", async () => {
+    scanJob.updateMany.mockResolvedValueOnce({ count: 0 }).mockResolvedValueOnce({ count: 0 });
+    scanJob.count.mockResolvedValueOnce(0).mockResolvedValueOnce(1);
+    scanJob.findFirst.mockResolvedValueOnce({
+      id: "job-1", prId: "pr-1", repoId: "repo-1", commitHash: "abc", state: "queued",
+      claimedAt: null, leaseExpiresAt: null, createdAt: new Date(), priority: 0,
+      forced: false, resumeRequested: false, freshRequested: false, triggerReason: "auto",
+      repository: { maxConcurrentScans: 1 },
+    }).mockResolvedValueOnce(null);
+    const { claimNextScanJob } = await import("@/src/services/scanQueue");
+
+    await expect(claimNextScanJob({ workerId: "worker-1", maxConcurrentScans: 4 })).resolves.toBeNull();
+    expect(scanJob.count).toHaveBeenLastCalledWith({
+      where: { repoId: "repo-1", state: "running", leaseExpiresAt: { gt: expect.any(Date) } },
+    });
+    expect(scanJob.updateMany).toHaveBeenCalledTimes(2);
+  });
+
+  it("skips a capped repository when another queued repository can run", async () => {
+    scanJob.updateMany.mockResolvedValueOnce({ count: 0 }).mockResolvedValueOnce({ count: 0 }).mockResolvedValueOnce({ count: 1 });
+    scanJob.count.mockResolvedValueOnce(0).mockResolvedValueOnce(1);
+    scanJob.findFirst
+      .mockResolvedValueOnce({
+        id: "job-1", prId: "pr-1", repoId: "repo-1", commitHash: "abc", state: "queued",
+        claimedAt: null, leaseExpiresAt: null, createdAt: new Date(), priority: 0,
+        forced: false, resumeRequested: false, freshRequested: false, triggerReason: "auto",
+        repository: { maxConcurrentScans: 1 },
+      })
+      .mockResolvedValueOnce({
+        id: "job-2", prId: "pr-2", repoId: "repo-2", commitHash: "def", state: "queued",
+        claimedAt: null, leaseExpiresAt: null, createdAt: new Date(), priority: 0,
+        forced: false, resumeRequested: false, freshRequested: false, triggerReason: "auto",
+        repository: { maxConcurrentScans: null },
+      });
+    const { claimNextScanJob } = await import("@/src/services/scanQueue");
+
+    await expect(claimNextScanJob({ workerId: "worker-1", maxConcurrentScans: 4 })).resolves.toMatchObject({
+      jobId: "job-2",
+      state: "running",
+    });
+    expect(scanJob.updateMany).toHaveBeenLastCalledWith(expect.objectContaining({ where: { id: "job-2", state: "queued" } }));
+  });
+
   it("claims and releases a lease with the same worker ownership", async () => {
     const next = { id: "job-1", prId: "pr-1", commitHash: "abc", state: "queued", claimedAt: null, leaseExpiresAt: null, createdAt: new Date() };
     scanJob.updateMany.mockResolvedValueOnce({ count: 0 }).mockResolvedValueOnce({ count: 0 }).mockResolvedValueOnce({ count: 1 }).mockResolvedValueOnce({ count: 1 });
@@ -105,7 +148,13 @@ describe("scan queue", () => {
     await expect(recoverExpiredScanJobs(now)).resolves.toBe(2);
     expect(scanJob.updateMany).toHaveBeenCalledWith({
       where: { state: "running", leaseExpiresAt: { lt: now } },
-      data: { state: "queued", workerId: null, claimedAt: null, leaseExpiresAt: null },
+      data: {
+        state: "queued",
+        workerId: null,
+        claimedAt: null,
+        leaseExpiresAt: null,
+        resumeRequested: true,
+      },
     });
   });
 

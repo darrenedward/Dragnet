@@ -33,6 +33,7 @@ export interface Repository {
   testCommand?: string | null;
   isPollingEnabled?: boolean | null;
   autoRescanPolicy?: "inherit" | "enabled" | "disabled" | null;
+  maxConcurrentScans?: number | null;
   skipTier2?: boolean | null;
   apiKeyPrefix?: string | null;
   hostedMode?: boolean | null;
