@@ -572,10 +572,11 @@ export function useDashboardData() {
   };
 
   // ===== PR scan =====
-  const handleTriggerPrScan = async (opts?: { force?: boolean }) => {
-    if (!selectedPrId) return;
-    const targetPrId = selectedPrId;
-    const scanningRepoId = selectedRepoId;
+  const handleTriggerPrScan = async (opts?: { force?: boolean; prId?: string; repoId?: string }) => {
+    const targetPrId = opts?.prId ?? selectedPrId;
+    if (!targetPrId) return;
+    const targetPr = prs.find((pr) => pr.id === targetPrId);
+    const scanningRepoId = opts?.repoId ?? targetPr?.repoId ?? selectedRepoId;
     const force = opts?.force === true;
     console.log(`[scan] handleTriggerPrScan: starting scan for prId=${targetPrId}${force ? " (force=true)" : ""}`);
     scanInFlightRef.current = true;
@@ -853,7 +854,11 @@ export function useDashboardData() {
     if (prevSelected !== prId) {
       selectPullRequest(prId);
     }
-    await handleTriggerPrScan({ force: true });
+    await handleTriggerPrScan({
+      force: true,
+      prId,
+      repoId: prs.find((pr) => pr.id === prId)?.repoId,
+    });
   };
 
   const handleRetryFailedChunks = async () => {
