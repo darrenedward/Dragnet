@@ -13,6 +13,7 @@ import {
 import { fetchJson, NetworkError } from "../lib/http";
 import { toast } from "../lib/toast";
 import { usePrWorkspace } from "./usePrWorkspace";
+import { isActivePrWorkspace } from "../lib/prWorkspaceCoordinator";
 
 /**
  * Single source of truth for the dashboard's data state, polling, and
@@ -457,6 +458,11 @@ export function useDashboardData() {
   const prIdRef = useRef(selectedPrId);
   repoIdRef.current = selectedRepoId;
   prIdRef.current = selectedPrId;
+  const isTargetActive = (repoId: string, prId: string) =>
+    isActivePrWorkspace(
+      { repoId: repoIdRef.current, prId: prIdRef.current },
+      { repoId, prId },
+    );
 
   useEffect(() => {
     const poller = setInterval(async () => {
@@ -618,7 +624,7 @@ export function useDashboardData() {
       // Phase 7 — interrupted scan with valid checkpoint. Don't treat
       // as success or failure; store the resume metadata and let the
       // banner drive Continue / Start fresh.
-      if (res.ok && result.status === "interrupted") {
+      if (res.ok && result.status === "interrupted" && isTargetActive(scanningRepoId, targetPrId)) {
         setInterruptedScan({
           prId: targetPrId,
           runId: result.runId,
@@ -636,15 +642,17 @@ export function useDashboardData() {
         setPrs((prev) =>
           prev.map((p) => (p.id === targetPrId ? { ...p, status: "In Progress" } : p)),
         );
-        if (result.resumeAllowed) {
-          toast.info(result.message);
-        } else {
-          toast.warn(result.message);
+        if (isTargetActive(scanningRepoId, targetPrId)) {
+          if (result.resumeAllowed) {
+            toast.info(result.message);
+          } else {
+            toast.warn(result.message);
+          }
         }
         return;
       }
       // Any successful non-interrupted response clears the banner.
-      if (res.ok) {
+      if (res.ok && isTargetActive(scanningRepoId, targetPrId)) {
         setInterruptedScan(null);
       }
       if (res.ok) {
@@ -653,11 +661,13 @@ export function useDashboardData() {
             prev.map((p) => (p.id === targetPrId ? { ...p, sizeProfile: result.sizeProfile } : p)),
           );
         }
-        setScanResult({
-          count: result.findings?.length || 0,
-          model: result.usedModel,
-          notice: result.systemWarn,
-        });
+        if (isTargetActive(scanningRepoId, targetPrId)) {
+          setScanResult({
+            count: result.findings?.length || 0,
+            model: result.usedModel,
+            notice: result.systemWarn,
+          });
+        }
         // Trivial-skip: backend returned `usedModel: "none (skipped)"`
         // because the diff was all config/docs/generated files. The
         // backend also returned `priorReviewRun` — the most recent
@@ -667,7 +677,7 @@ export function useDashboardData() {
         // The sticky button label is derived per-PR from
         // `reviewRun.outcome` after refetch, so no `lastScanOutcome`
         // state is needed.
-        if (result.usedModel === "none (skipped)") {
+        if (result.usedModel === "none (skipped)" && isTargetActive(scanningRepoId, targetPrId)) {
           setTrivialSkipNotice({
             prId: targetPrId,
             lastRating: result.priorReviewRun?.rating ?? null,
@@ -769,7 +779,9 @@ export function useDashboardData() {
           configChanged: result.error === "RESUME_REJECTED_CONFIG_CHANGED",
           message: result.message || "Resume rejected — underlying code or review config changed.",
         } : prev);
-        toast.warn(result.message || "Resume rejected — code or review config changed since the checkpoint.");
+        if (isTargetActive(selectedRepoId, prId)) {
+          toast.warn(result.message || "Resume rejected — code or review config changed since the checkpoint.");
+        }
         return;
       }
       if (!res.ok) {
@@ -782,7 +794,7 @@ export function useDashboardData() {
       );
       setSelectedPrId(prId);
       await fetchPrDetails(prId, false);
-      toast.info("Resuming scan from last checkpoint…");
+      if (isTargetActive(repoIdRef.current, prId)) toast.info("Resuming scan from last checkpoint…");
     } catch (e: any) {
       if (e instanceof NetworkError) {
         toast.networkError();
@@ -982,6 +994,8 @@ export function useDashboardData() {
 
   const handleExportMarkdown = async (format: "file" | "download" = "download") => {
     if (!selectedPrId) return;
+    const targetRepoId = selectedRepoId;
+    const targetPrId = selectedPrId;
     if (!reviewRun?.id) {
       setExportStatus({
         kind: format,
@@ -1005,11 +1019,13 @@ export function useDashboardData() {
         throw new Error(data.error || `Export failed (HTTP ${res.status}).`);
       }
       if (format === "file") {
-        setExportStatus({
-          kind: "file",
-          success: true,
-          message: `Saved to ${data.relPath}`,
-        });
+        if (isTargetActive(targetRepoId, targetPrId)) {
+          setExportStatus({
+            kind: "file",
+            success: true,
+            message: `Saved to ${data.relPath}`,
+          });
+        }
       } else {
         // Server returned the markdown inline; trigger a browser download.
         const blob = new Blob([data.markdown], { type: "text/markdown;charset=utf-8;" });
@@ -1021,18 +1037,22 @@ export function useDashboardData() {
         link.click();
         document.body.removeChild(link);
         URL.revokeObjectURL(url);
-        setExportStatus({
-          kind: "download",
-          success: true,
-          message: "Downloaded.",
-        });
+        if (isTargetActive(targetRepoId, targetPrId)) {
+          setExportStatus({
+            kind: "download",
+            success: true,
+            message: "Downloaded.",
+          });
+        }
       }
     } catch (err: any) {
-      setExportStatus({
-        kind: format,
-        success: false,
-        message: err?.message || "Export failed.",
-      });
+      if (isTargetActive(targetRepoId, targetPrId)) {
+        setExportStatus({
+          kind: format,
+          success: false,
+          message: err?.message || "Export failed.",
+        });
+      }
     }
     // Auto-clear the status pill after 6s.
     setTimeout(() => setExportStatus(null), 6000);
