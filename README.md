@@ -2,7 +2,9 @@
 
 Self-hosted, multi-tenant code review platform. The Greptile-tier review quality (full-codebase indexing + agentic review loop) without pushing source code to a third-party SaaS.
 
-**Status:** MVP in progress. See [`roadmap.md`](./roadmap.md) for current priorities and [`prd.md`](./prd.md) for the full product spec.
+**Status:** MVP in progress. Dragnet is open source and community contributions are welcome. See [`roadmap.md`](./roadmap.md) for current priorities and [`prd.md`](./prd.md) for the full product spec.
+
+Dragnet is being developed with AI assistance and is intentionally transparent about its current limitations. Contributions from experienced developers, security researchers, testers, designers, and documentation writers are welcome.
 
 ---
 
@@ -126,6 +128,8 @@ CLAUDE.md                  Codebase conventions (read this before editing)
 
 Read [`CLAUDE.md`](./CLAUDE.md) — it covers the non-obvious conventions: Prisma singleton pattern, Next 16 Promise-based params, the pg 8.21 SSL workaround, and the 500-line file-size rule.
 
+Please also read [`CONTRIBUTING.md`](./CONTRIBUTING.md) before opening a pull request. Security vulnerabilities should be reported privately using the process in [`SECURITY.md`](./SECURITY.md).
+
 **What never gets committed:**
 - `.env.local` and any `.env*` except `.env.example` (placeholders only)
 - `src/generated/prisma/` (Prisma client output)
@@ -135,4 +139,8 @@ Read [`CLAUDE.md`](./CLAUDE.md) — it covers the non-obvious conventions: Prism
 
 ## License
 
-Private.
+Dragnet is licensed under the [GNU Affero General Public License v3.0](./LICENSE).
+
+You may use, study, modify, self-host, and share Dragnet under the terms of that license. Commercial use is allowed; paid hosting, support, and consulting are welcome ways to sustain the project. Contributions are credited in the project history and documentation.
+
+Copyright © 2026 Darren Edward House of Jones.

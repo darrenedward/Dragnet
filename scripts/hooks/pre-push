@@ -9,20 +9,20 @@
 #
 # Configuration (set these in your shell/profile or .env):
 #   DRAGNET_URL      - default: http://localhost:3300
-#   DRAGNET_API_KEY  - your key from Dragnet UI → LLM Settings → API Keys
-#                      (or from the project settings → API Key section)
+#   DRAGNET_REPO_KEY - project key from the project row's key button
+#                      (DRAGNET_API_KEY remains a legacy fallback)
 
 DRAGNET_URL="${DRAGNET_URL:-http://localhost:3300}"
-DRAGNET_API_KEY="${DRAGNET_API_KEY:-}"
+DRAGNET_REPO_KEY="${DRAGNET_REPO_KEY:-${DRAGNET_API_KEY:-}}"
 REPO_PATH="$(git rev-parse --show-toplevel 2>/dev/null)"
 
 if [ -z "$REPO_PATH" ]; then
   exit 0
 fi
 
-if [ -z "$DRAGNET_API_KEY" ]; then
-  echo "⚠ Dragnet: no API key. Set \$DRAGNET_API_KEY"
-  echo "  Generate one from Dragnet UI → LLM Settings → API Keys."
+if [ -z "$DRAGNET_REPO_KEY" ]; then
+  echo "⚠ Dragnet: no project API key. Set \$DRAGNET_REPO_KEY"
+  echo "  Generate one from the project's key button in the Dragnet sidebar."
   echo "  Push blocked. Set the key or use --no-verify to bypass."
   exit 1
 fi
@@ -40,7 +40,7 @@ while read local_ref local_sha remote_ref remote_sha; do
 
   result=$(curl -s -m 300 "$DRAGNET_URL/api/hooks/prepush" \
     -H "Content-Type: application/json" \
-    -H "Authorization: Bearer $DRAGNET_API_KEY" \
+    -H "Authorization: Bearer $DRAGNET_REPO_KEY" \
     -d "{\"branch\":\"$branch\",\"repoPath\":\"$REPO_PATH\",\"sha\":\"$local_sha\"}")
 
   passed=$(echo "$result" | grep -o '"passed":[^,}]*' | cut -d: -f2)

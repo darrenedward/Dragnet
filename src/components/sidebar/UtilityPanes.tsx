@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Activity, Loader2 } from "lucide-react";
-import type { LlmPresetsState } from "../../lib/types";
+import { Activity, ChevronUp, LifeBuoy, Loader2, LogOut, Scale } from "lucide-react";
+import { authClient } from "../../lib/auth-client";
 import { fetchJson } from "../../lib/http";
 
 /**
@@ -103,66 +103,46 @@ export function GithubConnectionPane() {
   );
 }
 
-/**
- * LLM router pane — bottom of the sidebar. Shows the active chat
- * preset + a "Configure" link to the LLM Settings tab.
- */
-export function LlmRouterPane({
-  state,
-  onOpenSettings,
-}: {
-  state: LlmPresetsState | null;
-  onOpenSettings: () => void;
-}) {
-  const activeChat = state?.presets.find((p) => p.id === state.activeChatPresetId) || null;
-  const chatModel = activeChat?.chatModel || "";
-  const shortModel = chatModel.split("/").pop() || chatModel;
+/** Compact account and project-help menu pinned to the sidebar bottom. */
+export function AccountMenuPane() {
+  const [isOpen, setIsOpen] = useState(false);
+  const [isSigningOut, setIsSigningOut] = useState(false);
+
+  const handleSignOut = async () => {
+    setIsSigningOut(true);
+    try {
+      await authClient.signOut();
+      window.location.assign("/login");
+    } catch {
+      setIsSigningOut(false);
+    }
+  };
 
   return (
-    <div className="p-4 border-white/5 bg-slate-950/45 border-t">
-      <div className="flex items-center justify-between mb-3">
-        <h2 className="text-[10px] uppercase tracking-[0.2em] text-slate-500 font-extrabold font-mono">
-          LLM Router
-        </h2>
-        <button
-          onClick={onOpenSettings}
-          className="text-[9px] text-cyan-400 hover:text-cyan-300 font-mono uppercase tracking-wider flex items-center gap-1"
-          title="Open LLM Settings tab"
-        >
-          <span>Configure</span>
-        </button>
-      </div>
-      <div className="bg-slate-900/60 p-2.5 rounded-lg border border-white/5">
-        <div className="text-[8px] text-slate-500 uppercase font-mono block mb-0.5">Active Chat Model</div>
-        {activeChat && chatModel ? (
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-[10px] text-cyan-400 font-mono font-bold truncate" title={`${activeChat.name} · ${chatModel}`}>
-              {activeChat.name} · {shortModel}
-            </span>
-            {activeChat.hasApiKey ? (
-              <span className="text-[8px] text-emerald-400 bg-emerald-500/10 px-1 py-0.5 rounded border border-emerald-500/20 font-mono uppercase shrink-0">
-                Key Set
-              </span>
-            ) : (
-              <span className="text-[8px] text-amber-400 bg-amber-500/10 px-1 py-0.5 rounded border border-amber-500/20 font-mono uppercase shrink-0">
-                No Key
-              </span>
-            )}
-          </div>
-        ) : (
-          <div className="text-[10px] text-slate-600 font-mono italic">
-            Not configured —{" "}
-            <button onClick={onOpenSettings} className="text-cyan-400 hover:underline not-italic">
-              set up
-            </button>
-          </div>
-        )}
-        {activeChat?.endpoint && (
-          <div className="text-[8px] text-slate-600 font-mono truncate mt-1">
-            {activeChat.endpoint.replace(/^https?:\/\//, "").split("/")[0]}
-          </div>
-        )}
-      </div>
+    <div className="relative p-3 border-t border-white/5 bg-slate-950/45">
+      {isOpen && (
+        <div className="absolute bottom-[calc(100%-4px)] left-3 right-3 rounded-lg border border-white/10 bg-[#151A24] p-1.5 shadow-xl shadow-black/30">
+          <a href="https://github.com/darrenedward/Dragnet/issues" target="_blank" rel="noreferrer" className="flex min-h-11 items-center gap-2 rounded-md px-3 text-[10px] font-mono text-slate-300 hover:bg-white/5 hover:text-white">
+            <LifeBuoy size={13} className="text-cyan-400" />
+            <span>Support &amp; Issues</span>
+          </a>
+          <a href="https://github.com/darrenedward/Dragnet/blob/main/LICENSE" target="_blank" rel="noreferrer" className="flex min-h-11 items-center gap-2 rounded-md px-3 text-[10px] font-mono text-slate-300 hover:bg-white/5 hover:text-white">
+            <Scale size={13} className="text-indigo-400" />
+            <span>AGPLv3 License</span>
+          </a>
+          <button onClick={handleSignOut} disabled={isSigningOut} className="flex min-h-11 w-full items-center gap-2 rounded-md px-3 text-left text-[10px] font-mono text-rose-300 hover:bg-rose-500/10 disabled:cursor-wait disabled:opacity-60">
+            {isSigningOut ? <Loader2 size={13} className="animate-spin" /> : <LogOut size={13} />}
+            <span>{isSigningOut ? "Signing out…" : "Logout"}</span>
+          </button>
+        </div>
+      )}
+      <button onClick={() => setIsOpen((open) => !open)} aria-expanded={isOpen} aria-haspopup="menu" className="flex min-h-11 w-full items-center justify-between rounded-lg border border-white/10 bg-slate-900/60 px-3 text-left hover:bg-slate-800/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/70">
+        <span>
+          <span className="block text-[10px] font-extrabold uppercase tracking-[0.2em] text-slate-400 font-mono">Dragnet</span>
+          <span className="block text-[9px] text-slate-600 font-mono">Help, license &amp; account</span>
+        </span>
+        <ChevronUp size={14} className={`text-slate-500 transition-transform ${isOpen ? "rotate-180" : ""}`} />
+      </button>
     </div>
   );
 }

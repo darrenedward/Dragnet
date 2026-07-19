@@ -190,7 +190,7 @@ export default function ApiKeyManager({
             </div>
 
             <p className="text-[9px] text-amber-400/70 font-mono leading-snug">
-              You won&apos;t see this key again. Set it as <code className="text-amber-300">DRAGNET_API_KEY</code> in your client environment.
+              You won&apos;t see this key again. Set it as <code className="text-amber-300">{repoId ? "DRAGNET_REPO_KEY" : "DRAGNET_API_KEY"}</code> in your client environment.
             </p>
           </div>
 

@@ -46,7 +46,7 @@ The systemd unit sources no env file — hardcoded env vars are set directly in 
 
 ```env
 DATABASE_URL=postgresql://user:password@host:5432/dragnet
-DRAGNET_API_KEY=your-generated-api-key
+DRAGNET_REPO_KEY=your-project-api-key
 ```
 
 Set permissions: `chmod 600 /etc/dragnet.env && chown dragnet:dragnet /etc/dragnet.env`.
