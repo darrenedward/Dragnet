@@ -93,11 +93,15 @@ describe("pollHostedRepos", () => {
 
   function ghResponse(
     prs: { number: number; title: string; ref: string; sha: string; baseRef: string; login?: string; body?: string }[],
+    options: { status?: number; etag?: string } = {},
   ): Response {
+    const status = options.status ?? 200;
+    const headers = new Map<string, string>();
+    if (options.etag) headers.set("etag", options.etag);
     return {
-      ok: true,
-      status: 200,
-      headers: new Map() as unknown as Headers,
+      ok: status >= 200 && status < 300,
+      status,
+      headers: headers as unknown as Headers,
       json: async () =>
         prs.map((p) => ({
           number: p.number,
@@ -424,6 +428,59 @@ describe("pollHostedRepos", () => {
     expect(result.errors).toHaveLength(1);
     expect(result.errors[0]).toContain("triggerHostedScan failed");
   });
+
+  it("isolates a repository fetch failure and continues with later repositories", async () => {
+    mockState.dbFixtures = [
+      baseRepo,
+      { ...baseRepo, id: "repo-2", name: "later-repo", cloneUrlHttps: "https://github.com/other/later.git" },
+    ];
+    mockState.existingPrs.set("repo-2:feature:main", null);
+    fetchSpy = vi
+      .spyOn(global, "fetch")
+      .mockRejectedValueOnce(new Error("first repository unavailable"))
+      .mockResolvedValueOnce(ghResponse([{ number: 2, title: "Later", ref: "feature", sha: "later-sha", baseRef: "main" }]));
+
+    const result = await pollHostedRepos();
+
+    expect(result.total).toBe(2);
+    expect(result.errors).toEqual(["test-repo: first repository unavailable"]);
+    expect(result.synced).toBe(1);
+    expect(triggerHostedScan).toHaveBeenCalledTimes(1);
+  });
+
+  it("reuses each repository ETag and skips processing on a 304", async () => {
+    const repo = { ...baseRepo, id: "etag-repo", name: "etag-repo" };
+    mockState.dbFixtures = [repo];
+    mockState.existingPrs.set("etag-repo:feature:main", null);
+    fetchSpy = vi
+      .spyOn(global, "fetch")
+      .mockResolvedValueOnce(ghResponse([{ number: 3, title: "Cached", ref: "feature", sha: "etag-sha", baseRef: "main" }], { etag: '"etag-1"' }))
+      .mockResolvedValueOnce(ghResponse([], { status: 304 }));
+
+    await pollHostedRepos();
+    await pollHostedRepos();
+
+    expect(fetchSpy.mock.calls[1][1]).toEqual(expect.objectContaining({
+      headers: expect.objectContaining({ "If-None-Match": '"etag-1"' }),
+    }));
+    expect(triggerHostedScan).toHaveBeenCalledTimes(1);
+  });
+
+  it("tries the repository again on a later cycle after a transient failure", async () => {
+    mockState.dbFixtures = [baseRepo];
+    mockState.existingPrs.set("repo-1:feature:main", null);
+    fetchSpy = vi
+      .spyOn(global, "fetch")
+      .mockRejectedValueOnce(new Error("temporary outage"))
+      .mockResolvedValueOnce(ghResponse([{ number: 4, title: "Retry", ref: "feature", sha: "retry-sha", baseRef: "main" }]));
+
+    const first = await pollHostedRepos();
+    const second = await pollHostedRepos();
+
+    expect(first.errors).toHaveLength(1);
+    expect(second.errors).toEqual([]);
+    expect(second.scanned).toBe(1);
+  });
 });
 
 // ─── startHostedPoller / stopHostedPoller ─────────────────────────────
@@ -442,7 +499,7 @@ describe("startHostedPoller / stopHostedPoller", () => {
     startHostedPoller();
 
     expect(pollSpy).toHaveBeenCalled();
-    expect(pollSpy.mock.calls[0][1]).toBe(120_000);
+    expect(pollSpy.mock.calls[0][1]).toBe(60_000);
 
     pollSpy.mockRestore();
   });
