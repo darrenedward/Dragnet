@@ -14,6 +14,7 @@ import { fetchJson, NetworkError } from "../lib/http";
 import { toast } from "../lib/toast";
 import { usePrWorkspace } from "./usePrWorkspace";
 import { isActivePrWorkspace } from "../lib/prWorkspaceCoordinator";
+import { createPrWorkspaceContract } from "../lib/prWorkspaceContract";
 
 /**
  * Single source of truth for the dashboard's data state, polling, and
@@ -58,11 +59,10 @@ export function useDashboardData() {
   const {
     coordinator: workspaceCoordinator,
     selectedRepoId,
-    setSelectedRepoId,
     selectedPrId,
-    setSelectedPrId,
     selectRepository,
     selectPullRequest,
+    reconcilePullRequest,
   } = usePrWorkspace({ repos });
   const [prs, setPrs] = useState<PullRequest[]>([]);
   const [prFiles, setPrFiles] = useState<PRFile[]>([]);
@@ -245,7 +245,7 @@ export function useDashboardData() {
     const request = workspaceCoordinator.current.beginPrList(repoId);
     if (!retainSelection) {
       setPrs([]);
-      setSelectedPrId("");
+      reconcilePullRequest([]);
       setPrFiles([]);
       setSelectedFilename("");
       setFindings([]);
@@ -276,12 +276,12 @@ export function useDashboardData() {
         }
         setPrs(prsData);
         if (prsData.length > 0) {
-          setSelectedPrId((prev) => workspaceCoordinator.current.selectPr(
-            retainSelection ? prev : "",
+          reconcilePullRequest(
             prsData.map((p: PullRequest) => p.id),
-          ));
+            retainSelection,
+          );
         } else {
-          setSelectedPrId("");
+          reconcilePullRequest([]);
           setPrFiles([]);
           setFindings([]);
           setReviewRun(null);
@@ -685,8 +685,8 @@ export function useDashboardData() {
           });
         }
         console.log(`[scan] handleTriggerPrScan: refetching PR details, PRs, repos, logs`);
-        setSelectedRepoId(scanningRepoId);
-        setSelectedPrId(targetPrId);
+        selectRepository(scanningRepoId);
+        selectPullRequest(targetPrId);
         await fetchPrDetails(targetPrId, false);
         if (scanningRepoId) await fetchPrsForSelectedRepo(scanningRepoId, true);
         await fetchRepos();
@@ -792,7 +792,7 @@ export function useDashboardData() {
       setPrs((prev) =>
         prev.map((p) => (p.id === prId ? { ...p, status: "In Progress" } : p)),
       );
-      setSelectedPrId(prId);
+      selectPullRequest(prId);
       await fetchPrDetails(prId, false);
       if (isTargetActive(repoIdRef.current, prId)) toast.info("Resuming scan from last checkpoint…");
     } catch (e: any) {
@@ -851,7 +851,7 @@ export function useDashboardData() {
     setInterruptedScan(null);
     const prevSelected = selectedPrId;
     if (prevSelected !== prId) {
-      setSelectedPrId(prId);
+      selectPullRequest(prId);
     }
     await handleTriggerPrScan({ force: true });
   };
@@ -1075,6 +1075,51 @@ export function useDashboardData() {
     setTimeout(() => setCopyFeedback(null), 2000);
   };
 
+  const activeRepo = repos.find((repo) => repo.id === selectedRepoId) ?? null;
+  const activePR = prs.find((pr) => pr.id === selectedPrId && pr.repoId === selectedRepoId) ?? null;
+  const activeFile = prFiles.find((file) => file.filename === selectedFilename) ?? prFiles[0] ?? null;
+  const workspace = createPrWorkspaceContract(
+    {
+      selectedRepoId,
+      selectedPrId,
+      selectedRepository: activeRepo,
+      selectedPullRequest: activePR,
+      files: prFiles,
+      selectedFilename,
+      activeFile,
+      findings,
+      reviewRun,
+      reviewChunks,
+      activeScan,
+      queueJob,
+      activeScanChunks,
+      activeFindings,
+      activeIterations,
+      rejectedCount,
+      rejectedFindings,
+      stale,
+      stability,
+      repoIndexedAt: activeRepo?.indexedAt ?? null,
+      interruptedScan,
+      progress: { isScanning, isRetryingChunks },
+      feedback: { scanResult, copyFeedback, trivialSkipNotice, exportStatus },
+    },
+    {
+      selectRepository,
+      selectPullRequest,
+      selectFile: setSelectedFilename,
+      dismissScanResult: () => setScanResult(null),
+      dismissTrivialSkipNotice: () => setTrivialSkipNotice(null),
+      startScan: handleTriggerPrScan,
+      stopScan: handleStopScan,
+      continueScan: handleContinueScan,
+      startFreshScan: handleStartFreshScan,
+      retryFailedChunks: handleRetryFailedChunks,
+      exportReview: handleExportMarkdown,
+      copySuggestion: handleCopyCode,
+    },
+  );
+
   return {
     // db config
     dbConfig,
@@ -1089,15 +1134,12 @@ export function useDashboardData() {
     // repos + prs
     repos,
     selectedRepoId,
-    setSelectedRepoId,
     selectRepository,
     prs,
     selectedPrId,
-    setSelectedPrId,
     selectPullRequest,
     prFiles,
     selectedFilename,
-    setSelectedFilename,
     findings,
     reviewRun,
     reviewChunks,
@@ -1116,9 +1158,7 @@ export function useDashboardData() {
     isScanning,
     isRetryingChunks,
     scanResult,
-    setScanResult,
     trivialSkipNotice,
-    setTrivialSkipNotice,
     handleTriggerPrScan,
     handleStopScan,
     handleRetryFailedChunks,
@@ -1130,6 +1170,7 @@ export function useDashboardData() {
     interruptedScan,
     handleContinueScan,
     handleStartFreshScan,
+    workspace,
     // add repo modal
     showAddRepoModal,
     setShowAddRepoModal,

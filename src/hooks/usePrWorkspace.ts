@@ -41,10 +41,11 @@ export function usePrWorkspace({ repos }: UsePrWorkspaceOptions) {
   return {
     coordinator,
     selectedRepoId,
-    setSelectedRepoId,
     selectedPrId,
-    setSelectedPrId,
     selectRepository,
     selectPullRequest,
+    reconcilePullRequest: (prIds: string[], retainSelection = true) => {
+      setSelectedPrId((current) => coordinator.current.selectPr(retainSelection ? current : "", prIds));
+    },
   };
 }
