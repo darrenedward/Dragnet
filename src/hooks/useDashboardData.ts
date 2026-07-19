@@ -1158,7 +1158,6 @@ export function useDashboardData() {
     isScanning,
     isRetryingChunks,
     scanResult,
-    trivialSkipNotice,
     handleTriggerPrScan,
     handleStopScan,
     handleRetryFailedChunks,
