@@ -78,6 +78,28 @@ interface LocalPrRow {
   status: string;
 }
 
+type LocalPrMatch =
+  | { kind: "match"; pr: LocalPrRow }
+  | { kind: "missing" }
+  | { kind: "ambiguous" };
+
+function matchLocalPr(
+  localPrs: LocalPrRow[],
+  githubPrNumber: number,
+  sourceBranch: string,
+): LocalPrMatch {
+  const numberedMatches = localPrs.filter((pr) => pr.githubPrNumber === githubPrNumber);
+  if (numberedMatches.length > 1) return { kind: "ambiguous" };
+  if (numberedMatches.length === 1) return { kind: "match", pr: numberedMatches[0] };
+
+  const branchMatches = localPrs.filter(
+    (pr) => pr.githubPrNumber == null && pr.sourceBranch === sourceBranch,
+  );
+  if (branchMatches.length > 1) return { kind: "ambiguous" };
+  if (branchMatches.length === 1) return { kind: "match", pr: branchMatches[0] };
+  return { kind: "missing" };
+}
+
 /**
  * Poll all remote repos with `isPollingEnabled = true` and trigger scans
  * for PRs whose head commit has advanced since the last recorded hash.
@@ -144,11 +166,14 @@ export async function pollOnce(triggerScan: TriggerScan): Promise<void> {
 
     // Match GitHub PRs to local DB records by sourceBranch.
     for (const ghPr of ghPrs) {
-      const localPr = repo.pullRequests.find(
-        (p) => p.githubPrNumber === ghPr.number,
-      ) as LocalPrRow | undefined ?? repo.pullRequests.find(
-        (p) => p.githubPrNumber == null && p.sourceBranch === ghPr.head.ref,
-      ) as LocalPrRow | undefined;
+      const matchResult = matchLocalPr(repo.pullRequests as LocalPrRow[], ghPr.number, ghPr.head.ref);
+      if (matchResult.kind === "ambiguous") {
+        console.warn(
+          `[poll] ambiguous local PR match for ${repo.name}/#${ghPr.number} on branch ${ghPr.head.ref}; skipping`,
+        );
+        continue;
+      }
+      const localPr = matchResult.kind === "match" ? matchResult.pr : undefined;
 
       if (!localPr) {
         const prId = `poll-pr-${repo.id}-${ghPr.number}`;

@@ -281,6 +281,25 @@ describe("pollOnce", () => {
     expect(triggerScan).toHaveBeenCalledWith("repo-1", "poll-pr-repo-1-2", "other-sha");
   });
 
+  it("skips an ambiguous branch fallback instead of updating the wrong PR", async () => {
+    mockState.dbFixtures = [
+      repoWithPrs({
+        pullRequests: [
+          { id: "pr-1", githubPrNumber: null, sourceBranch: "stacked", commitHash: "sha-1", status: "Pending" },
+          { id: "pr-2", githubPrNumber: null, sourceBranch: "stacked", commitHash: "sha-2", status: "Pending" },
+        ],
+      }),
+    ];
+    fetchSpy = vi.spyOn(global, "fetch")
+      .mockResolvedValueOnce(ghResponse([{ number: 99, ref: "stacked", sha: "new-sha" }]));
+
+    await pollOnce(triggerScan);
+
+    expect(mockPullRequestCreate).not.toHaveBeenCalled();
+    expect(mockPullRequestUpdate).not.toHaveBeenCalled();
+    expect(triggerScan).not.toHaveBeenCalled();
+  });
+
   // ─── Graceful error handling ───────────────────────────────────────
 
   it("handles DB query failure gracefully", async () => {
