@@ -25,6 +25,7 @@ import DashboardSidebar from "./components/DashboardSidebar";
 import SystemSetupBanner from "./components/SystemSetupBanner";
 import PrsView from "./components/views/PrsView";
 import TrivialSkipNotice from "./components/views/prs/TrivialSkipNotice";
+import ScanConfigurationModal from "./components/views/prs/ScanConfigurationModal";
 import AddRepoModal from "./components/modals/addRepo";
 import EditRepoModal from "./components/modals/editRepo";
 import RepoSettingsModal from "./components/modals/repoSettings/RepoSettingsModal";
@@ -451,6 +452,21 @@ export default function App() {
             lastRating={workspace.feedback.trivialSkipNotice.lastRating}
             lastScanAt={workspace.feedback.trivialSkipNotice.lastScanAt}
             onClose={workspaceCommands.dismissTrivialSkipNotice}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {workspace.feedback.scanConfigurationIssue && (
+          <ScanConfigurationModal
+            open
+            message={workspace.feedback.scanConfigurationIssue.message}
+            issues={workspace.feedback.scanConfigurationIssue.issues}
+            onClose={workspaceCommands.dismissScanConfigurationIssue}
+            onOpenSettings={() => {
+              workspaceCommands.dismissScanConfigurationIssue();
+              setActiveTab("llm_config");
+            }}
           />
         )}
       </AnimatePresence>
