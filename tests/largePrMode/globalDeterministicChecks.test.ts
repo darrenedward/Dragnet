@@ -95,7 +95,7 @@ vi.mock("../../src/services/largePrReview/reconcile", () => ({
   reconcileFindingsAcrossRuns: vi.fn().mockResolvedValue(undefined),
 }));
 
-import { runPrScan } from "../../reviewService";
+import { runPrScan } from "../../src/services/reviewService";
 import { runGlobalDeterministicChecks } from "../../src/services/largePrReview/globalDeterministicChecks";
 
 function mockFinding(explanation: string): DeterministicFinding {

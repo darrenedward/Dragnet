@@ -92,7 +92,7 @@ describe("Phase 4.10 — force-restart aborts in-flight scan", () => {
   });
 
   it("abort signal fires through create() and runPrScan returns interrupted", async () => {
-    const { runPrScan } = await import("../reviewService");
+    const { runPrScan } = await import("../src/services/reviewService");
 
     // Build a controller the test controls. We pass it directly into
     // runPrScan via options.signal — same shape acquireReviewLock

@@ -169,7 +169,7 @@ describe("Phase 6 — loop writes and clears checkpoints", () => {
       });
     });
 
-    const { runPrScan } = await import("../reviewService");
+    const { runPrScan } = await import("../src/services/reviewService");
     const result = await runPrScan(
       "pr-cp",
       [
@@ -237,7 +237,7 @@ describe("Phase 6 — loop writes and clears checkpoints", () => {
     });
 
     const controller = new AbortController();
-    const { runPrScan } = await import("../reviewService");
+    const { runPrScan } = await import("../src/services/reviewService");
 
     const scanPromise = runPrScan(
       "pr-cp",
@@ -324,7 +324,7 @@ describe("Phase 6 — loop writes and clears checkpoints", () => {
       });
     });
 
-    const { runPrScan } = await import("../reviewService");
+    const { runPrScan } = await import("../src/services/reviewService");
     await runPrScan(
       "pr-cp",
       [
@@ -385,7 +385,7 @@ describe("Phase 6 — loop writes and clears checkpoints", () => {
       });
     });
 
-    const { runPrScan } = await import("../reviewService");
+    const { runPrScan } = await import("../src/services/reviewService");
     const result = await runPrScan(
       "pr-cp",
       [
@@ -461,7 +461,7 @@ describe("Phase 6 — loop writes and clears checkpoints", () => {
       });
     });
 
-    const { runPrScan } = await import("../reviewService");
+    const { runPrScan } = await import("../src/services/reviewService");
     const result = await runPrScan(
       "pr-cp",
       [

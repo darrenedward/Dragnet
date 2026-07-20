@@ -138,7 +138,7 @@ describe("ReviewRun.outcome persistence — issue #19", () => {
     // Trivial-skip uses a DIRECT prisma.reviewRun.update (not completeReviewRun)
     // because it short-circuits before the success terminal. See reviewService.ts
     // ~line 1907 for the write site.
-    const { runPrScan } = await import("../reviewService");
+    const { runPrScan } = await import("../src/services/reviewService");
 
     // Files: all trivial (README.md matches docs pattern in diffClassifier.ts).
     // Pass a reviewRunId so the trivial-skip path's `if (reviewRunId && !reviewChunkId)`
@@ -228,7 +228,7 @@ describe("ReviewRun.outcome persistence — issue #19", () => {
       };
     });
 
-    const { runPrScan } = await import("../reviewService");
+    const { runPrScan } = await import("../src/services/reviewService");
 
     const result = await runPrScan(
       "pr-1",
@@ -271,7 +271,7 @@ describe("ReviewRun.outcome persistence — issue #19", () => {
     const savedChain = llmChain.slice();
     llmChain.length = 0;
 
-    const { runPrScan } = await import("../reviewService");
+    const { runPrScan } = await import("../src/services/reviewService");
 
     const result = await runPrScan(
       "pr-1",
@@ -321,7 +321,7 @@ describe("ReviewRun.outcome persistence — issue #19", () => {
     // path is marked outcome="reviewed" (NOT skipped — skipped is
     // reserved for trivial-skip, where the diff HAS files but they're
     // all config/docs/generated).
-    const { runPrScan } = await import("../reviewService");
+    const { runPrScan } = await import("../src/services/reviewService");
 
     await runPrScan("pr-1", undefined, "run-empty");
 

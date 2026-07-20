@@ -95,7 +95,7 @@ describe("Empty-diff PR handling — issue #61", () => {
   });
 
   it("returns cached rating when prior completed ReviewRun exists", async () => {
-    const { runPrScan } = await import("../reviewService");
+    const { runPrScan } = await import("../src/services/reviewService");
     prismaMocks.reviewRunFindFirst.mockResolvedValue({ rating: 8 });
 
     const result = await runPrScan("pr-empty");
@@ -109,7 +109,7 @@ describe("Empty-diff PR handling — issue #61", () => {
   });
 
   it("returns null rating with actionable systemWarn when no cache exists", async () => {
-    const { runPrScan } = await import("../reviewService");
+    const { runPrScan } = await import("../src/services/reviewService");
 
     const result = await runPrScan("pr-empty");
 
@@ -123,7 +123,7 @@ describe("Empty-diff PR handling — issue #61", () => {
   });
 
   it("makes no LLM call for empty-diff PR", async () => {
-    const { runPrScan } = await import("../reviewService");
+    const { runPrScan } = await import("../src/services/reviewService");
 
     await runPrScan("pr-empty");
 
@@ -131,7 +131,7 @@ describe("Empty-diff PR handling — issue #61", () => {
   });
 
   it("sets PR status to Completed with null rating", async () => {
-    const { runPrScan } = await import("../reviewService");
+    const { runPrScan } = await import("../src/services/reviewService");
 
     await runPrScan("pr-empty");
 
@@ -142,7 +142,7 @@ describe("Empty-diff PR handling — issue #61", () => {
   });
 
   it("completes ReviewRun when reviewRunId is provided", async () => {
-    const { runPrScan } = await import("../reviewService");
+    const { runPrScan } = await import("../src/services/reviewService");
 
     await runPrScan("pr-empty", undefined, "run-abc");
 
@@ -155,7 +155,7 @@ describe("Empty-diff PR handling — issue #61", () => {
   });
 
   it("creates reviewHistory audit trail", async () => {
-    const { runPrScan } = await import("../reviewService");
+    const { runPrScan } = await import("../src/services/reviewService");
 
     await runPrScan("pr-empty");
 
@@ -163,7 +163,7 @@ describe("Empty-diff PR handling — issue #61", () => {
   });
 
   it("includes reviewConfigHash in cache lookup when options provide it", async () => {
-    const { runPrScan } = await import("../reviewService");
+    const { runPrScan } = await import("../src/services/reviewService");
 
     await runPrScan("pr-empty", undefined, undefined, undefined, undefined, {
       checkpointMetadata: {
@@ -186,7 +186,7 @@ describe("Empty-diff PR handling — issue #61", () => {
   });
 
   it("omits reviewConfigHash from cache lookup when options are absent", async () => {
-    const { runPrScan } = await import("../reviewService");
+    const { runPrScan } = await import("../src/services/reviewService");
 
     await runPrScan("pr-empty");
 
@@ -202,7 +202,7 @@ describe("Empty-diff PR handling — issue #61", () => {
   });
 
   it("returns cached rating when reviewConfigHash matches", async () => {
-    const { runPrScan } = await import("../reviewService");
+    const { runPrScan } = await import("../src/services/reviewService");
     prismaMocks.reviewRunFindFirst.mockResolvedValue({ rating: 9 });
 
     const result = await runPrScan("pr-empty", undefined, undefined, undefined, undefined, {
@@ -220,7 +220,7 @@ describe("Empty-diff PR handling — issue #61", () => {
   });
 
   it("falls through to no-cache path when reviewConfigHash does not match (simulated by null return)", async () => {
-    const { runPrScan } = await import("../reviewService");
+    const { runPrScan } = await import("../src/services/reviewService");
 
     const result = await runPrScan("pr-empty", undefined, undefined, undefined, undefined, {
       checkpointMetadata: {

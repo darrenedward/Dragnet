@@ -34,7 +34,7 @@ vi.mock("../src/lib/webhookReplay", () => ({
   checkDelivery: mocks.mockCheckDelivery,
 }));
 
-vi.mock("@/reviewService", () => ({
+vi.mock("@/src/services/reviewService", () => ({
   runPrScan: mocks.mockRunPrScan,
 }));
 

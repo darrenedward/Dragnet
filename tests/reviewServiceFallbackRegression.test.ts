@@ -166,7 +166,7 @@ describe("runPrScan fallback regression — NVIDIA 4/4 must not invoke Minimax",
   });
 
   it("primary provider loop exhaustion does NOT fall through to next provider", async () => {
-    const { runPrScan } = await import("../reviewService");
+    const { runPrScan } = await import("../src/services/reviewService");
 
     // runPrScan no longer throws when no provider produces a review —
     // it resolves with success=false and a systemWarn describing the

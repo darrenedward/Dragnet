@@ -18,7 +18,6 @@ const outputTraceExcludes = [
   "./opencode.json*",
   "./postcss.config.mjs",
   "./prisma/**/*",
-  "./reviewService.ts",
   "./tsconfig*.json",
   "./tsconfig.tsbuildinfo",
   "./vitest.config.ts",
