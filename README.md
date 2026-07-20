@@ -1,10 +1,14 @@
-# Dragnet
+<p align="center">
+  <img src="./public/dragnet-markdown-header.svg" alt="Dragnet — self-hosted AI code review" width="100%">
+</p>
+
+<p align="center"><a href="https://github.com/darrenedward/Dragnet/issues">Issues</a> · <a href="https://github.com/darrenedward/Dragnet/discussions">Discussions</a> · <a href="./CONTRIBUTING.md">Contributing</a></p>
 
 Self-hosted, multi-tenant code review platform. The Greptile-tier review quality (full-codebase indexing + agentic review loop) without pushing source code to a third-party SaaS.
 
 **Status:** MVP in progress. Dragnet is open source and community contributions are welcome. Current priorities and design work are tracked in [GitHub Issues](https://github.com/darrenedward/Dragnet/issues).
 
-Dragnet is being developed with AI assistance and is intentionally transparent about its current limitations. Contributions from experienced developers, security researchers, testers, designers, and documentation writers are welcome.
+Dragnet is developed with AI assistance and is intentionally transparent about its current limitations. Contributions that make software easier to understand, test, debug, secure, and maintain are especially valuable.
 
 ---
 
@@ -106,6 +110,20 @@ DRAGNET_REPO_KEY=dr_your_key_here
 
 ---
 
+## Who can help
+
+Dragnet benefits from contributors with experience in:
+
+- **AI/ML and LLM engineering:** model integrations, tool calling, embeddings, evaluation, and review quality.
+- **Developer tooling and static analysis:** parsers, code indexing, call graphs, compilers, linters, and language support.
+- **GitHub and Git provider integrations:** pull-request APIs, webhooks, authentication, cloning, and repository permissions.
+- **Debugging, reliability, and observability:** reproductions, failure handling, queues, performance, logs, and recovery paths.
+- **Application and security engineering:** TypeScript, Next.js, Postgres, multi-tenant boundaries, secrets, and threat modeling.
+- **Frontend, accessibility, and product design:** clear review workflows, useful error states, keyboard access, and inclusive interfaces.
+- **Self-hosting and operations:** Docker, deployment, upgrades, backups, monitoring, and documentation for real-world installations.
+
+You do not need to be an expert in every area. A precise bug report, a failing test, a documentation improvement, or a small focused fix is a meaningful contribution.
+
 ## Project layout
 
 ```
@@ -115,7 +133,7 @@ src/app/page.tsx           Dashboard entry — mounts src/App.tsx
 src/components/            Extracted UI (sidebar, views, modals)
 src/lib/                   Shared helpers (prisma singleton, dbConfig, types)
 src/services/              Domain services (indexing, embedding)
-reviewService.ts           Core agentic review engine
+src/services/reviewService.ts Core agentic review engine
 tests/                     Vitest specs
 scripts/                   CLI, grammar setup, and optional git-hook integration
 ```

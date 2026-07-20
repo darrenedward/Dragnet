@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="240" viewBox="0 0 1200 240" role="img" aria-labelledby="title desc">
+  <title id="title">Dragnet</title>
+  <desc id="desc">Dragnet self-hosted AI code review platform</desc>
+  <rect width="1200" height="240" rx="24" fill="#0B1F3A"/>
+  <rect x="48" y="48" width="144" height="144" rx="24" fill="#06B6D4"/>
+  <text x="120" y="139" text-anchor="middle" font-family="system-ui, sans-serif" font-size="58" font-weight="800" letter-spacing="-4" fill="#06131F">DN</text>
+  <text x="240" y="112" font-family="system-ui, sans-serif" font-size="54" font-weight="800" letter-spacing="-2" fill="#F8FAFC">Dragnet</text>
+  <text x="244" y="158" font-family="system-ui, sans-serif" font-size="22" fill="#A5F3FC">Self-hosted AI code review for teams that care about clean, reliable software.</text>
+</svg>
