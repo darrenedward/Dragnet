@@ -44,7 +44,7 @@ function getMaxRetries(): number {
  * primary slot.
  *
  * Not instantiated at module load — that would break `next build` on
- * fresh clones with no presets file. Mirrors the prisma.ts pattern.
+ * fresh clones with no database presets. Mirrors the prisma.ts pattern.
  *
  * Returns null if no preset is active for the requested role. Callers
  * handle gracefully (review returns empty findings + actionable
@@ -94,7 +94,7 @@ function clientFor(preset: Preset): OpenAI {
 
 /**
  * Returns the OpenAI client for the currently-active chat preset.
- * Reads the presets file fresh on every call (~2KB, sub-ms) so users
+ * Reads the database-backed preset cache fresh on every call so users
  * don't need to restart the dev server after editing config.
  *
  * Returns null if no chat preset is active or the active preset has

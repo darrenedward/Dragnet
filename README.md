@@ -47,7 +47,7 @@ Dragnet is developed with AI assistance and is intentionally transparent about i
    ```bash
    cp .env.example .env.local
    ```
-   Required: `DATABASE_URL`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`. Configure LLM providers at runtime from the **LLM Settings** tab (writes to `.dragnet/llm-presets.json`, mode 0600; changes take effect on the next request — no restart). A primary and optional fallback provider can be configured for each of chat and embedding; if both fail, the review returns empty findings with an actionable banner (never fabricated output).
+   Required: `DATABASE_URL`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`. Configure LLM providers at runtime from the **LLM Settings** tab (settings and encrypted API keys are stored in the database; changes take effect on the next request — no restart). A primary and optional fallback provider can be configured for each of chat and embedding; if both fail, the review returns empty findings with an actionable banner (never fabricated output).
 
 3. **Generate the Prisma client and push the schema:**
    ```bash
