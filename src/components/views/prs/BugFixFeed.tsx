@@ -72,7 +72,7 @@ export default function BugFixFeed({ prId }: Props) {
         onClick={() => setOpen(!open)}
         className="w-full flex items-center justify-between px-3 py-2 bg-green-500/10 text-green-700 dark:text-green-300 text-sm font-medium hover:bg-green-500/15 transition-colors"
       >
-        <span>{data.fixedCount} blocker{data.fixedCount !== 1 ? "s" : ""} fixed</span>
+        <span>{data.fixedCount} finding{data.fixedCount !== 1 ? "s" : ""} fixed</span>
         <span className="text-xs">{open ? "▲" : "▼"}</span>
       </button>
       {open && (
@@ -86,7 +86,7 @@ export default function BugFixFeed({ prId }: Props) {
               )}
               <div className="flex items-center gap-2">
                 <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
-                  blocker
+                  {event.severity}
                 </span>
                 <span className="text-gray-700 dark:text-gray-200 font-medium truncate">
                   {event.filename}:{event.line ?? "?"}

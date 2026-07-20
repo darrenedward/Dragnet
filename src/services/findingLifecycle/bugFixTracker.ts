@@ -1,5 +1,5 @@
 import { prisma } from "@/src/lib/prisma";
-import { diffBlockerFixes, identityTuple } from "./diffFindings";
+import { diffResolvedFindings, identityTuple } from "./diffFindings";
 import type { FindingShape } from "./diffFindings";
 
 export interface RecordFixesResult {
@@ -40,12 +40,15 @@ export async function recordFixesForCompletedScan(
       select: { filename: true, line: true, category: true, severity: true },
     }),
     prisma.reviewFinding.findMany({
-      where: { reviewRunId: priorRun.id },
+      // Reconciliation runs immediately before this tracker. Restricting to
+      // findings it marked resolved prevents a missing finding caused by a
+      // partial/failed scan from being counted as a user fix.
+      where: { reviewRunId: priorRun.id, status: "resolved" },
       select: { id: true, filename: true, line: true, category: true, severity: true },
     }),
   ]);
 
-  const fixed = diffBlockerFixes(priorFindings as FindingShape[], currentFindings as FindingShape[]);
+  const fixed = diffResolvedFindings(priorFindings as FindingShape[], currentFindings as FindingShape[]);
 
   if (fixed.length === 0) {
     return { written: 0, skipped: 0 };

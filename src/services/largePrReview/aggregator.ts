@@ -2,6 +2,7 @@ import { prisma } from "@/src/lib/prisma";
 import { dedupFindingsWithinRun, reconcileFindingsAcrossRuns } from "./reconcile";
 import type { ReviewReliability } from "./types";
 import { completePrReviewIfCurrent } from "@/src/lib/prRevisionStatus";
+import { recordFixesForCompletedScan } from "@/src/services/findingLifecycle/bugFixTracker";
 
 export interface AggregatedReviewResult {
   reliability: ReviewReliability;
@@ -91,6 +92,10 @@ export async function aggregateResults(reviewRunId: string): Promise<AggregatedR
       chunksSkipped,
     },
   });
+
+  // Large-PR runs reconcile findings here rather than in reviewService's
+  // normal path, so they must also feed the cross-scan fix ledger here.
+  await recordFixesForCompletedScan(reviewRunId);
 
   await completePrReviewIfCurrent(run.prId, run.commitHash, rating);
 

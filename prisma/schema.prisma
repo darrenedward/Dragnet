@@ -303,9 +303,9 @@ model ReviewFinding {
   @@map("review_findings")
 }
 
-/// Audit trail for blocker fixes across scans.
-/// A BugFixEvent is created when a blocker finding present in scan N is
-/// absent in scan N+1. See .opencode/plans/bug-fix-tracking.md.
+/// Audit trail for confirmed finding fixes across scans.
+/// A BugFixEvent is created when a reconciled finding present in scan N is
+/// resolved and absent from a later completed scan.
 model BugFixEvent {
   id                 String         @id @default(cuid())
   prId               String
@@ -319,7 +319,7 @@ model BugFixEvent {
   filename           String
   line               Int?
   category           String
-  severity           String          // "blocker" only — filtered at the app layer
+  severity           String          // blocker | warning | suggestion
   fixedAt            DateTime        @default(now())
 
   @@unique([prId, fixedAtScanId, filename, line, category, severity])

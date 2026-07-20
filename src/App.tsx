@@ -35,6 +35,7 @@ import ScanQueueView from "./components/views/ScanQueueView";
 import RepoKeyModal from "./components/modals/repoKey/RepoKeyModal";
 import FirstKeyPrompt from "./components/FirstKeyPrompt";
 import DashboardTitleBar from "./components/DashboardTitleBar";
+import DashboardMetricCards from "./components/DashboardMetricCards";
 import { useDashboardData } from "./hooks/useDashboardData";
 import { useEditRepo } from "./hooks/useEditRepo";
 import { fetchJson } from "./lib/http";
@@ -132,18 +133,10 @@ export default function App() {
 
         {/* Header Right Widgets */}
         <div className="flex items-center gap-4 sm:gap-6">
-          <div className="flex items-center gap-2">
+          <DashboardMetricCards metrics={d.dashboardMetrics} />
+          <div className="flex xl:hidden items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_8px_#10b981] animate-pulse" />
-            <span className="text-[10px] sm:text-xs font-mono uppercase text-slate-400 tracking-wider">
-              PR-Daemon: Active
-            </span>
-          </div>
-
-          <div className="h-4 w-px bg-white/10 hidden sm:block" />
-
-          <div className="hidden lg:flex items-center gap-4">
-            <span className="text-[11px] font-mono text-slate-500 uppercase">Registered Projects: <strong className="text-white">{d.repos.length}</strong></span>
-            <span className="text-[11px] font-mono text-slate-500 uppercase">Queued PR requests: <strong className="text-cyan-400">{workspace.pullRequests.length}</strong></span>
+            <span className="text-[10px] sm:text-xs font-mono uppercase text-slate-400 tracking-wider">Daemon: Active</span>
           </div>
         </div>
       </header>
