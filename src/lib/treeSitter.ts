@@ -6,7 +6,7 @@ import path from "node:path";
  * Lazy singleton for the tree-sitter parser + per-language grammar cache.
  *
  * Mirrors the llmClient.ts / prisma.ts pattern: globalThis guard, no
- * module-load instantiation. CLAUDE.md is explicit — instantiating heavy
+ * module-load instantiation. Instantiating heavy
  * clients at module load breaks `next build` on fresh clones. Same hazard
  * applies to tree-sitter (Parser.init pulls a ~200KB WASM runtime; each
  * Language.load pulls a ~1.4MB grammar).
@@ -20,7 +20,7 @@ import path from "node:path";
  *   - .ts and .js → tree-sitter-typescript.wasm (TS grammar parses JS fine)
  *   - .tsx and .jsx → tree-sitter-tsx.wasm
  * Adding a new language is one entry in GRAMMAR_FILES + one npm package.
- * See .agent-os/specs/2026-06-24-1645-tree-sitter-indexer-ts-js/shape.md.
+ * Supported extensions are covered by the tree-sitter parser tests.
  */
 
 const GRAMMAR_FILES: Record<SupportedExt, string> = {

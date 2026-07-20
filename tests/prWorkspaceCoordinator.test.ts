@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { PrWorkspaceCoordinator } from "../src/lib/prWorkspaceCoordinator";
+import { isActivePrWorkspace, PrWorkspaceCoordinator } from "../src/lib/prWorkspaceCoordinator";
 
 describe("PrWorkspaceCoordinator", () => {
   it("rejects a late PR list response after the repository changes", () => {
@@ -32,5 +32,20 @@ describe("PrWorkspaceCoordinator", () => {
     const coordinator = new PrWorkspaceCoordinator();
 
     expect(coordinator.reconcilePrSelection("pr-a", [])).toBe("");
+  });
+
+  it("keeps lifecycle feedback scoped to the active repository and PR", () => {
+    expect(
+      isActivePrWorkspace(
+        { repoId: "repo-a", prId: "pr-a" },
+        { repoId: "repo-a", prId: "pr-a" },
+      ),
+    ).toBe(true);
+    expect(
+      isActivePrWorkspace(
+        { repoId: "repo-b", prId: "pr-b" },
+        { repoId: "repo-a", prId: "pr-a" },
+      ),
+    ).toBe(false);
   });
 });

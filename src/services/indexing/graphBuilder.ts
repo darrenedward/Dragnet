@@ -4,7 +4,8 @@
  *
  * Edges are written with `kind = "CALLS"` (uppercase) per PRD §11.2.
  * This is the normalization fix for the original `kind: "call"` casing
- * bug flagged in `prd.md:339` and `roadmap.md:75` — both writer (here)
+ * Graph construction is kept separate from parser extraction so callers and
+ * tests can reason about edge creation independently.
  * and readers (`getCallers` in reviewService.ts) must agree.
  *
  * The lookup is intentionally fuzzy: a call to `foo.bar()` may resolve

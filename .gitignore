@@ -38,6 +38,35 @@ public/grammars/
 agent-os/
 .claude/commands/
 
+# Maintainer and local-agent working files — keep these out of public clones.
+AGENTS.md
+CLAUDE.md
+tasks.md
+workflow_report.md
+metadata.json
+opencode.json*
+.sandcastle/
+
+# Local deployment and agent orchestration files.
+deploy.sh
+deployment/
+.claude/
+.agent-os/
+docs/agents/
+scripts/_*
+.agents/
+docs/
+
+# Keep only the user-facing CLI and hook scripts in the public tree.
+scripts/*
+!scripts/copy-grammars.mjs
+!scripts/dragnet.mjs
+!scripts/install-hooks.sh
+!scripts/uninstall-hooks.sh
+!scripts/hooks/
+!scripts/hooks/pre-push
+tests/backfillRepoOwners.test.ts
+
 # Local working docs (not part of the shipped app)
 CLAUDE.md
 prd.md
