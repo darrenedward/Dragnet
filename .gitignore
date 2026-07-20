@@ -38,6 +38,23 @@ public/grammars/
 agent-os/
 .claude/commands/
 
+# Maintainer and local-agent working files — keep these out of public clones.
+AGENTS.md
+CLAUDE.md
+tasks.md
+workflow_report.md
+metadata.json
+opencode.json*
+.sandcastle/
+
+# Local deployment and agent orchestration files.
+deploy.sh
+deployment/
+.claude/
+.agent-os/
+docs/agents/
+scripts/_*
+
 # Local working docs (not part of the shipped app)
 CLAUDE.md
 prd.md

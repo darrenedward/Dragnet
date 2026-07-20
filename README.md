@@ -2,7 +2,7 @@
 
 Self-hosted, multi-tenant code review platform. The Greptile-tier review quality (full-codebase indexing + agentic review loop) without pushing source code to a third-party SaaS.
 
-**Status:** MVP in progress. Dragnet is open source and community contributions are welcome. See [`roadmap.md`](./roadmap.md) for current priorities and [`prd.md`](./prd.md) for the full product spec.
+**Status:** MVP in progress. Dragnet is open source and community contributions are welcome. Current priorities and design work are tracked in [GitHub Issues](https://github.com/darrenedward/Dragnet/issues).
 
 Dragnet is being developed with AI assistance and is intentionally transparent about its current limitations. Contributions from experienced developers, security researchers, testers, designers, and documentation writers are welcome.
 
@@ -117,16 +117,12 @@ src/lib/                   Shared helpers (prisma singleton, dbConfig, types)
 src/services/              Domain services (indexing, embedding)
 reviewService.ts           Review engine (currently a stub — replaced in Phase 1)
 tests/                     Vitest specs
-prd.md                     Product spec
-roadmap.md                 Development roadmap with MVP-first phasing
-CLAUDE.md                  Codebase conventions (read this before editing)
+docs/                      Setup, deployment, architecture, and feature docs
 ```
 
 ---
 
 ## Before contributing
-
-Read [`CLAUDE.md`](./CLAUDE.md) — it covers the non-obvious conventions: Prisma singleton pattern, Next 16 Promise-based params, the pg 8.21 SSL workaround, and the 500-line file-size rule.
 
 Please also read [`CONTRIBUTING.md`](./CONTRIBUTING.md) before opening a pull request. Security vulnerabilities should be reported privately using the process in [`SECURITY.md`](./SECURITY.md).
 

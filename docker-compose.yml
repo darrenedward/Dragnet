@@ -11,9 +11,11 @@ services:
     # in this mode (port 3300 is on the host directly).
     network_mode: host
 
-    # Reads DATABASE_URL + DRAGNET_* vars from the host's .env.local.
+    # Project-local settings stay in .env.local. The encryption key is a
+    # user-global secret shared by Dragnet containers, not a project setting.
     env_file:
       - .env.local
+      - ${HOME}/.dragnet/.env
 
     environment:
       - NODE_ENV=production

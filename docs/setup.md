@@ -180,6 +180,6 @@ DRAGNET_REPO_KEY=dr_abc123...
 
 ## Next Steps
 
-- Read the [PRD](./prd.md) for the full product spec
-- Check the [roadmap](./roadmap.md) for current priorities
-- See `README.md` for the project overview
+- See the [project issues](https://github.com/darrenedward/Dragnet/issues) for current priorities and planned work
+- Browse the [documentation directory](.) for deployment and feature-specific guidance
+- See [`README.md`](../README.md) for the project overview
