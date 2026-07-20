@@ -1,3 +1,9 @@
+<p align="center">
+  <img src="./public/dragnet-markdown-header.svg" alt="Dragnet — self-hosted AI code review" width="100%">
+</p>
+
+<p align="center"><a href="./README.md">README</a> · <a href="./SUPPORT.md">Support</a> · <a href="https://github.com/darrenedward/Dragnet/discussions">Discussions</a></p>
+
 # Security Policy
 
 Please do not disclose a suspected vulnerability in a public GitHub issue.

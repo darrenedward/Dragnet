@@ -1,3 +1,9 @@
+<p align="center">
+  <img src="./public/dragnet-markdown-header.svg" alt="Dragnet — self-hosted AI code review" width="100%">
+</p>
+
+<p align="center"><a href="https://github.com/darrenedward/Dragnet/discussions">Discussions</a> · <a href="./CONTRIBUTING.md">Contributing</a> · <a href="./SUPPORT.md">Support</a></p>
+
 # Code of Conduct
 
 Dragnet is a community project. We are committed to making participation welcoming, respectful, and constructive for everyone.
