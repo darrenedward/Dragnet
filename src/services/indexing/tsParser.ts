@@ -11,7 +11,7 @@
  *   .ts, .js → tree-sitter-typescript.wasm  (TS grammar parses JS)
  *   .tsx, .jsx → tree-sitter-tsx.wasm
  *
- * See .agent-os/specs/2026-06-24-1645-tree-sitter-indexer-ts-js/
+ * The supported grammar set is documented by the implementation and tests.
  */
 
 import path from "node:path";

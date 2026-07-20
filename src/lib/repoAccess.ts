@@ -21,7 +21,7 @@
  * stderr, exitCode}` shape either way.
  *
  * This file is the first step of the remote-clone migration tracked in
- * `.agent-os/specs/2026-07-03-0900-hosted-scan-architecture/`. Each
+ * the hosted-scan architecture. Each
  * subsequent PR replaces one more `repo.path` consumer with this
  * helper — the system stays working at every commit because legacy
  * repos keep using `repo.path` and migrated repos use the volume path.

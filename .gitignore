@@ -54,6 +54,18 @@ deployment/
 .agent-os/
 docs/agents/
 scripts/_*
+.agents/
+docs/
+
+# Keep only the user-facing CLI and hook scripts in the public tree.
+scripts/*
+!scripts/copy-grammars.mjs
+!scripts/dragnet.mjs
+!scripts/install-hooks.sh
+!scripts/uninstall-hooks.sh
+!scripts/hooks/
+!scripts/hooks/pre-push
+tests/backfillRepoOwners.test.ts
 
 # Local working docs (not part of the shipped app)
 CLAUDE.md

@@ -20,7 +20,7 @@
  * omitted, the legacy `<repoPath>/.dragnet/` path is used so repos that
  * haven't run the migration script still work.
  *
- * **Migration:** `scripts/migrate-scan-state.mjs` moves existing state
+ * Existing installations can migrate scan state before changing this root.
  * from per-repo `.dragnet/` dirs into the centralised path.
  */
 

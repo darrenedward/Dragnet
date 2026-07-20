@@ -115,16 +115,16 @@ src/app/page.tsx           Dashboard entry — mounts src/App.tsx
 src/components/            Extracted UI (sidebar, views, modals)
 src/lib/                   Shared helpers (prisma singleton, dbConfig, types)
 src/services/              Domain services (indexing, embedding)
-reviewService.ts           Review engine (currently a stub — replaced in Phase 1)
+reviewService.ts           Core agentic review engine
 tests/                     Vitest specs
-docs/                      Setup, deployment, architecture, and feature docs
+scripts/                   CLI, grammar setup, and optional git-hook integration
 ```
 
 ---
 
 ## Before contributing
 
-Please also read [`CONTRIBUTING.md`](./CONTRIBUTING.md) before opening a pull request. Security vulnerabilities should be reported privately using the process in [`SECURITY.md`](./SECURITY.md).
+Please read [`CONTRIBUTING.md`](./CONTRIBUTING.md) before opening a pull request. Security vulnerabilities should be reported privately using the process in [`SECURITY.md`](./SECURITY.md).
 
 **What never gets committed:**
 - `.env.local` and any `.env*` except `.env.example` (placeholders only)

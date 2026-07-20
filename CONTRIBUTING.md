@@ -4,7 +4,7 @@ Thank you for helping improve Dragnet. Contributions are welcome from developers
 
 ## Before you start
 
-1. Read the [setup guide](./docs/setup.md) and the relevant documentation under [`docs/`](./docs/).
+1. Read the setup and development instructions in [`README.md`](./README.md).
 2. Check [existing GitHub issues](https://github.com/darrenedward/Dragnet/issues) before starting work.
 3. For a large feature, open an issue first so the scope can be agreed before implementation.
 
