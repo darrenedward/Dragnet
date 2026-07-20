@@ -1,3 +1,9 @@
+<p align="center">
+  <img src="./public/dragnet-markdown-header.svg" alt="Dragnet — self-hosted AI code review" width="100%">
+</p>
+
+<p align="center"><a href="https://github.com/darrenedward/Dragnet/discussions">Discussions</a> · <a href="https://github.com/darrenedward/Dragnet/issues">Issues</a> · <a href="./SECURITY.md">Security</a></p>
+
 # Support
 
 For usage questions and feature discussions, please open a [GitHub issue](https://github.com/darrenedward/Dragnet/issues) with enough detail to reproduce the problem.
