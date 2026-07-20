@@ -1,36 +1,36 @@
 import fs from "node:fs";
 import path from "node:path";
-import { prisma } from "./src/lib/prisma";
-import { getChatChain, getChatClient } from "./src/lib/llmClient";
-import { getPrimaryChatPreset } from "./src/lib/llmPresets";
+import { prisma } from "@/src/lib/prisma";
+import { getChatChain, getChatClient } from "@/src/lib/llmClient";
+import { getPrimaryChatPreset } from "@/src/lib/llmPresets";
 import { randomUUID } from "node:crypto";
-import { verifyFindings, isDocumentationFile, type CandidateFinding } from "./src/services/findingVerifier";
-import { runSkepticPass, stepSeverityDown } from "./src/services/findingVerifier/skepticPass";
-import { readSkeptic } from "./src/lib/skepticConfig";
-import { recordSkepticOutcomes } from "./src/lib/skepticStats";
-import { summarizeRejects } from "./src/lib/skepticRating";
-import { rerateWithSurvivors } from "./src/services/findingVerifier/skepticRerate";
-import { reasoningOptions, supportsJsonResponseFormat } from "./src/lib/llmResponseFormat";
-import { completeReviewRun, setReviewRunTokens, setReviewRunLastCheckpointAt, setReviewChunkLastCheckpointAt } from "./src/lib/reviewFreshness";
-import { safeReadFileSync, resolveSafePath } from "./src/lib/pathSafety";
-import { runDeterministicChecks, runContainerizedChecks, logReview, type DeterministicFinding } from "./src/services/deterministicChecks";
-import { StepPipeline, StepError, isStepFailure, isStepSuccess, type StepResult } from "./src/services/stepPipeline";
-import { detectBuildSystem } from "./src/lib/buildsystemDetect";
-import { classifyDiff } from "./src/lib/diffClassifier";
-import { buildFindingFingerprint, resolveSymbolsBatch } from "./src/services/largePrReview/fingerprint";
-import { dedupFindingsWithinRun, reconcileFindingsAcrossRuns } from "./src/services/largePrReview/reconcile";
-import { recordFixesForCompletedScan } from "./src/services/findingLifecycle/bugFixTracker";
-import { classifyProviderOutcome, type OutcomeClass, type ProviderAttempt } from "./src/lib/failureClassifier";
-import { computeCost } from "./src/lib/llmPricing";
-import { recordProviderQualityFailure, recordProviderSuccess } from "./src/lib/providerHealth";
-import { completePrReviewIfCurrent } from "./src/lib/prRevisionStatus";
+import { verifyFindings, isDocumentationFile, type CandidateFinding } from "@/src/services/findingVerifier";
+import { runSkepticPass, stepSeverityDown } from "@/src/services/findingVerifier/skepticPass";
+import { readSkeptic } from "@/src/lib/skepticConfig";
+import { recordSkepticOutcomes } from "@/src/lib/skepticStats";
+import { summarizeRejects } from "@/src/lib/skepticRating";
+import { rerateWithSurvivors } from "@/src/services/findingVerifier/skepticRerate";
+import { reasoningOptions, supportsJsonResponseFormat } from "@/src/lib/llmResponseFormat";
+import { completeReviewRun, setReviewRunTokens, setReviewRunLastCheckpointAt, setReviewChunkLastCheckpointAt } from "@/src/lib/reviewFreshness";
+import { safeReadFileSync, resolveSafePath } from "@/src/lib/pathSafety";
+import { runDeterministicChecks, runContainerizedChecks, logReview, type DeterministicFinding } from "@/src/services/deterministicChecks";
+import { StepPipeline, StepError, isStepFailure, isStepSuccess, type StepResult } from "@/src/services/stepPipeline";
+import { detectBuildSystem } from "@/src/lib/buildsystemDetect";
+import { classifyDiff } from "@/src/lib/diffClassifier";
+import { buildFindingFingerprint, resolveSymbolsBatch } from "@/src/services/largePrReview/fingerprint";
+import { dedupFindingsWithinRun, reconcileFindingsAcrossRuns } from "@/src/services/largePrReview/reconcile";
+import { recordFixesForCompletedScan } from "@/src/services/findingLifecycle/bugFixTracker";
+import { classifyProviderOutcome, type OutcomeClass, type ProviderAttempt } from "@/src/lib/failureClassifier";
+import { computeCost } from "@/src/lib/llmPricing";
+import { recordProviderQualityFailure, recordProviderSuccess } from "@/src/lib/providerHealth";
+import { completePrReviewIfCurrent } from "@/src/lib/prRevisionStatus";
 import {
   deleteCheckpoint,
   deleteRunCheckpoints,
   RUN_CHECKPOINT_ID,
   writeCheckpoint,
   type CheckpointState,
-} from "./src/services/checkpointStore";
+} from "@/src/services/checkpointStore";
 
 export interface ScanResult {
   success: boolean;
@@ -91,8 +91,8 @@ export type { ProviderAttempt };
  * time telemetry is extended. Re-exported here for back-compat with
  * any external consumer expecting it from reviewService.
  */
-export { buildTokensUsed, type TokensUsed, type SkepticTokensUsed } from "./src/lib/tokensUsed";
-import { buildTokensUsed, type SkepticTokensUsed } from "./src/lib/tokensUsed";
+export { buildTokensUsed, type TokensUsed, type SkepticTokensUsed } from "@/src/lib/tokensUsed";
+import { buildTokensUsed, type SkepticTokensUsed } from "@/src/lib/tokensUsed";
 
 /**
  * Minimal per-file entry for the PR manifest preamble. Built by the
@@ -1183,7 +1183,7 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
           return { ok: true, data: [] as DeterministicFinding[] };
         }
         try {
-          const { decryptSecret, hasMasterKey } = await import("./src/lib/crypto");
+          const { decryptSecret, hasMasterKey } = await import("@/src/lib/crypto");
           let deployKey: string | undefined;
           let pat: string | undefined;
           if (repo?.deployKeyCipher && repo?.deployKeyIv && repo?.deployKeyTag && hasMasterKey()) {
@@ -1504,7 +1504,7 @@ ${diffPayload}${deterministicPayload}`;
                       resultSummary = `${edges.length} results`;
                     }
                   } else if (fnName === "findSimilar") {
-                    const { IndexingService: idxSvc } = await import("./src/services/indexingService");
+                    const { IndexingService: idxSvc } = await import("@/src/services/indexingService");
                     const scored = await idxSvc.semanticSearch(pr.repoId, fnArgs.query, 5);
                     if (scored && scored.length > 0) {
                       toolResult = JSON.stringify(scored);

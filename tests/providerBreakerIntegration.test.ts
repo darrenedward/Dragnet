@@ -235,7 +235,7 @@ describe("Phase 3.17 — 5 quality failures pause NVIDIA, 6th scan skips it", ()
     // Seed 5 quality failures — opens the circuit.
     seedQualityFailures(tmpRepo, NVIDIA_ENDPOINT, NVIDIA_MODEL, 5);
 
-    const { runPrScan } = await import("../reviewService");
+    const { runPrScan } = await import("../src/services/reviewService");
 
     // runPrScan no longer throws on chain-exhaustion — it resolves
     // with success=false and a systemWarn describing the failure.
@@ -267,7 +267,7 @@ describe("Phase 3.17 — 5 quality failures pause NVIDIA, 6th scan skips it", ()
     // Seed 4 quality failures — still closed.
     seedQualityFailures(tmpRepo, NVIDIA_ENDPOINT, NVIDIA_MODEL, 4);
 
-    const { runPrScan } = await import("../reviewService");
+    const { runPrScan } = await import("../src/services/reviewService");
 
     // Below threshold: the chain includes NVIDIA. The scan resolves
     // with a quality-failure result (NVIDIA's response here doesn't
@@ -309,7 +309,7 @@ describe("Phase 3.18 — transport failures do not open the circuit", () => {
   });
 
   it("5 scans with transport failures leave the breaker closed", async () => {
-    const { runPrScan } = await import("../reviewService");
+    const { runPrScan } = await import("../src/services/reviewService");
 
     for (let i = 0; i < 5; i++) {
       // runPrScan resolves with success=false on transport failures

@@ -44,7 +44,7 @@ vi.mock("@/src/lib/apiAuth", () => ({
   enforcePrRepoScope: mocks.mockEnforcePrRepoScope,
 }));
 
-vi.mock("@/reviewService", () => ({
+vi.mock("@/src/services/reviewService", () => ({
   runPrScan: mocks.mockRunPrScan,
   SYSTEM_INSTRUCTION: "stub-system-instruction",
 }));

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildTokensUsed, type SkepticTokensUsed } from "../reviewService";
+import { buildTokensUsed, type SkepticTokensUsed } from "../src/services/reviewService";
 import type { ProviderAttempt } from "../src/lib/failureClassifier";
 
 /**

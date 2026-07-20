@@ -133,7 +133,7 @@ describe("findingVerifier remote repo fallback", () => {
       usage: null,
     });
 
-    const { runPrScan } = await import("../reviewService");
+    const { runPrScan } = await import("../src/services/reviewService");
     const result = await runPrScan(
       "pr-vf",
       [

@@ -265,7 +265,7 @@ describe("skeptic activity persists to review_logs (issue #32)", () => {
       skipDeterministic: true,
     });
 
-    const { runPrScan } = await import("../reviewService");
+    const { runPrScan } = await import("../src/services/reviewService");
     await runPrScan("pr-skeptic-log", [SAMPLE_FILE], "run-skeptic");
 
     const disabled = messagesContaining("disabled");
@@ -288,7 +288,7 @@ describe("skeptic activity persists to review_logs (issue #32)", () => {
     });
     // Default chain is primary-only (length 1) — no fallback entry.
 
-    const { runPrScan } = await import("../reviewService");
+    const { runPrScan } = await import("../src/services/reviewService");
     await runPrScan("pr-skeptic-log", [SAMPLE_FILE], "run-skeptic");
 
     const noFallback = messagesContaining("no fallback chat provider");
@@ -344,7 +344,7 @@ describe("skeptic activity persists to review_logs (issue #32)", () => {
       },
     });
 
-    const { runPrScan } = await import("../reviewService");
+    const { runPrScan } = await import("../src/services/reviewService");
     await runPrScan("pr-skeptic-log", [SAMPLE_FILE], "run-skeptic");
 
     expect(spy).toHaveBeenCalled();
@@ -444,7 +444,7 @@ describe("skeptic activity persists to review_logs (issue #32)", () => {
       },
     );
 
-    const { runPrScan } = await import("../reviewService");
+    const { runPrScan } = await import("../src/services/reviewService");
     await runPrScan("pr-skeptic-log", [SAMPLE_FILE], "run-skeptic");
 
     // The gate-filter message must land in review_logs through the full chain.

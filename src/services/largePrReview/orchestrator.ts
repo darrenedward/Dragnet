@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { prisma } from "@/src/lib/prisma";
 import { readLimits } from "@/src/lib/prSizeConfig";
-import { runPrScan, type ScanResult, type PrManifestEntry, type RunPrScanOptions } from "@/reviewService";
+import { runPrScan, type ScanResult, type PrManifestEntry, type RunPrScanOptions } from "@/src/services/reviewService";
 import type { DeterministicFinding } from "@/src/services/deterministicChecks";
 import { aggregateResults } from "./aggregator";
 import { chunkDiff } from "./chunker";

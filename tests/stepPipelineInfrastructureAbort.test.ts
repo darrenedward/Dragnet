@@ -95,7 +95,7 @@ describe("StepPipeline infrastructure abort in runPrScan", () => {
   });
 
   it("infrastructure failure in Tier 2 sets PR status to Failed and aborts before LLM", async () => {
-    const { runPrScan } = await import("../reviewService");
+    const { runPrScan } = await import("../src/services/reviewService");
 
     const result = await runPrScan("pr-infra", [
       {
@@ -143,7 +143,7 @@ describe("StepPipeline infrastructure abort in runPrScan", () => {
       }],
     });
 
-    const { runPrScan } = await import("../reviewService");
+    const { runPrScan } = await import("../src/services/reviewService");
 
     const result = await runPrScan("pr-infra", [
       {
