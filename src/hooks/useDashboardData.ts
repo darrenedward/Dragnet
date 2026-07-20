@@ -183,6 +183,15 @@ export function useDashboardData() {
     lastRating: number | null;
     lastScanAt: string | null;
   } | null>(null);
+  const [scanConfigurationIssue, setScanConfigurationIssue] = useState<{
+    message: string;
+    issues: Array<{
+      role: "chat" | "embedding";
+      label: string;
+      provider: string | null;
+      reason: "missing_provider" | "missing_model" | "missing_api_key";
+    }>;
+  } | null>(null);
 
   // ===== Add-repo modal form state =====
   const [showAddRepoModal, setShowAddRepoModal] = useState(false);
@@ -692,6 +701,11 @@ export function useDashboardData() {
         await fetchRepos();
         await fetchLogs();
         console.log(`[scan] handleTriggerPrScan: refetch complete`);
+      } else if (res.status === 400 && result.error === "SCAN_CONFIGURATION_REQUIRED") {
+        setScanConfigurationIssue({
+          message: result.message || "Configure the required LLM providers before starting a review.",
+          issues: Array.isArray(result.issues) ? result.issues : [],
+        });
       } else if (res.status === 409 && result.error === "INDEXING_IN_PROGRESS") {
         setPrs((prev) =>
           prev.map((p) => (p.id === targetPrId ? { ...p, status: "Pending" } : p)),
@@ -1104,7 +1118,7 @@ export function useDashboardData() {
       repoIndexedAt: repos.find((repo) => repo.id === selectedRepoId)?.indexedAt ?? null,
       interruptedScan,
       progress: { isScanning, isRetryingChunks },
-      feedback: { scanResult, copyFeedback, trivialSkipNotice, exportStatus },
+      feedback: { scanResult, copyFeedback, trivialSkipNotice, exportStatus, scanConfigurationIssue },
     },
     commands: {
       selectRepository,
@@ -1114,6 +1128,7 @@ export function useDashboardData() {
       refresh: handleTriggerReviewPass,
       dismissScanResult: () => setScanResult(null),
       dismissTrivialSkipNotice: () => setTrivialSkipNotice(null),
+      dismissScanConfigurationIssue: () => setScanConfigurationIssue(null),
       startScan: handleTriggerPrScan,
       stopScan: handleStopScan,
       continueScan: handleContinueScan,

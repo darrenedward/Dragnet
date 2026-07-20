@@ -29,6 +29,7 @@ import { logReview } from "@/src/services/deterministicChecks/logging";
 import { admitScanJob } from "@/src/services/scanQueue";
 import { completePrReviewIfCurrent } from "@/src/lib/prRevisionStatus";
 import { retryFailedChunks } from "@/src/services/largePrReview";
+import { getScanConfigurationIssues } from "@/src/lib/scanPreflight";
 
 export async function POST(req: Request, { params }: { params: Promise<{ prId: string }> }) {
   const queueWorkerToken = process.env.DRAGNET_MASTER_KEY;
@@ -54,6 +55,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
   const resume = new URL(req.url).searchParams.get("resume") === "true";
   const fresh = new URL(req.url).searchParams.get("fresh") === "true";
   const triggerReason = new URL(req.url).searchParams.get("triggerReason") ?? "manual";
+  const configurationIssues = getScanConfigurationIssues();
+  if (configurationIssues.length > 0) {
+    return NextResponse.json(
+      {
+        error: "SCAN_CONFIGURATION_REQUIRED",
+        message: "Configure the chat and embedding providers before starting a PR review.",
+        issues: configurationIssues,
+      },
+      { status: 400 },
+    );
+  }
   if (isQueueWorker) {
     const queuedCommit = new URL(req.url).searchParams.get("queuedCommit");
     if (queuedCommit) {
