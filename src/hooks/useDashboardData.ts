@@ -15,6 +15,12 @@ import { toast } from "../lib/toast";
 import { usePrWorkspace } from "./usePrWorkspace";
 import { isActivePrWorkspace } from "../lib/prWorkspaceCoordinator";
 
+export interface DashboardMetrics {
+  projects: number;
+  scans: number;
+  bugsFixed: number;
+}
+
 /**
  * Single source of truth for the dashboard's data state, polling, and
  * CRUD actions. App.tsx consumes this and only owns UI state
@@ -55,6 +61,11 @@ export function useDashboardData() {
 
   // ===== Repositories & PRs =====
   const [repos, setRepos] = useState<Repository[]>([]);
+  const [dashboardMetrics, setDashboardMetrics] = useState<DashboardMetrics>({
+    projects: 0,
+    scans: 0,
+    bugsFixed: 0,
+  });
   const {
     coordinator: workspaceCoordinator,
     selectedRepoId,
@@ -249,6 +260,15 @@ export function useDashboardData() {
     }
   };
 
+  const fetchDashboardMetrics = async () => {
+    try {
+      const res = await fetchJson("/api/dashboard/metrics");
+      if (res.ok) setDashboardMetrics(await res.json());
+    } catch (e) {
+      console.error("Failed loading dashboard metrics", e);
+    }
+  };
+
   const fetchPrsForSelectedRepo = async (repoId: string, retainSelection = true) => {
     const request = workspaceCoordinator.current.beginPrList(repoId);
     if (!retainSelection) {
@@ -418,6 +438,7 @@ export function useDashboardData() {
   // ===== Initial load =====
   useEffect(() => {
     fetchRepos();
+    fetchDashboardMetrics();
     fetchLogs();
     fetchDbConfig();
   }, []);
@@ -479,6 +500,7 @@ export function useDashboardData() {
       try {
         await Promise.all([
           fetchRepos(),
+          fetchDashboardMetrics(),
           fetchLogs(),
           repoIdRef.current ? fetchPrsForSelectedRepo(repoIdRef.current, true) : Promise.resolve(),
           // clearBeforeLoad=false: keep the previous findings visible while
@@ -665,6 +687,7 @@ export function useDashboardData() {
         setInterruptedScan(null);
       }
       if (res.ok) {
+        await fetchDashboardMetrics();
         if (result.sizeProfile) {
           setPrs((prev) =>
             prev.map((p) => (p.id === targetPrId ? { ...p, sizeProfile: result.sizeProfile } : p)),
@@ -1152,6 +1175,7 @@ export function useDashboardData() {
     handleSaveDbConfig,
     // repos + prs
     repos,
+    dashboardMetrics,
     logs,
     workspace,
     // add repo modal

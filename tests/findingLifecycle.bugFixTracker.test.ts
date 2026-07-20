@@ -162,4 +162,28 @@ describe("recordFixesForCompletedScan", () => {
     const result = await recordFixesForCompletedScan("run-2");
     expect(result).toEqual({ written: 0, skipped: 1 });
   });
+
+  it("records resolved warnings and suggestions, not only blockers", async () => {
+    reviewRunFindUnique.mockResolvedValue({
+      id: "run-2",
+      prId: "pr-1",
+      status: "completed",
+      outcome: "reviewed",
+    });
+    reviewRunFindFirst.mockResolvedValue({ id: "run-1" });
+    reviewFindingFindMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        { id: "f1", filename: "a.ts", line: 1, category: "style", severity: "warning" },
+        { id: "f2", filename: "b.ts", line: 2, category: "quality", severity: "suggestion" },
+      ]);
+    txBugFixEventCreate.mockResolvedValue({ id: "evt" });
+
+    const { recordFixesForCompletedScan } = await import(
+      "../src/services/findingLifecycle/bugFixTracker"
+    );
+
+    expect(await recordFixesForCompletedScan("run-2")).toEqual({ written: 2, skipped: 0 });
+    expect(txBugFixEventCreate).toHaveBeenCalledTimes(2);
+  });
 });
