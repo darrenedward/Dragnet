@@ -49,6 +49,10 @@ beforeEach(() => {
   vi.clearAllMocks();
   tmpDir = mkdtempSync(join(tmpdir(), "dragnet-realprs-"));
   execFileSync("git", ["init", "-q", tmpDir]);
+  // Git 2.28+ may initialize a repository with a runner-dependent default
+  // branch. These fixtures model the repository contract, whose base branch
+  // is main, so make that branch explicit instead of relying on git config.
+  execFileSync("git", ["-C", tmpDir, "branch", "-M", "main"]);
   execFileSync("git", ["-C", tmpDir, "config", "user.email", "test@dragnet.local"]);
   execFileSync("git", ["-C", tmpDir, "config", "user.name", "Test"]);
   execFileSync("git", ["-C", tmpDir, "commit", "--allow-empty", "-q", "-m", "init"]);
