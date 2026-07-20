@@ -3,9 +3,13 @@ name: CI
 on:
   workflow_dispatch:
   push:
+    branches: [main, 'branding/**']
+  pull_request_target:
     branches: [main]
-  pull_request:
-    branches: [main]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -24,6 +28,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - uses: actions/setup-node@v4
         with:

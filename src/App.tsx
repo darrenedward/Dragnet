@@ -36,6 +36,7 @@ import RepoKeyModal from "./components/modals/repoKey/RepoKeyModal";
 import FirstKeyPrompt from "./components/FirstKeyPrompt";
 import DashboardTitleBar from "./components/DashboardTitleBar";
 import DashboardMetricCards from "./components/DashboardMetricCards";
+import { BrandLogo } from "./components/BrandLogo";
 import { useDashboardData } from "./hooks/useDashboardData";
 import { useEditRepo } from "./hooks/useEditRepo";
 import { fetchJson } from "./lib/http";
@@ -106,7 +107,7 @@ export default function App() {
     <ErrorBoundary>
     <div className="flex flex-col h-screen w-full bg-[#0B0E14] text-slate-300 font-sans select-none overflow-hidden relative">
       {/* 1. Header Bar */}
-      <header className="flex items-center justify-between px-4 sm:px-6 py-4 border-b border-white/10 bg-[#0B0E14] shrink-0">
+      <header className="flex items-center justify-between px-4 py-2 sm:px-6 sm:py-2 border-b border-white/10 bg-[#0B0E14] shrink-0">
         <div className="flex items-center gap-3">
           <button
             onClick={() => setIsSidebarOpen(!isSidebarOpen)}
@@ -117,14 +118,12 @@ export default function App() {
             {isSidebarOpen ? <X size={20} /> : <Menu size={20} />}
           </button>
 
-          <div className="w-8 h-8 bg-cyan-500 rounded flex items-center justify-center text-black font-extrabold tracking-tighter text-xs" id="brand-logo-badge">
-            DN
+          <div className="w-[148px] shrink-0 sm:w-[184px]" id="brand-logo-badge">
+            <BrandLogo priority />
           </div>
 
           <div className="flex items-baseline gap-2">
-            <h1 className="text-base sm:text-lg font-bold text-white tracking-tight" id="main-title-header">
-              Dragnet
-            </h1>
+            <h1 className="sr-only" id="main-title-header">Dragnet</h1>
             <span className="text-[10px] font-mono text-cyan-500 bg-cyan-500/10 px-1.5 py-0.5 rounded border border-cyan-500/20 font-bold uppercase tracking-widest hidden sm:inline">
               automated PR agent
             </span>

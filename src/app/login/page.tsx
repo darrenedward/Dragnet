@@ -4,6 +4,7 @@ import { Suspense, useState, type FormEvent } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowRight, Eye, EyeOff, ShieldCheck } from "lucide-react";
 import { authClient } from "../../lib/auth-client";
+import { BrandLogo } from "../../components/BrandLogo";
 
 function safeCallbackURL(value: string | null): string {
   if (!value || !value.startsWith("/") || value.startsWith("//") || value.startsWith("/\\")) return "/";
@@ -12,9 +13,8 @@ function safeCallbackURL(value: string | null): string {
 
 function BrandMark() {
   return (
-    <div className="relative flex h-12 w-12 items-center justify-center overflow-hidden rounded-xl border border-cyan-300/30 bg-cyan-400 text-[15px] font-black tracking-[-0.18em] text-[#071018] shadow-[0_0_32px_rgba(34,211,238,0.25)]" aria-label="Dragnet logo">
-      <span className="-translate-x-px">DN</span>
-      <span className="absolute bottom-1.5 right-1.5 h-1 w-1 rounded-full bg-[#071018]" />
+    <div className="w-52 max-w-full" aria-label="Dragnet logo">
+      <BrandLogo priority />
     </div>
   );
 }
@@ -56,7 +56,7 @@ function LoginForm() {
             <p className="mt-5 max-w-md text-sm leading-7 text-slate-400">Dragnet keeps code review close to your repositories, your infrastructure, and your choice of AI providers.</p>
           </div>
           <div className="mt-10 overflow-hidden rounded-xl border border-cyan-400/15 bg-[#070d17] shadow-[0_0_50px_rgba(8,145,178,0.08)]">
-            <img src="/dragnet-social-preview.jpg" alt="Dragnet automated pull-request code review" width={1280} height={640} className="block h-auto w-full opacity-90" />
+            <BrandLogo className="opacity-90" />
           </div>
         </section>
 
