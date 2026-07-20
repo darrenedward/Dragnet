@@ -1,41 +1,36 @@
 "use client";
 
-import { Suspense, useState } from "react";
+import { Suspense, useState, type FormEvent } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { ArrowRight, Eye, EyeOff, ShieldCheck } from "lucide-react";
 import { authClient } from "../../lib/auth-client";
 
-/**
- * Validate a user-supplied `callbackURL` and return a safe same-origin path.
- *
- * Defence against open-redirect attacks:
- *   - Reject anything that doesn't start with `/` (catches `http://evil`,
- *     `//evil.com` protocol-relative, `mailto:`, `javascript:`, etc.)
- *   - Reject `//...` which browsers treat as protocol-relative
- *   - Reject backslash variants (`/\evil.com`) which some browsers normalise
- *   - Default to `/` for anything that fails the above checks or is missing
- *
- * Returns a string starting with exactly one `/`.
- */
 function safeCallbackURL(value: string | null): string {
-  if (!value) return "/";
-  if (!value.startsWith("/")) return "/";
-  if (value.startsWith("//")) return "/";
-  if (value.startsWith("/\\")) return "/";
+  if (!value || !value.startsWith("/") || value.startsWith("//") || value.startsWith("/\\")) return "/";
   return value;
+}
+
+function BrandMark() {
+  return (
+    <div className="relative flex h-12 w-12 items-center justify-center overflow-hidden rounded-xl border border-cyan-300/30 bg-cyan-400 text-[15px] font-black tracking-[-0.18em] text-[#071018] shadow-[0_0_32px_rgba(34,211,238,0.25)]" aria-label="Dragnet logo">
+      <span className="-translate-x-px">DN</span>
+      <span className="absolute bottom-1.5 right-1.5 h-1 w-1 rounded-full bg-[#071018]" />
+    </div>
+  );
 }
 
 function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const callbackURL = safeCallbackURL(searchParams.get("callbackURL"));
-
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleLogin = async (event: FormEvent) => {
+    event.preventDefault();
     setLoading(true);
     setError("");
     const { error: err } = await authClient.signIn.email({ email, password });
@@ -48,67 +43,70 @@ function LoginForm() {
   };
 
   return (
-    <div className="min-h-screen bg-[#0A0D14] flex flex-col items-center justify-center p-4">
-      <div className="w-full max-w-sm space-y-6">
-        <div className="text-center space-y-1">
-          <h1 className="text-lg font-bold text-white font-mono uppercase tracking-wider">Dragnet</h1>
-          <p className="text-xs text-slate-500 font-mono">Sign in to continue</p>
-        </div>
+    <main className="relative flex min-h-dvh items-center justify-center overflow-hidden bg-[#070b12] px-4 py-8 text-slate-300 sm:px-6">
+      <div className="pointer-events-none absolute inset-0 opacity-40 [background-image:linear-gradient(rgba(34,211,238,0.04)_1px,transparent_1px),linear-gradient(90deg,rgba(34,211,238,0.04)_1px,transparent_1px)] [background-size:48px_48px]" />
+      <div className="pointer-events-none absolute left-1/2 top-[-20%] h-[520px] w-[520px] -translate-x-1/2 rounded-full bg-cyan-500/10 blur-[120px]" />
 
-        <form onSubmit={handleLogin} className="space-y-4">
-          <div className="space-y-1.5">
-            <label className="text-[10px] uppercase tracking-[0.2em] text-slate-500 font-mono font-bold">Email</label>
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="you@example.com"
-              className="w-full bg-slate-900 border border-white/10 rounded-lg px-3 py-2 text-xs font-mono text-slate-300 placeholder:text-slate-600 focus:outline-none focus:border-cyan-500/40"
-              required
-            />
+      <div className="relative grid w-full max-w-5xl overflow-hidden rounded-2xl border border-white/10 bg-[#0b111b]/90 shadow-2xl shadow-black/40 backdrop-blur lg:grid-cols-[1.08fr_0.92fr]">
+        <section className="hidden border-r border-white/10 bg-[#091321] p-8 lg:flex lg:flex-col lg:justify-between xl:p-12" aria-labelledby="brand-heading">
+          <div>
+            <BrandMark />
+            <p className="mt-8 font-mono text-[10px] font-bold uppercase tracking-[0.28em] text-cyan-400">Automated PR agent</p>
+            <h1 id="brand-heading" className="mt-4 max-w-md text-4xl font-semibold tracking-tight text-white xl:text-5xl">Review every change with confidence.</h1>
+            <p className="mt-5 max-w-md text-sm leading-7 text-slate-400">Dragnet keeps code review close to your repositories, your infrastructure, and your choice of AI providers.</p>
           </div>
-
-          <div className="space-y-1.5">
-            <label className="text-[10px] uppercase tracking-[0.2em] text-slate-500 font-mono font-bold">Password</label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="••••••••"
-              className="w-full bg-slate-900 border border-white/10 rounded-lg px-3 py-2 text-xs font-mono text-slate-300 placeholder:text-slate-600 focus:outline-none focus:border-cyan-500/40"
-              required
-            />
+          <div className="mt-10 overflow-hidden rounded-xl border border-cyan-400/15 bg-[#070d17] shadow-[0_0_50px_rgba(8,145,178,0.08)]">
+            <img src="/dragnet-social-preview.jpg" alt="Dragnet automated pull-request code review" width={1280} height={640} className="block h-auto w-full opacity-90" />
           </div>
+        </section>
 
-          {error && <p className="text-xs text-rose-400 font-mono">{error}</p>}
+        <section className="flex items-center justify-center p-6 sm:p-10 lg:p-12" aria-labelledby="login-heading">
+          <div className="w-full max-w-sm">
+            <div className="mb-8 lg:hidden">
+              <BrandMark />
+            </div>
+            <div className="mb-8">
+              <p className="font-mono text-[10px] font-bold uppercase tracking-[0.25em] text-cyan-400">Welcome back</p>
+              <h2 id="login-heading" className="mt-2 text-2xl font-semibold tracking-tight text-white">Sign in to Dragnet</h2>
+              <p className="mt-2 text-sm leading-6 text-slate-400">Continue to your review workspace.</p>
+            </div>
 
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full bg-cyan-500 hover:bg-cyan-600 disabled:opacity-50 text-black font-semibold text-xs px-4 py-2.5 rounded-lg transition-all font-mono"
-          >
-            {loading ? "Signing in..." : "Sign In"}
-          </button>
-        </form>
+            <form onSubmit={handleLogin} className="space-y-5">
+              <div className="space-y-2">
+                <label htmlFor="email" className="block font-mono text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400">Email</label>
+                <input id="email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@example.com" autoComplete="email" className="h-12 w-full rounded-lg border border-white/10 bg-[#070c14] px-4 text-sm text-white outline-none transition-colors placeholder:text-slate-600 focus:border-cyan-400/70 focus:ring-2 focus:ring-cyan-400/15" required />
+              </div>
 
-        <p className="text-center text-[10px] text-slate-600 font-mono">
-          Don't have an account?{" "}
-          <a href="/register" className="text-cyan-400 hover:text-cyan-300">Register</a>
-        </p>
+              <div className="space-y-2">
+                <label htmlFor="password" className="block font-mono text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400">Password</label>
+                <div className="relative">
+                  <input id="password" type={showPassword ? "text" : "password"} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Enter your password" autoComplete="current-password" className="h-12 w-full rounded-lg border border-white/10 bg-[#070c14] px-4 pr-12 text-sm text-white outline-none transition-colors placeholder:text-slate-600 focus:border-cyan-400/70 focus:ring-2 focus:ring-cyan-400/15" required />
+                  <button type="button" onClick={() => setShowPassword((visible) => !visible)} className="absolute right-1 top-1 flex h-10 w-10 items-center justify-center rounded-md text-slate-500 transition-colors hover:bg-white/5 hover:text-cyan-300 focus:outline-none focus:ring-2 focus:ring-cyan-400/50" aria-label={showPassword ? "Hide password" : "Show password"}>
+                    {showPassword ? <EyeOff size={17} /> : <Eye size={17} />}
+                  </button>
+                </div>
+              </div>
+
+              {error && <p role="alert" aria-live="polite" className="rounded-lg border border-rose-400/20 bg-rose-400/10 px-3 py-2.5 text-sm leading-5 text-rose-300">{error}</p>}
+
+              <button type="submit" disabled={loading} className="flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-cyan-400 px-4 text-sm font-bold text-[#061017] shadow-[0_0_24px_rgba(34,211,238,0.16)] transition-all hover:bg-cyan-300 focus:outline-none focus:ring-2 focus:ring-cyan-300/70 disabled:cursor-not-allowed disabled:opacity-50">
+                {loading ? "Signing in…" : "Sign in"}
+                {!loading && <ArrowRight size={17} />}
+              </button>
+            </form>
+
+            <div className="mt-8 flex items-center justify-center gap-2 text-xs text-slate-500">
+              <ShieldCheck size={14} className="text-emerald-400" />
+              <span>Secure workspace access</span>
+            </div>
+            <p className="mt-6 text-center text-sm text-slate-500">Don&apos;t have an account? <a href="/register" className="font-medium text-cyan-300 underline decoration-cyan-300/30 underline-offset-4 transition-colors hover:text-cyan-200">Create one</a></p>
+          </div>
+        </section>
       </div>
-    </div>
+    </main>
   );
 }
 
-/**
- * `useSearchParams` requires a Suspense boundary in Next.js 16 App Router
- * for static rendering. Wrap the form so the page can be statically
- * rendered without forcing the whole route to dynamic.
- */
 export default function LoginPage() {
-  return (
-    <Suspense fallback={null}>
-      <LoginForm />
-    </Suspense>
-  );
+  return <Suspense fallback={null}><LoginForm /></Suspense>;
 }
