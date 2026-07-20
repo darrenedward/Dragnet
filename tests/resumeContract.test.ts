@@ -46,6 +46,14 @@ vi.mock("../src/lib/llmClient", () => ({
   getPrimaryChatPreset: () => null,
 }));
 
+// Resume-contract tests exercise checkpoint behavior after scan admission.
+// Supply valid database-backed primary providers so the route preflight does
+// not short-circuit those scenarios.
+vi.mock("@/src/lib/llmPresets", () => ({
+  getPrimaryChatPreset: () => ({ id: "chat", name: "Test Chat", endpoint: "https://chat.example.com/v1", apiKey: "chat-key", chatModel: "chat-model", embeddingModel: "" }),
+  getPrimaryEmbeddingPreset: () => ({ id: "embedding", name: "Test Embeddings", endpoint: "https://embedding.example.com/v1", apiKey: "embedding-key", chatModel: "", embeddingModel: "embedding-model" }),
+}));
+
 vi.mock("../src/lib/prisma", () => {
   // In-memory reviewRun rows so tests can mutate state without DB.
   const runs = new Map<string, any>();
