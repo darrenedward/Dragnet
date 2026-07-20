@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { authClient } from "../../lib/auth-client";
+import { BrandLogo } from "../../components/BrandLogo";
 
 export default function RegisterPage() {
   const router = useRouter();
@@ -32,8 +33,10 @@ export default function RegisterPage() {
   return (
     <div className="min-h-screen bg-[#0A0D14] flex flex-col items-center justify-center p-4">
       <div className="w-full max-w-sm space-y-6">
-        <div className="text-center space-y-1">
-          <h1 className="text-lg font-bold text-white font-mono uppercase tracking-wider">Dragnet</h1>
+        <div className="flex flex-col items-center space-y-1">
+          <div className="w-52 max-w-full">
+            <BrandLogo priority />
+          </div>
           <p className="text-xs text-slate-500 font-mono">Create your account</p>
         </div>
 

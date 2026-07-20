@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="./public/dragnet-markdown-header.svg" alt="Dragnet — self-hosted AI code review" width="100%">
+  <img src="./public/dragnet-social-cropped.jpg" alt="Dragnet — self-hosted AI code review" width="100%">
 </p>
 
 <p align="center"><a href="./README.md">README</a> · <a href="./SUPPORT.md">Support</a> · <a href="https://github.com/darrenedward/Dragnet/discussions">Discussions</a></p>
