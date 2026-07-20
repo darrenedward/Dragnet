@@ -69,6 +69,14 @@ vi.mock("@/src/lib/llmClient", () => ({
   getEmbeddingChain: () => [{ client: {}, model: "m", name: "n", endpoint: "e" }],
 }));
 
+// The scan route now performs configuration preflight before exercising the
+// review path. Keep this route-contract fixture explicit about the configured
+// database-backed primary providers so these tests reach their intended seam.
+vi.mock("@/src/lib/llmPresets", () => ({
+  getPrimaryChatPreset: () => ({ id: "chat", name: "Test Chat", endpoint: "https://chat.example.com/v1", apiKey: "chat-key", chatModel: "chat-model", embeddingModel: "" }),
+  getPrimaryEmbeddingPreset: () => ({ id: "embedding", name: "Test Embeddings", endpoint: "https://embedding.example.com/v1", apiKey: "embedding-key", chatModel: "", embeddingModel: "embedding-model" }),
+}));
+
 vi.mock("@/src/lib/reviewLocks", () => ({
   acquireReviewLock: mocks.mockAcquireReviewLock,
   endReview: mocks.mockEndReview,
