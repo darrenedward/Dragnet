@@ -142,6 +142,43 @@ describe("getRealPrs — local-path mode", () => {
 });
 
 describe("getRealPrs — remote-volume mode (uses runGitInRepo)", () => {
+  it("persists the GitHub PR number when discovering remote PRs", async () => {
+    const repo = {
+      id: "remote-github",
+      cloneUrl: "https://github.com/darrenedward/MarketingCo.git",
+      patCipher: "cipher",
+      patIv: "iv",
+      patTag: "tag",
+    };
+    mocks.mockPrFindMany.mockResolvedValue([]);
+    mocks.mockPrFindUnique.mockResolvedValue(null);
+    mocks.mockPrUpsert.mockResolvedValue({});
+    vi.stubGlobal(
+      "fetch",
+      vi.fn()
+        .mockResolvedValueOnce(new Response(JSON.stringify([{
+          number: 40,
+          title: "Add route gates",
+          head: { ref: "ticket-37-route-seo-agent-gates", sha: "sha-40" },
+          base: { ref: "main" },
+          updated_at: "2026-07-24T00:00:00Z",
+        }]), { status: 200 }))
+        .mockResolvedValueOnce(new Response("[]", { status: 200 })),
+    );
+
+    // Bypass encrypted PAT lookup; the test only exercises the GitHub
+    // response-to-database mapping.
+    vi.stubEnv("DRAGNET_MASTER_KEY", "invalid");
+
+    const { getRealPrs } = await getMod();
+    await getRealPrs(repo);
+
+    expect(mocks.mockPrUpsert).toHaveBeenCalledWith(expect.objectContaining({
+      create: expect.objectContaining({ githubPrNumber: 40 }),
+      update: expect.objectContaining({ githubPrNumber: 40 }),
+    }));
+  });
+
   it("dispatches git reads to runGitInRepo when cloneUrl is set", async () => {
     const repo = { id: "remote-r1", cloneUrl: "git@github.com:o/r.git" };
     mocks.mockRepoFindUnique.mockResolvedValue({

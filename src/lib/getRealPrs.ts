@@ -224,6 +224,7 @@ export async function getRealPrs(repo: RepoLike) {
           create: {
             id: prId,
             repoId,
+            githubPrNumber: ghPr.number,
             title: ghPr.title,
             sourceBranch: ghPr.headRef,
             targetBranch: ghPr.baseRef,
@@ -234,6 +235,7 @@ export async function getRealPrs(repo: RepoLike) {
             description: `GitHub PR #${ghPr.number}`,
           },
           update: {
+            githubPrNumber: ghPr.number,
             title: ghPr.title,
             sourceBranch: ghPr.headRef,
             targetBranch: ghPr.baseRef,
