@@ -140,18 +140,20 @@ export class ContainerOrchestrator {
   public async runRunner(options: RunOptions): Promise<RunResult> {
     const engine = detectContainerEngine();
     const timeoutMs = options.timeoutMs ?? 300_000; // default 5 minutes
-    // No hardcoded defaults — a fixed `--cpus 2` breaks on 1-CPU VPS boxes
-    // (Docker rejects values above host CPU count), and `--memory 4g` can be
-    // above host RAM on small instances. Callers or env vars may set explicit
-    // limits; otherwise the helper runs with the host's full capacity.
+    // CPU/memory limits are opt-in, not hardcoded:
+    //   - unset / "0"  → no flag passed (Docker uses host's full capacity — this is "auto-detect")
+    //   - "1", "2"...  → --cpus N (cap at exactly N CPUs)
+    //   - "512m", "2g" → --memory <limit>
+    // Hardcoded defaults like --cpus 2 break on 1-CPU VPS boxes (Docker rejects
+    // values above host CPU count) and --memory 4g can exceed host RAM.
     const memoryLimit = options.memoryLimit ?? process.env.DRAGNET_RUNNER_MEMORY;
     const cpuLimit = options.cpuLimit ?? process.env.DRAGNET_RUNNER_CPUS;
 
     // Build docker/podman run arguments
     const networkMode = options.networkMode ?? "none";
     const args = ["run", "--rm", "--network", networkMode];
-    if (memoryLimit) args.push("--memory", memoryLimit);
-    if (cpuLimit) args.push("--cpus", cpuLimit);
+    if (memoryLimit && memoryLimit !== "0") args.push("--memory", memoryLimit);
+    if (cpuLimit && cpuLimit !== "0") args.push("--cpus", cpuLimit);
     args.push("-v", `${options.volumeName}:/workspace:rw`, "-w", "/workspace");
 
     // Add minimal safe environment variables (e.g. clean PATH)
