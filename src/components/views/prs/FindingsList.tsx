@@ -4,6 +4,7 @@ import { Network } from "lucide-react";
 import type { ReviewFinding } from "../../../lib/types";
 
 const severityOrder = ["blocker", "warning", "suggestion"] as const;
+type UiSeverity = (typeof severityOrder)[number];
 
 const severityConfig = {
   blocker: {
@@ -25,6 +26,14 @@ const severityConfig = {
     dot: "bg-slate-500",
   },
 } as const;
+
+/** Map legacy/tool severities (error/info) so findings aren't dropped from the list. */
+function normalizeSeverity(raw: string | null | undefined): UiSeverity {
+  const s = (raw ?? "").toLowerCase();
+  if (s === "blocker" || s === "error" || s === "critical") return "blocker";
+  if (s === "warning" || s === "warn") return "warning";
+  return "suggestion";
+}
 
 interface Props {
   findings: ReviewFinding[];
@@ -62,7 +71,7 @@ export default function FindingsList({ findings, onCopySuggestion, copyFeedback,
         </div>
       )}
       {severityOrder.map((sev) => {
-        const group = findings.filter((f) => f.severity === sev);
+        const group = findings.filter((f) => normalizeSeverity(f.severity) === sev);
         if (group.length === 0) return null;
         const cfg = severityConfig[sev];
 
@@ -84,7 +93,7 @@ export default function FindingsList({ findings, onCopySuggestion, copyFeedback,
                     <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
                       <div className="flex items-center gap-2">
                         <span className={`px-2 py-0.5 rounded text-[9px] font-extrabold uppercase font-mono border ${cfg.badge}`}>
-                          {finding.severity}
+                          {sev}
                         </span>
                         <span className="text-[10px] font-mono text-cyan-400 bg-cyan-400/5 px-1.5 rounded font-bold uppercase tracking-wider">
                           {finding.category}

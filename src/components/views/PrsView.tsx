@@ -183,6 +183,7 @@ export default function PrsView({
     >
       <div className="flex flex-col min-w-0 flex-1 min-h-0">
         <PrHeader
+          key={activePR?.id ?? "none"}
           activePR={activePR}
           isScanning={isScanning}
           onTriggerScan={onTriggerScan}
@@ -255,6 +256,39 @@ export default function PrsView({
   );
 }
 
+/** Collapsed by default so long GitHub bodies don't push Scan Results off-screen. */
+function PrDescription({
+  text,
+  expanded,
+  onToggle,
+}: {
+  text: string;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  const long = text.length > 280 || text.split("\n").length > 4;
+  return (
+    <div className="mt-1 max-w-3xl">
+      <p
+        className={`text-xs text-slate-400 italic font-mono whitespace-pre-wrap break-words ${
+          expanded || !long ? "" : "line-clamp-3"
+        }`}
+      >
+        {text}
+      </p>
+      {long && (
+        <button
+          type="button"
+          onClick={onToggle}
+          className="mt-1 text-[10px] font-mono font-bold uppercase tracking-wider text-cyan-400/90 hover:text-cyan-300"
+        >
+          {expanded ? "Show less" : "Show full description"}
+        </button>
+      )}
+    </div>
+  );
+}
+
 function PrHeader({
   activePR,
   isScanning,
@@ -313,6 +347,7 @@ function PrHeader({
   //   5. else            → "Run PR Review" (default cyan→indigo)
   const failed = reviewRun?.status === "failed";
   const skipped = reviewRun?.outcome === "skipped";
+  const [descExpanded, setDescExpanded] = useState(false);
 
   if (!activePR) {
     return (
@@ -365,7 +400,11 @@ function PrHeader({
             )}
           </div>
           <h3 className="text-base sm:text-lg font-bold text-white tracking-tight mt-1">{activePR.title}</h3>
-          <p className="text-xs text-slate-400 italic font-mono mt-1">{activePR.description || "No description provided."}</p>
+          <PrDescription
+            text={activePR.description || "No description provided."}
+            expanded={descExpanded}
+            onToggle={() => setDescExpanded((v) => !v)}
+          />
         </div>
 
         <div className="flex gap-2">
