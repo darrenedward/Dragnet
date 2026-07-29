@@ -266,13 +266,16 @@ function PrDescription({
   expanded: boolean;
   onToggle: () => void;
 }) {
-  const long = text.length > 280 || text.split("\n").length > 4;
+  const long = text.length > 220 || text.split("\n").length > 3;
   return (
     <div className="mt-1 max-w-3xl">
       <p
-        className={`text-xs text-slate-400 italic font-mono whitespace-pre-wrap break-words ${
-          expanded || !long ? "" : "line-clamp-3"
-        }`}
+        className={
+          expanded || !long
+            ? "text-xs text-slate-400 italic font-mono whitespace-pre-wrap break-words"
+            : // max-height (not line-clamp+pre-wrap — those fight and leak full text)
+              "text-xs text-slate-400 italic font-mono break-words overflow-hidden max-h-14"
+        }
       >
         {text}
       </p>

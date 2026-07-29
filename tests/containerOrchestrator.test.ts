@@ -267,7 +267,7 @@ describe("ContainerOrchestrator.runRunner", () => {
     expect(args[netIdx + 1]).toBe("none");
   });
 
-  it("applies CPU and memory limits", async () => {
+  it("applies CPU and memory limits when explicitly set", async () => {
     mockSpawnSuccess("");
     const orc = ContainerOrchestrator.getInstance();
     await orc.runRunner({ ...baseOpts, cpuLimit: "1", memoryLimit: "2g" });
@@ -276,5 +276,16 @@ describe("ContainerOrchestrator.runRunner", () => {
     const memIdx = args.indexOf("--memory");
     expect(args[cpuIdx + 1]).toBe("1");
     expect(args[memIdx + 1]).toBe("2g");
+  });
+
+  it("omits --cpus/--memory by default (1-vCPU VPS safe)", async () => {
+    delete process.env.DRAGNET_RUNNER_CPUS;
+    delete process.env.DRAGNET_RUNNER_MEMORY;
+    mockSpawnSuccess("");
+    const orc = ContainerOrchestrator.getInstance();
+    await orc.runRunner(baseOpts);
+    const args: string[] = mockSpawn.mock.calls[0][1] as string[];
+    expect(args).not.toContain("--cpus");
+    expect(args).not.toContain("--memory");
   });
 });

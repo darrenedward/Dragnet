@@ -140,25 +140,25 @@ export class ContainerOrchestrator {
   public async runRunner(options: RunOptions): Promise<RunResult> {
     const engine = detectContainerEngine();
     const timeoutMs = options.timeoutMs ?? 300_000; // default 5 minutes
-    const memoryLimit = options.memoryLimit ?? "4g";
-    const cpuLimit = options.cpuLimit ?? "2";
+    // CPU/memory limits are opt-in, not hardcoded:
+    //   - unset / "0"  → no flag (use host capacity — required on 1-vCPU VPS)
+    //   - "1", "2"...  → --cpus N
+    //   - "512m", "2g" → --memory <limit>
+    // Hardcoded --cpus 2 breaks Dokploy 1-CPU hosts (Docker exit 125).
+    const memoryLimit = options.memoryLimit ?? process.env.DRAGNET_RUNNER_MEMORY;
+    const cpuLimit = options.cpuLimit ?? process.env.DRAGNET_RUNNER_CPUS;
 
     // Build docker/podman run arguments
     const networkMode = options.networkMode ?? "none";
-    const args = [
-      "run",
-      "--rm",
-      "--network",
-      networkMode,
-      "--memory",
-      memoryLimit,
-      "--cpus",
-      cpuLimit,
+    const args = ["run", "--rm", "--network", networkMode];
+    if (memoryLimit && memoryLimit !== "0") args.push("--memory", memoryLimit);
+    if (cpuLimit && cpuLimit !== "0") args.push("--cpus", cpuLimit);
+    args.push(
       "-v",
       `${options.volumeName}:/workspace:rw`,
       "-w",
       "/workspace",
-    ];
+    );
 
     // Add minimal safe environment variables (e.g. clean PATH)
     args.push("-e", "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin");
