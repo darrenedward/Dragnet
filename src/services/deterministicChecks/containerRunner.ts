@@ -90,13 +90,14 @@ export async function runContainerizedChecks(
       opts.reviewRunId,
       opts.reviewChunkId,
     );
+    // Do not pass cpuLimit/memoryLimit — orchestrator applies DRAGNET_RUNNER_*
+    // env (or no cap). Hardcoding --cpus 2 breaks 1-vCPU Dokploy hosts (exit 125).
     const result = await orchestrator.runRunner({
       volumeName: vn,
       image: opts.runnerImage,
       commands: [cmd],
       timeoutMs: 300_000,
-      memoryLimit: "4g",
-      cpuLimit: "2",
+      networkMode: "bridge",
     });
     logs.push(`[install] exit=${result.exitCode} stdout=${result.stdout.slice(0, 2000)} stderr=${result.stderr.slice(0, 2000)}`);
     if (result.exitCode !== 0 && !result.timedOut) {
@@ -126,8 +127,7 @@ export async function runContainerizedChecks(
       image: opts.runnerImage,
       commands: [cmd],
       timeoutMs: 300_000,
-      memoryLimit: "4g",
-      cpuLimit: "2",
+      networkMode: "none",
     });
     logs.push(`[test] exit=${result.exitCode} stdout=${result.stdout.slice(0, 2000)} stderr=${result.stderr.slice(0, 2000)}`);
 
