@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Folder, GitBranch, X } from "lucide-react";
 import { REPOS } from "./mockData";
+import { ratingPill, statusPill } from "./atoms";
 import { VariantC } from "./variants";
 
 /**
@@ -139,8 +140,8 @@ export function PrototypeDashboard({ variant: _variant }: { variant: "A" | "B" |
                             >
                               {p.title}
                             </div>
-                            <div className="flex items-center justify-between gap-1 mt-0.5 text-[9px]">
-                              <span className="text-slate-500 truncate">
+                            <div className="flex items-center gap-1.5 mt-1 text-[9px] min-w-0">
+                              <span className="text-slate-500 truncate flex-1 min-w-0">
                                 <span className="text-cyan-400/90">PR #{p.githubPrNumber}</span>
                                 {p.ticketNumber != null && (
                                   <>
@@ -149,32 +150,11 @@ export function PrototypeDashboard({ variant: _variant }: { variant: "A" | "B" |
                                   </>
                                 )}
                               </span>
-                              <span className="flex items-center gap-1.5 shrink-0">
-                                {p.rating != null && (
-                                  <span
-                                    title={
-                                      p.rating >= 8
-                                        ? `${p.rating}/10 — merge bar met`
-                                        : `${p.rating}/10 — below merge bar (need 8+)`
-                                    }
-                                    className={
-                                      p.rating >= 8
-                                        ? "text-emerald-400 font-bold cursor-help"
-                                        : p.rating >= 5
-                                          ? "text-amber-300 font-bold cursor-help"
-                                          : "text-rose-400 font-bold cursor-help"
-                                    }
-                                  >
-                                    {p.rating}/10
-                                  </span>
-                                )}
-                                <span
-                                  title={statusTip}
-                                  className="text-slate-500 uppercase text-[8px] font-extrabold tracking-wide cursor-help"
-                                >
-                                  {p.status}
-                                  {qPos != null && p.status !== "completed" ? ` #${qPos}` : ""}
-                                </span>
+                              <span className="flex items-center gap-1 shrink-0">
+                                {/* show score chip when completed (incl. no score) or when rated */}
+                                {(p.status === "completed" || p.rating != null) &&
+                                  ratingPill(p.rating, true)}
+                                {statusPill(p.status, qPos, true)}
                               </span>
                             </div>
                           </div>

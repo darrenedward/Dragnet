@@ -3,11 +3,16 @@
 import { AlertTriangle, Zap } from "lucide-react";
 import type { ProtoPr, ProtoPrStatus, ProtoRepo, ProtoSize } from "./mockData";
 
-export function pill(className: string, children: React.ReactNode, title?: string) {
+export function pill(
+  className: string,
+  children: React.ReactNode,
+  title?: string,
+  compact?: boolean,
+) {
   return (
     <span
       title={title}
-      className={`px-2 py-0.5 rounded-full uppercase font-mono text-[9px] font-bold border inline-flex items-center gap-1 cursor-help ${className}`}
+      className={`${compact ? "px-1.5 py-0 text-[8px]" : "px-2 py-0.5 text-[9px]"} rounded-full uppercase font-mono font-bold border inline-flex items-center gap-1 cursor-help ${className}`}
     >
       {children}
     </span>
@@ -47,12 +52,13 @@ export function sizePill(size: ProtoSize) {
  * rating colors:
  * 1–4 red · 5–7 amber · 8–10 green · null = no score (amber)
  */
-export function ratingPill(rating: number | null) {
+export function ratingPill(rating: number | null, compact?: boolean) {
   if (rating == null) {
     return pill(
       "bg-amber-500/10 text-amber-300 border-amber-500/25",
       "no score",
       "No trusted score — scan finished without a usable rating (e.g. findings rejected after the model scored 10). Not merge-ready.",
+      compact,
     );
   }
   if (rating >= 8) {
@@ -60,6 +66,7 @@ export function ratingPill(rating: number | null) {
       "bg-emerald-500/10 text-emerald-400 border-emerald-500/30",
       `${rating}/10`,
       `${rating}/10 — at or above the merge bar (need 8+). Merge-ready if other gates pass.`,
+      compact,
     );
   }
   if (rating >= 5) {
@@ -67,22 +74,59 @@ export function ratingPill(rating: number | null) {
       "bg-amber-500/10 text-amber-300 border-amber-500/30",
       `${rating}/10`,
       `${rating}/10 — below the merge bar (need 8+). Fix findings and re-scan.`,
+      compact,
     );
   }
   return pill(
     "bg-rose-500/10 text-rose-400 border-rose-500/30",
     `${rating}/10`,
     `${rating}/10 — well below the merge bar. Expect serious issues; fix and re-scan.`,
+    compact,
   );
 }
 
-export function statusPill(status: ProtoPrStatus, queuePos?: number | null) {
+/** pending amber · queued/processing blue · completed green */
+export function statusPill(
+  status: ProtoPrStatus,
+  queuePos?: number | null,
+  compact?: boolean,
+) {
   const base = STATUS_TIP[status];
   const tip =
-    status === "queued" && queuePos != null
+    (status === "queued" || status === "pending") && queuePos != null
       ? `${base} Currently #${queuePos} in the queue.`
       : base;
-  return pill("bg-slate-500/10 text-slate-300 border-slate-500/25", status, tip);
+  const label =
+    status === "queued"
+      ? queuePos != null
+        ? `processing #${queuePos}`
+        : "processing"
+      : status === "pending" && queuePos != null
+        ? `pending #${queuePos}`
+        : status;
+
+  if (status === "pending") {
+    return pill(
+      "bg-amber-500/10 text-amber-300 border-amber-500/30",
+      label,
+      tip,
+      compact,
+    );
+  }
+  if (status === "queued") {
+    return pill(
+      "bg-sky-500/10 text-sky-300 border-sky-500/35",
+      label,
+      tip,
+      compact,
+    );
+  }
+  return pill(
+    "bg-emerald-500/10 text-emerald-400 border-emerald-500/30",
+    label,
+    tip,
+    compact,
+  );
 }
 
 export function rgPill(ok: boolean, okLabel: string, failLabel: string, titleOk: string, titleFail: string) {
