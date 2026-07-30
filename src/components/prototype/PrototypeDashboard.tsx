@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Folder, GitBranch } from "lucide-react";
+import { Folder, GitBranch, Settings } from "lucide-react";
 import { REPOS } from "./mockData";
 import { ratingPill, statusPill } from "./atoms";
 import { VariantC } from "./variants";
@@ -45,44 +45,61 @@ export function PrototypeDashboard({ variant: _variant }: { variant: "A" | "B" |
             const open = r.id === repoId;
             return (
               <div key={r.id}>
-                <button
-                  type="button"
-                  onClick={() => selectRepo(r.id)}
-                  title={`${r.name} — ${r.githubUrl.replace("https://github.com/", "")}`}
-                  className={`w-full text-left px-2.5 py-2 rounded-lg border transition-all ${
+                <div
+                  className={`flex items-center gap-0.5 rounded-lg border px-1.5 py-1.5 transition-all ${
                     open
                       ? "bg-cyan-500/10 border-cyan-500/30"
                       : "border-transparent hover:bg-white/5"
                   }`}
                 >
-                  <div className="flex items-center gap-2 min-w-0 h-7">
-                    <Folder
-                      size={14}
-                      className={`shrink-0 ${open ? "text-cyan-400" : "text-slate-500"}`}
-                    />
-                    <span
-                      className={`text-xs font-bold font-mono truncate flex-1 ${
-                        open ? "text-cyan-200" : "text-slate-300"
-                      }`}
-                    >
-                      {r.name}
-                    </span>
-                    <span
-                      title={
-                        r.needsReviewCount > 0
-                          ? `${r.needsReviewCount} PR(s) still need review`
-                          : `${r.prs.length} PR(s) in this repo`
-                      }
-                      className={`shrink-0 text-[9px] font-mono font-extrabold min-w-[1.25rem] text-center px-1.5 py-0.5 rounded-full border ${
-                        r.needsReviewCount > 0
-                          ? "bg-amber-500/15 text-amber-300 border-amber-500/35"
-                          : "bg-slate-800 text-slate-500 border-transparent"
-                      }`}
-                    >
-                      {r.needsReviewCount > 0 ? r.needsReviewCount : r.prs.length}
-                    </span>
-                  </div>
-                </button>
+                  <button
+                    type="button"
+                    onClick={() => selectRepo(r.id)}
+                    title={`${r.name} — ${r.githubUrl.replace("https://github.com/", "")}`}
+                    className="flex-1 min-w-0 text-left px-1"
+                  >
+                    <div className="flex items-center gap-2 min-w-0 h-7">
+                      <Folder
+                        size={14}
+                        className={`shrink-0 ${open ? "text-cyan-400" : "text-slate-500"}`}
+                      />
+                      <span
+                        className={`text-xs font-bold font-mono truncate flex-1 ${
+                          open ? "text-cyan-200" : "text-slate-300"
+                        }`}
+                      >
+                        {r.name}
+                      </span>
+                      <span
+                        title={
+                          r.needsReviewCount > 0
+                            ? `${r.needsReviewCount} PR(s) still need review`
+                            : `${r.prs.length} PR(s) in this repo`
+                        }
+                        className={`shrink-0 text-[9px] font-mono font-extrabold min-w-[1.25rem] text-center px-1.5 py-0.5 rounded-full border ${
+                          r.needsReviewCount > 0
+                            ? "bg-amber-500/15 text-amber-300 border-amber-500/35"
+                            : "bg-slate-800 text-slate-500 border-transparent"
+                        }`}
+                      >
+                        {r.needsReviewCount > 0 ? r.needsReviewCount : r.prs.length}
+                      </span>
+                    </div>
+                  </button>
+                  {/* Keep repo settings — production onRepoSettings (gear) stays */}
+                  <button
+                    type="button"
+                    title="Repo settings & index stats"
+                    aria-label={`Repo settings for ${r.name}`}
+                    className="shrink-0 p-1.5 rounded-md text-slate-500 hover:text-cyan-300 hover:bg-white/5"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      selectRepo(r.id);
+                    }}
+                  >
+                    <Settings size={12} />
+                  </button>
+                </div>
 
                 {open && (
                   <div className="ml-3 pl-2 border-l border-white/10 space-y-0.5 py-1 mb-1">
