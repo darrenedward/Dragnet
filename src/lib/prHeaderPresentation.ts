@@ -324,19 +324,27 @@ export function buildLayoutCChips(input: LayoutCChipInput): LayoutCChip[] {
         tone: "green",
         title: "Clone OK — local checkout is ready for scans.",
       });
-    } else if (clone.tone === "pending") {
+    } else if (clone.tone === "pending" && clone.detail === "cloning") {
       chips.push({
         id: "cloned",
         label: "cloning",
         tone: "amber",
         title: clone.title || "Clone in progress.",
       });
-    } else {
+    } else if (clone.tone === "fail") {
       chips.push({
         id: "cloned",
         label: "clone failed",
         tone: "red",
         title: clone.title || "Clone failed — fix checkout before scans can run.",
+      });
+    } else {
+      // warn (missing checkout) or unknown pending — not a failed clone.
+      chips.push({
+        id: "cloned",
+        label: "not cloned",
+        tone: "red",
+        title: clone.title || "No server checkout yet — clone before scans can run.",
       });
     }
   }
@@ -450,14 +458,14 @@ export function buildSidebarPrRow(input: {
   queueState?: string | null;
   queuePosition?: number | null;
 }): SidebarPrRowModel {
-  const ticket =
-    input.ticketNumber != null
-      ? Number(input.ticketNumber)
-      : parseTicketFromBranch(input.sourceBranch);
-  const prNum =
-    input.githubPrNumber != null && Number.isFinite(input.githubPrNumber)
-      ? Number(input.githubPrNumber)
-      : null;
+  const ticketRaw =
+    input.ticketNumber != null ? Number(input.ticketNumber) : NaN;
+  const ticket = Number.isFinite(ticketRaw) && ticketRaw > 0
+    ? ticketRaw
+    : parseTicketFromBranch(input.sourceBranch);
+  const prRaw =
+    input.githubPrNumber != null ? Number(input.githubPrNumber) : NaN;
+  const prNum = Number.isFinite(prRaw) && prRaw > 0 ? prRaw : null;
 
   const status = mapPrStatusPill({
     status: input.status,

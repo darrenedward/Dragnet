@@ -219,11 +219,20 @@ export async function getRealPrs(repo: RepoLike) {
           where: { id: prId },
           select: { status: true, commitHash: true },
         });
+        // Surface githubPrNumber for layout-C identity. If another row
+        // already owns this number (poller poll-pr-*), skip the field on
+        // write so @@unique([repoId, githubPrNumber]) is not violated.
+        const numberOwner = await prisma.pullRequest.findFirst({
+          where: { repoId, githubPrNumber: ghPr.number, NOT: { id: prId } },
+          select: { id: true },
+        });
+        const githubPrNumber = numberOwner ? undefined : ghPr.number;
         await prisma.pullRequest.upsert({
           where: { id: prId },
           create: {
             id: prId,
             repoId,
+            ...(githubPrNumber != null ? { githubPrNumber } : {}),
             title: ghPr.title,
             sourceBranch: ghPr.headRef,
             targetBranch: ghPr.baseRef,
@@ -234,6 +243,7 @@ export async function getRealPrs(repo: RepoLike) {
             description: `GitHub PR #${ghPr.number}`,
           },
           update: {
+            ...(githubPrNumber != null ? { githubPrNumber } : {}),
             title: ghPr.title,
             sourceBranch: ghPr.headRef,
             targetBranch: ghPr.baseRef,

@@ -226,7 +226,9 @@ export default function PrHeader({
 
             {canForceRescan({
               hasSelectedPr: !!activePR,
-              repoReviewable: !!repoIndexedAt && !cloneFailed,
+              // Visibility follows index gate only; clone failure disables
+              // the control in-place so the tooltip still explains why.
+              repoReviewable: !!repoIndexedAt,
             }) && (
               <button
                 type="button"

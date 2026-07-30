@@ -3,6 +3,7 @@ import {
   buildLayoutCChips,
   buildSidebarPrRow,
   formatPrIdentity,
+  isCloneFailedForActions,
   mapPrStatusPill,
   mapRatingPill,
   mapSizeBand,
@@ -270,6 +271,32 @@ describe("buildLayoutCChips", () => {
     });
   });
 
+  it("labels missing checkout as not cloned (not clone failed)", () => {
+    const chips = buildLayoutCChips({
+      ...base,
+      hasCheckout: false,
+      lastFetchError: null,
+      repoStatus: "ready",
+      cloneUrl: "https://github.com/acme/app.git",
+    });
+    expect(chips.find((c) => c.id === "cloned")).toMatchObject({
+      label: "not cloned",
+      tone: "red",
+    });
+  });
+
+  it("labels in-progress clone as cloning amber", () => {
+    const chips = buildLayoutCChips({
+      ...base,
+      repoStatus: "cloning",
+      lastFetchError: null,
+    });
+    expect(chips.find((c) => c.id === "cloned")).toMatchObject({
+      label: "cloning",
+      tone: "amber",
+    });
+  });
+
   it("surfaces blocked at {gate} as a single chip when blocked", () => {
     const chips = buildLayoutCChips({
       ...base,
@@ -293,14 +320,32 @@ describe("buildLayoutCChips", () => {
     const merge = chips.find((c) => c.id === "merge")!;
     expect(merge.title.toLowerCase()).toMatch(/fail|check|not merge-ready/);
   });
+});
 
-  it("reports cloneFailed for action disable wiring", () => {
-    const r = buildLayoutCChips({
-      ...base,
-      lastFetchError: "boom",
-    });
-    // helper returns chips; cloneFailed via separate export tested below
-    expect(r.find((c) => c.id === "cloned")?.tone).toBe("red");
+describe("isCloneFailedForActions", () => {
+  it("is true only for failed clone seam (not missing/warn)", () => {
+    expect(
+      isCloneFailedForActions({
+        hasCheckout: true,
+        lastFetchError: "auth failed",
+        repoStatus: "error",
+      }),
+    ).toBe(true);
+    expect(
+      isCloneFailedForActions({
+        hasCheckout: false,
+        lastFetchError: null,
+        repoStatus: "ready",
+        cloneUrl: "https://github.com/acme/app.git",
+      }),
+    ).toBe(false);
+    expect(
+      isCloneFailedForActions({
+        hasCheckout: true,
+        lastFetchError: null,
+        repoStatus: "ready",
+      }),
+    ).toBe(false);
   });
 });
 
