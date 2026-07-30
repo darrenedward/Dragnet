@@ -473,7 +473,12 @@ async function listBranches(repo: RepoLike): Promise<BranchInfo[]> {
 // scans, byte-identical ReviewRun.diffHash — that's what triggered #13.
 const inFlightRefreshes = new Map<string, Promise<Awaited<ReturnType<typeof collectBranchFiles>>>>();
 
-export async function refreshPrFiles(repo: RepoLike, branchName: string, prId: string) {
+export async function refreshPrFiles(
+  repo: RepoLike,
+  branchName: string,
+  prId: string,
+  opts?: { failOnSyncError?: boolean },
+) {
   // Chain: if a refresh is already running for this prId, return the same
   // promise. Callers see the result of the in-flight work — no stale rows.
   const existing = inFlightRefreshes.get(prId);
@@ -482,6 +487,8 @@ export async function refreshPrFiles(repo: RepoLike, branchName: string, prId: s
     return existing;
   }
 
+  const failOnSyncError = opts?.failOnSyncError === true;
+
   const refreshPromise = (async () => {
     const repoRow = await prisma.repository.findUnique({
       where: { id: repo.id },
@@ -489,14 +496,16 @@ export async function refreshPrFiles(repo: RepoLike, branchName: string, prId: s
     });
     const baseBranch = repoRow?.baseBranch || "main";
 
-    // Ensure clone has both branches before running the diff. Best-effort:
-    // surface a clear log if sync fails but still attempt the diff so the
-    // scanner can produce SOMETHING rather than hard-failing.
+    // Ensure clone has both branches before running the diff. When
+    // failOnSyncError is set (scan prelude path), sync failure aborts so
+    // empty diffs are never treated as "no code changes." Other callers
+    // keep best-effort behavior.
     if (!repo.path && repo.cloneUrl) {
       try {
         await syncCloneForPr(repo, branchName, baseBranch);
       } catch (err: any) {
         console.warn(`[refreshPrFiles] clone sync failed for ${repo.id}:`, err.message);
+        if (failOnSyncError) throw err;
       }
     }
 

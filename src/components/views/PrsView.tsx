@@ -132,6 +132,8 @@ interface Props {
   interruptedScan?: InterruptedScan | null;
   onContinueScan?: (prId: string) => void;
   onStartFreshScan?: (prId: string) => void;
+  mergeReady?: boolean | null;
+  mergeReadyMessage?: string | null;
 }
 
 export default function PrsView({
@@ -169,6 +171,8 @@ export default function PrsView({
   interruptedScan,
   onContinueScan,
   onStartFreshScan,
+  mergeReady,
+  mergeReadyMessage,
 }: Props) {
   const scanSettings = useScanSettingsSummary();
 
@@ -202,6 +206,8 @@ export default function PrsView({
           onContinueScan={onContinueScan}
           onStartFreshScan={onStartFreshScan}
           queueJob={queueJob}
+          mergeReady={mergeReady}
+          mergeReadyMessage={mergeReadyMessage}
         />
 
         <div className="space-y-4 min-w-0 mt-4 flex-1 overflow-y-auto overflow-x-hidden min-h-0 pr-1">
@@ -311,6 +317,8 @@ function PrHeader({
   onContinueScan,
   onStartFreshScan,
   queueJob,
+  mergeReady,
+  mergeReadyMessage,
 }: {
   activePR: PullRequest | undefined;
   isScanning: boolean;
@@ -336,6 +344,8 @@ function PrHeader({
   onContinueScan?: (prId: string) => void;
   onStartFreshScan?: (prId: string) => void;
   queueJob?: { jobId: string; state: string; queuePosition: number | null } | null;
+  mergeReady?: boolean | null;
+  mergeReadyMessage?: string | null;
 }) {
   const scanning = isScanning || activePR?.status === "In Progress";
   const queued = queueJob?.state === "queued";
@@ -390,6 +400,24 @@ function PrHeader({
               )}
               <span>{activePR.status}</span>
             </span>
+            {activePR.status === "Completed" && (
+              <span className="px-2 py-0.5 rounded uppercase font-mono text-[9px] font-bold border bg-slate-500/10 text-slate-300 border-slate-500/25">
+                Scan finished
+              </span>
+            )}
+            {mergeReady === true && (
+              <span className="px-2 py-0.5 rounded uppercase font-mono text-[9px] font-bold border bg-emerald-500/10 text-emerald-400 border-emerald-500/25">
+                Merge ready
+              </span>
+            )}
+            {mergeReady === false && mergeReadyMessage && !scanning && !queued && (
+              <span
+                title={mergeReadyMessage}
+                className="px-2 py-0.5 rounded uppercase font-mono text-[9px] font-bold border bg-rose-500/10 text-rose-400 border-rose-500/20 max-w-[220px] truncate"
+              >
+                Not ready
+              </span>
+            )}
             {activePR.rating !== undefined && activePR.rating !== null && (
               <span
                 className={`px-2 py-0.5 rounded uppercase font-mono text-[9px] font-bold border ${
@@ -398,7 +426,7 @@ function PrHeader({
                     : "bg-rose-500/10 text-rose-400 border-rose-500/20"
                 }`}
               >
-                PROD GRADE: {activePR.rating}/10 ({activePR.rating >= 8 ? "APPROVED" : "REJECTED"})
+                GRADE: {activePR.rating}/10
               </span>
             )}
           </div>
@@ -449,24 +477,25 @@ function PrHeader({
             </span>
           </button>
           {scanning && (
-            <>
-              <button
-                onClick={() => onStopScan?.()}
-                title="Stop the currently running scan without starting a replacement."
-                className="min-h-11 px-3 py-2 bg-amber-500/15 border border-amber-500/30 text-amber-300 hover:bg-amber-500/25 text-xs font-mono font-bold rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer"
-              >
-                <X size={13} />
-                <span>Stop</span>
-              </button>
-              <button
-                onClick={() => onTriggerScan({ force: true })}
-                title="Reap the current run (orphaned or stuck) and start a fresh scan. Use when a scan appears hung after a dev-server restart."
-                className="min-h-11 px-3 py-2 bg-rose-500/15 border border-rose-500/30 text-rose-300 hover:bg-rose-500/25 text-xs font-mono font-bold rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer"
-              >
-                <AlertTriangle size={13} />
-                <span>Force Restart</span>
-              </button>
-            </>
+            <button
+              onClick={() => onStopScan?.()}
+              title="Stop the currently running scan without starting a replacement."
+              className="min-h-11 px-3 py-2 bg-amber-500/15 border border-amber-500/30 text-amber-300 hover:bg-amber-500/25 text-xs font-mono font-bold rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer"
+            >
+              <X size={13} />
+              <span>Stop</span>
+            </button>
+          )}
+          {!!activePR && !!repoIndexedAt && (
+            <button
+              onClick={() => onTriggerScan({ force: true })}
+              disabled={queued}
+              title="Force re-scan: clear locks, bypass cache, and admit a fresh queue job. Always available for stuck or null-rating runs."
+              className="min-h-11 px-3 py-2 bg-rose-500/15 border border-rose-500/30 text-rose-300 hover:bg-rose-500/25 text-xs font-mono font-bold rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <AlertTriangle size={13} />
+              <span>{scanning ? "Force Restart" : "Force re-scan"}</span>
+            </button>
           )}
           {hasFindings && (
             <>

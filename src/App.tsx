@@ -291,6 +291,8 @@ export default function App() {
                   interruptedScan={workspace.interruptedScan}
                   onContinueScan={workspaceCommands.continueScan}
                   onStartFreshScan={workspaceCommands.startFreshScan}
+                  mergeReady={workspace.mergeReady}
+                  mergeReadyMessage={workspace.mergeReadyMessage}
                 />
               )}
             </AnimatePresence>

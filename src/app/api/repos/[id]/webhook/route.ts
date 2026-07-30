@@ -22,11 +22,12 @@ export async function POST(
     const body = await req.json().catch(() => ({}));
 
     if (body.webhookId) {
+      // Manual id register counts as successful setup — turn processing on.
       await prisma.repository.update({
         where: { id },
-        data: { webhookId: String(body.webhookId) },
+        data: { webhookId: String(body.webhookId), webhookEnabled: true },
       });
-      return NextResponse.json({ success: true, webhookId: String(body.webhookId) });
+      return NextResponse.json({ success: true, webhookId: String(body.webhookId), webhookEnabled: true });
     }
 
     if (!repo.patCipher) {

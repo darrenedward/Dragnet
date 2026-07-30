@@ -72,7 +72,7 @@ export async function setupWebhookWithPat(
 
     await prisma.repository.update({
       where: { id: repoId },
-      data: { webhookId, webhookSecret: secret },
+      data: { webhookId, webhookSecret: secret, webhookEnabled: true },
     });
 
     return { webhookId };
@@ -109,7 +109,7 @@ export async function setupWebhookWithPat(
 
   await prisma.repository.update({
     where: { id: repoId },
-    data: { webhookId, webhookSecret: secret },
+    data: { webhookId, webhookSecret: secret, webhookEnabled: true },
   });
 
   return { webhookId };
@@ -121,7 +121,7 @@ export async function deleteWebhook(repoId: string): Promise<void> {
   if (!repo.patCipher || !repo.patIv || !repo.patTag) {
     await prisma.repository.update({
       where: { id: repoId },
-      data: { webhookId: null },
+      data: { webhookId: null, webhookEnabled: false },
     });
     return;
   }
@@ -158,7 +158,7 @@ export async function deleteWebhook(repoId: string): Promise<void> {
 
   await prisma.repository.update({
     where: { id: repoId },
-    data: { webhookId: null },
+    data: { webhookId: null, webhookEnabled: false },
   });
 }
 

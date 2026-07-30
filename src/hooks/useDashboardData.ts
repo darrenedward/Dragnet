@@ -132,6 +132,8 @@ export function useDashboardData() {
     state: "queued" | "running" | "completed" | "failed" | "cancelled" | "interrupted";
     queuePosition: number | null;
   } | null>(null);
+  const [mergeReady, setMergeReady] = useState<boolean | null>(null);
+  const [mergeReadyMessage, setMergeReadyMessage] = useState<string | null>(null);
   const [activeScanChunks, setActiveScanChunks] = useState<ReviewChunk[]>([]);
   // Phase 7 — when a scan comes back as `status: "interrupted"`, store
   // the resume metadata so the UI can render a Continue / Start fresh
@@ -286,6 +288,8 @@ export function useDashboardData() {
       setRejectedCount(0);
       setRejectedFindings([]);
       setStale(false);
+      setMergeReady(null);
+      setMergeReadyMessage(null);
     }
 
     try {
@@ -358,6 +362,8 @@ export function useDashboardData() {
       setRejectedCount(0);
       setRejectedFindings([]);
       setStale(false);
+      setMergeReady(null);
+      setMergeReadyMessage(null);
     }
     try {
       const filesRes = await fetchJson(`/api/prs/${prId}/files`);
@@ -384,6 +390,12 @@ export function useDashboardData() {
         setReviewChunks(findingsData.chunks ?? []);
         setActiveScan(findingsData.activeScan ?? null);
         setQueueJob(findingsData.queueJob ?? null);
+        setMergeReady(
+          typeof findingsData.mergeReady === "boolean" ? findingsData.mergeReady : null,
+        );
+        setMergeReadyMessage(
+          typeof findingsData.mergeReadyMessage === "string" ? findingsData.mergeReadyMessage : null,
+        );
         setActiveScanChunks(findingsData.activeChunks ?? []);
         setActiveFindings(findingsData.activeFindings ?? []);
         setActiveIterations(findingsData.activeIterations ?? {});
@@ -632,12 +644,17 @@ export function useDashboardData() {
     setActiveIterations({});
     setRejectedCount(0);
     setRejectedFindings([]);
+    setMergeReady(null);
+    setMergeReadyMessage(null);
 
     setPrs((prev) =>
       prev.map((p) => (p.id === targetPrId ? { ...p, status: "In Progress" } : p)),
     );
 
     const activeRepoName = repos.find((r) => r.id === scanningRepoId)?.name || scanningRepoId;
+    // When the durable queue accepts work, leave isScanning driven by
+    // queueJob / PR status — do not clear it in finally.
+    let queueAccepted = false;
 
     try {
       const url = `/api/prs/${targetPrId}/scan${force ? "?force=true" : ""}`;
@@ -652,6 +669,23 @@ export function useDashboardData() {
 
       const result = await res.json();
       console.log(`[scan] handleTriggerPrScan: response status=${res.status}, findings=${result.findings?.length}, rating=${result.rating}, model=${result.usedModel}, status=${result.status ?? "(none)"}`);
+      // Queue admit (HTTP 202): keep UI in Queued/Running until the job is
+      // terminal — never treat accept as an empty successful review.
+      if (res.status === 202 && result.accepted) {
+        queueAccepted = true;
+        setQueueJob({
+          jobId: result.jobId,
+          state: result.state ?? "queued",
+          queuePosition: result.queuePosition ?? null,
+        });
+        setPrs((prev) =>
+          prev.map((p) => (p.id === targetPrId ? { ...p, status: "In Progress" } : p)),
+        );
+        if (isTargetActive(scanningRepoId, targetPrId)) {
+          await fetchPrDetails(targetPrId, false);
+        }
+        return;
+      }
       // Phase 7 — interrupted scan with valid checkpoint. Don't treat
       // as success or failure; store the resume metadata and let the
       // banner drive Continue / Start fresh.
@@ -786,7 +820,9 @@ export function useDashboardData() {
       // we're about to trigger by touching prs.
       scanInFlightRef.current = false;
       setScanningPrId(null);
-      setIsScanning(false);
+      if (!queueAccepted) {
+        setIsScanning(false);
+      }
     }
   };
 
@@ -1131,6 +1167,8 @@ export function useDashboardData() {
       reviewChunks,
       activeScan,
       queueJob,
+      mergeReady,
+      mergeReadyMessage,
       activeScanChunks,
       activeFindings,
       activeIterations,

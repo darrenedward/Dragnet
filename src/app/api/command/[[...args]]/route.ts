@@ -4,9 +4,9 @@ import { findPrByIdOrNumber, findPrByBranch } from "@/src/lib/findPr";
 import { refreshPrFiles } from "@/src/lib/getRealPrs";
 import { runPrScan, SYSTEM_INSTRUCTION } from "@/src/services/reviewService";
 import { authenticateApiRequest } from "@/src/lib/apiAuth";
-import { IndexingService } from "@/src/services/indexingService";
-import { assertIndexFresh } from "@/src/lib/indexFreshness";
 import { isReviewActive, acquireReviewLock } from "@/src/lib/reviewLocks";
+import { runScanPrelude } from "@/src/lib/scanPrelude";
+import { isMergeReady } from "@/src/lib/mergeReady";
 import { getChatChain } from "@/src/lib/llmClient";
 import { computePrSizeProfile, type PrSizeProfile } from "@/src/lib/prSizeProfile";
 import { readPrCommitCount } from "@/src/lib/prSizeProfile.server";
@@ -169,9 +169,28 @@ async function resolvePrFromArgs(args: any): Promise<any | null> {
   return pr;
 }
 
-function formatFindings(pr: any, findings: any[], sizeProfile?: PrSizeProfile): string {
-  const pass = pr.rating != null && pr.rating >= 8;
-  let out = `## PR ${pr.sourceBranch} — "${pr.title}"\n**Rating: ${pr.rating ?? "?"}/10** — ${pr.rating != null ? (pass ? "PASS" : "FAIL") : "Not yet"}\n\n`;
+function formatFindings(pr: any, findings: any[], sizeProfile?: PrSizeProfile, mergeMeta?: {
+  status?: string | null;
+  outcome?: string | null;
+  reliability?: string | null;
+  refused?: boolean | null;
+  stale?: boolean | null;
+}): string {
+  const merge = isMergeReady({
+    status: mergeMeta?.status ?? (pr.rating != null ? "completed" : null),
+    outcome: mergeMeta?.outcome,
+    rating: pr.rating,
+    reliability: mergeMeta?.reliability,
+    refused: mergeMeta?.refused,
+    stale: mergeMeta?.stale,
+  });
+  const verdict = merge.mergeReady
+    ? "PASS (merge ready)"
+    : pr.rating != null
+      ? `FAIL — ${merge.message ?? "not merge-ready"}`
+      : "Not yet";
+  let out = `## PR ${pr.sourceBranch} — "${pr.title}"\n**Rating: ${pr.rating ?? "?"}/10** — ${verdict}\n`;
+  out += `**Merge ready:** ${merge.mergeReady ? "yes" : `no (${merge.mergeBlockReason ?? "unknown"})`}${merge.message && !merge.mergeReady ? ` — ${merge.message}` : ""}\n\n`;
   if (sizeProfile) {
     out += `**Size:** ${formatSizeProfile(sizeProfile)}\n\n`;
   }
@@ -197,7 +216,13 @@ async function formatLatestFindings(pr: any): Promise<string> {
     rating: latest.reviewRun?.rating ?? pr.rating,
   };
   const sizeProfile = await loadPrSizeProfile(pr);
-  let out = formatFindings(displayPr, latest.findings, sizeProfile);
+  let out = formatFindings(displayPr, latest.findings, sizeProfile, {
+    status: latest.reviewRun?.status,
+    outcome: latest.reviewRun?.outcome,
+    reliability: latest.reviewRun?.reliability,
+    refused: latest.reviewRun?.refused,
+    stale: latest.stale,
+  });
   if (!latest.reviewRun) {
     out += "\n_No completed ReviewRun yet._\n";
   } else {
@@ -229,14 +254,18 @@ async function handlePrCheck(args: any, userId: string | null): Promise<string> 
     return `> ⚠ Repository for PR \`${pr.sourceBranch}\` could not be loaded.`;
   }
 
-  const freshness = await assertIndexFresh(repo);
-  if (freshness.ok === false) {
-    if (freshness.kind === "INDEX_REQUIRED") {
-      return `> ⚠ **Index required.** ${freshness.message}`;
-    }
-    // STALE_INDEX — auto-trigger incremental index
-    if (repo.path) {
-      await IndexingService.indexFolder(pr.repoId, repo.path);
+  // Explicit review always admits; prelude only gates index freshness
+  // (volume-aware STALE reindex) before queue so /dragnet fix loops heal.
+  const prelude = await runScanPrelude(repo);
+  if (prelude.ok === false) {
+    // CONFIG is checked by the worker path; INDEX_REQUIRED still blocks
+    // admission with a clear CTA. REINDEX_FAILED / others surface too.
+    if (
+      prelude.gate === "INDEX_REQUIRED" ||
+      prelude.gate === "INDEXING_IN_PROGRESS" ||
+      prelude.gate === "REINDEX_FAILED"
+    ) {
+      return `> ⚠ **Blocked at ${prelude.gate}.** ${prelude.message}`;
     }
   }
 
@@ -267,7 +296,13 @@ async function handlePrCheckStatus(args: any, _userId: string | null): Promise<s
     rating: latest.reviewRun?.rating ?? pr.rating,
   };
   const sizeProfile = await loadPrSizeProfile(pr);
-  let out = formatFindings(displayPr, latest.findings, sizeProfile);
+  let out = formatFindings(displayPr, latest.findings, sizeProfile, {
+    status: latest.reviewRun?.status,
+    outcome: latest.reviewRun?.outcome,
+    reliability: latest.reviewRun?.reliability,
+    refused: latest.reviewRun?.refused,
+    stale: latest.stale,
+  });
   if (latest.regressions.length > 0) {
     out += `\n## Regressions (reappeared findings)\n\n`;
     out += `The following findings were previously resolved but have reappeared:\n\n`;
@@ -462,20 +497,18 @@ async function handleLegacyCommand(body: any, defRepo: string | null, userId: st
           message: `> Repository for PR \`${pr.sourceBranch}\` could not be loaded.`,
         });
       }
-const freshness = await assertIndexFresh(repo);
-      if (freshness.ok === false) {
-        if (freshness.kind === "INDEX_REQUIRED") {
-          return NextResponse.json({
-            status: "Error",
-            message: `> ⚠ **Index required.** ${freshness.message}`,
-          });
-        }
-        // STALE_INDEX — auto-trigger incremental index inline so /dragnet fix
-        // --auto loops don't dead-end after each fix commit advances HEAD.
-        // Matches the behavior in handlePrCheck (JSON-RPC tool path).
-        if (repo.path) {
-          await IndexingService.indexFolder(pr.repoId, repo.path);
-        }
+const prelude = await runScanPrelude(repo);
+      if (
+        prelude.ok === false &&
+        (prelude.gate === "INDEX_REQUIRED" ||
+          prelude.gate === "INDEXING_IN_PROGRESS" ||
+          prelude.gate === "REINDEX_FAILED")
+      ) {
+        return NextResponse.json({
+          status: "Error",
+          message: `> ⚠ **Blocked at ${prelude.gate}.** ${prelude.message}`,
+          gate: prelude.gate,
+        });
       }
 const started = await startTrackedReview(pr, repo, userId);
       if ("conflict" in started) {

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/src/lib/prisma";
 import { authenticateApiRequest } from "@/src/lib/apiAuth";
 import { admitScanJobForPr, waitForScanJob } from "@/src/services/scanQueue";
+import { isMergeReady, MERGE_RATING_THRESHOLD } from "@/src/lib/mergeReady";
 
 /**
  * Pre-push keeps its synchronous pass/fail contract while delegating all
@@ -63,25 +64,35 @@ export async function POST(req: Request) {
 
   const run = await prisma.reviewRun.findUnique({
     where: { id: terminal.reviewRunId },
-    select: { rating: true, reliability: true, model: true },
+    select: { rating: true, reliability: true, model: true, status: true, outcome: true, refused: true },
   });
   const findings = await prisma.reviewFinding.findMany({
     where: { reviewRunId: terminal.reviewRunId },
     orderBy: { timestamp: "asc" },
   });
   const rating = run?.rating ?? null;
-  const reliability = run?.reliability ?? "complete";
-  const passed = rating !== null && rating >= 8 && reliability === "complete";
+  const reliability = run?.reliability ?? null;
+  const merge = isMergeReady({
+    status: run?.status ?? "completed",
+    outcome: run?.outcome,
+    rating,
+    reliability,
+    refused: run?.refused ?? false,
+    stale: false,
+  });
+  const passed = merge.mergeReady;
   return NextResponse.json({
     passed,
+    mergeReady: merge.mergeReady,
+    mergeBlockReason: merge.mergeBlockReason,
     rating,
     findingsCount: findings.length,
     findings,
     usedModel: run?.model ?? null,
-    reliability,
+    reliability: reliability ?? "complete",
     jobId: job.jobId,
     message: passed
       ? `✓ Dragnet: PR approved (${rating}/10)`
-      : `✗ Dragnet: PR blocked — rating ${rating ?? "unavailable"}/10 (requires 8+).`,
+      : `✗ Dragnet: PR blocked — ${merge.message ?? `rating ${rating ?? "unavailable"}/10 (requires ${MERGE_RATING_THRESHOLD}+)`}.`,
   });
 }

@@ -62,6 +62,10 @@ vi.mock("@/src/lib/prSizeProfile.server", () => ({
   readPrCommitCount: mocks.mockReadPrCommitCount,
 }));
 
+vi.mock("@/src/services/scanQueue", () => ({
+  getScanJobForPr: vi.fn().mockResolvedValue(null),
+}));
+
 vi.mock("@/src/lib/prisma", () => ({
   prisma: {
     pullRequest: {
@@ -154,6 +158,8 @@ describe("GET /api/prs/[prId]/findings — outcome field (#19)", () => {
       status: "completed",
       rating: null,
     });
+    expect(body.mergeReady).toBe(false);
+    expect(body.mergeBlockReason).toBe("skipped");
   });
 
   it("response includes reviewRun.outcome='reviewed' for a normal successful scan", async () => {
@@ -197,6 +203,8 @@ describe("GET /api/prs/[prId]/findings — outcome field (#19)", () => {
       status: "completed",
       rating: 9,
     });
+    expect(body.mergeReady).toBe(true);
+    expect(body.mergeBlockReason).toBeNull();
   });
 
   it("response surfaces status='failed' when latest run failed (for button rose-state)", async () => {

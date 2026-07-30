@@ -7,6 +7,7 @@ import { prisma } from "@/src/lib/prisma";
 import { computePrSizeProfile } from "@/src/lib/prSizeProfile";
 import { readPrCommitCount } from "@/src/lib/prSizeProfile.server";
 import { getScanJobForPr } from "@/src/services/scanQueue";
+import { isMergeReady } from "@/src/lib/mergeReady";
 
 const CHUNK_SELECT = {
   id: true,
@@ -131,6 +132,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ prId: st
     const activeIterations = activeScan.iterationsByChunk;
 
     if (!latest.reviewRun) {
+      const noRun = isMergeReady(null);
       return NextResponse.json({
         reviewRun: null,
         findings: [],
@@ -138,6 +140,9 @@ export async function GET(req: Request, { params }: { params: Promise<{ prId: st
         rejectedCount: 0,
         regressions: [],
         stale: false,
+        mergeReady: noRun.mergeReady,
+        mergeBlockReason: noRun.mergeBlockReason,
+        mergeReadyMessage: noRun.message,
         sizeProfile,
         stability: null,
         weightedStability: null,
@@ -154,10 +159,21 @@ export async function GET(req: Request, { params }: { params: Promise<{ prId: st
     const ratingTrend = await getRecentRuns(prId, 5);
     const stability = computeStability(ratingTrend);
     const weighted = computeWeightedStability(ratingTrend, lookupTrustWeight);
+    const merge = isMergeReady({
+      status: latest.reviewRun.status,
+      outcome: latest.reviewRun.outcome,
+      rating: latest.reviewRun.rating,
+      reliability: latest.reviewRun.reliability,
+      refused: latest.reviewRun.refused,
+      stale: latest.stale,
+    });
 
     return NextResponse.json({
       weightedStability: weighted.weightedStability,
       weightedReadyToMerge: weighted.readyToMerge,
+      mergeReady: merge.mergeReady,
+      mergeBlockReason: merge.mergeBlockReason,
+      mergeReadyMessage: merge.message,
       reviewRun: {
         id: latest.reviewRun.id,
         commitHash: latest.reviewRun.commitHash,
