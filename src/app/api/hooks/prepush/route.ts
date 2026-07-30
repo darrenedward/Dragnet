@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/src/lib/prisma";
 import { authenticateApiRequest } from "@/src/lib/apiAuth";
+import { isMergeReady } from "@/src/lib/isMergeReady";
 import { admitScanJobForPr, waitForScanJob } from "@/src/services/scanQueue";
 
 /**
@@ -63,17 +64,33 @@ export async function POST(req: Request) {
 
   const run = await prisma.reviewRun.findUnique({
     where: { id: terminal.reviewRunId },
-    select: { rating: true, reliability: true, model: true },
+    select: {
+      rating: true,
+      reliability: true,
+      model: true,
+      outcome: true,
+      refused: true,
+      status: true,
+    },
   });
   const findings = await prisma.reviewFinding.findMany({
     where: { reviewRunId: terminal.reviewRunId },
     orderBy: { timestamp: "asc" },
   });
   const rating = run?.rating ?? null;
-  const reliability = run?.reliability ?? "complete";
-  const passed = rating !== null && rating >= 8 && reliability === "complete";
+  const reliability = run?.reliability ?? null;
+  const gate = isMergeReady({
+    rating,
+    reliability,
+    outcome: run?.outcome ?? null,
+    refused: run?.refused ?? false,
+    status: run?.status ?? "completed",
+  });
+  const passed = gate.mergeReady;
   return NextResponse.json({
     passed,
+    mergeReady: gate.mergeReady,
+    mergeBlockReason: gate.mergeBlockReason,
     rating,
     findingsCount: findings.length,
     findings,
@@ -81,7 +98,7 @@ export async function POST(req: Request) {
     reliability,
     jobId: job.jobId,
     message: passed
-      ? `✓ Dragnet: PR approved (${rating}/10)`
-      : `✗ Dragnet: PR blocked — rating ${rating ?? "unavailable"}/10 (requires 8+).`,
+      ? `✓ Dragnet: PR approved (${rating}/10) — merge ready`
+      : `✗ Dragnet: PR blocked — ${gate.mergeBlockReason ?? "not merge-ready"}.`,
   });
 }

@@ -154,6 +154,8 @@ describe("GET /api/prs/[prId]/findings — outcome field (#19)", () => {
       status: "completed",
       rating: null,
     });
+    expect(body.mergeReady).toBe(false);
+    expect(body.mergeBlockReason).toMatch(/skipped/i);
   });
 
   it("response includes reviewRun.outcome='reviewed' for a normal successful scan", async () => {
@@ -197,6 +199,65 @@ describe("GET /api/prs/[prId]/findings — outcome field (#19)", () => {
       status: "completed",
       rating: 9,
     });
+    expect(body.mergeReady).toBe(true);
+    expect(body.mergeBlockReason).toBeNull();
+  });
+
+  it("null rating is not merge-ready even when status is completed (#83)", async () => {
+    mocks.mockGetLatestCompletedReview.mockResolvedValue({
+      reviewRun: {
+        id: "run-null-rating",
+        commitHash: "abc",
+        diffHash: "def",
+        reviewConfigHash: "cfg",
+        completedAt: new Date("2026-07-01T00:00:00Z"),
+        rating: null,
+        model: "test-model",
+        triggerReason: "manual",
+        reliability: "complete",
+        refused: false,
+        refusalNote: null,
+        outcome: "reviewed",
+        status: "completed",
+        chunksTotal: 1,
+        chunksCompleted: 1,
+        chunksFailed: 0,
+        chunksSkipped: 0,
+        tokensUsed: null,
+      },
+      findings: [],
+      regressions: [],
+      rejectedFindings: [],
+      rejectedCount: 0,
+      stale: false,
+    });
+
+    const res = await GET(makeFindingsRequest("pr-null"), {
+      params: Promise.resolve({ prId: "pr-null" }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.mergeReady).toBe(false);
+    expect(body.mergeBlockReason).toMatch(/no rating/i);
+  });
+
+  it("no completed review exposes mergeReady false (#83)", async () => {
+    mocks.mockGetLatestCompletedReview.mockResolvedValue({
+      reviewRun: null,
+      findings: [],
+      regressions: [],
+      rejectedFindings: [],
+      rejectedCount: 0,
+      stale: false,
+    });
+
+    const res = await GET(makeFindingsRequest("pr-none"), {
+      params: Promise.resolve({ prId: "pr-none" }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.mergeReady).toBe(false);
+    expect(body.mergeBlockReason).toMatch(/no completed review/i);
   });
 
   it("response surfaces status='failed' when latest run failed (for button rose-state)", async () => {

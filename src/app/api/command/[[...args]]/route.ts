@@ -26,6 +26,7 @@ import {
 } from "@/src/lib/reviewFreshness";
 import { computeStability, computeWeightedStability } from "@/src/lib/stabilityScore";
 import { lookupTrustWeight } from "@/src/lib/modelTrustWeights";
+import { isMergeReady } from "@/src/lib/isMergeReady";
 import { admitScanJobForPr } from "@/src/services/scanQueue";
 
 /**
@@ -169,9 +170,34 @@ async function resolvePrFromArgs(args: any): Promise<any | null> {
   return pr;
 }
 
-function formatFindings(pr: any, findings: any[], sizeProfile?: PrSizeProfile): string {
-  const pass = pr.rating != null && pr.rating >= 8;
-  let out = `## PR ${pr.sourceBranch} — "${pr.title}"\n**Rating: ${pr.rating ?? "?"}/10** — ${pr.rating != null ? (pass ? "PASS" : "FAIL") : "Not yet"}\n\n`;
+function formatFindings(
+  pr: any,
+  findings: any[],
+  sizeProfile?: PrSizeProfile,
+  gate?: { mergeReady: boolean; mergeBlockReason: string | null },
+): string {
+  const resolved =
+    gate ??
+    isMergeReady({
+      rating: pr.rating,
+      outcome: pr.outcome ?? null,
+      reliability: pr.reliability ?? null,
+      refused: pr.refused ?? false,
+      stale: pr.stale ?? null,
+      status: pr.status ?? null,
+    });
+  const verdict = pr.rating == null && !resolved.mergeReady
+    ? "Not yet"
+    : resolved.mergeReady
+      ? "PASS"
+      : "FAIL";
+  let out = `## PR ${pr.sourceBranch} — "${pr.title}"\n**Rating: ${pr.rating ?? "?"}/10** — ${verdict}`;
+  if (resolved.mergeReady) {
+    out += " — Merge ready";
+  } else if (resolved.mergeBlockReason) {
+    out += ` — Not ready (${resolved.mergeBlockReason})`;
+  }
+  out += "\n\n";
   if (sizeProfile) {
     out += `**Size:** ${formatSizeProfile(sizeProfile)}\n\n`;
   }
@@ -192,16 +218,32 @@ function formatFindings(pr: any, findings: any[], sizeProfile?: PrSizeProfile): 
 
 async function formatLatestFindings(pr: any): Promise<string> {
   const latest = await getLatestCompletedReview(pr.id);
+  const run = latest.reviewRun;
+  const gate = run
+    ? isMergeReady({
+        rating: run.rating,
+        outcome: run.outcome,
+        reliability: run.reliability,
+        refused: run.refused,
+        stale: latest.stale,
+        status: run.status,
+      })
+    : { mergeReady: false, mergeBlockReason: "No completed review yet" };
   const displayPr = {
     ...pr,
-    rating: latest.reviewRun?.rating ?? pr.rating,
+    rating: run?.rating ?? pr.rating,
+    outcome: run?.outcome ?? null,
+    reliability: run?.reliability ?? null,
+    refused: run?.refused ?? false,
+    stale: latest.stale,
+    status: run?.status ?? null,
   };
   const sizeProfile = await loadPrSizeProfile(pr);
-  let out = formatFindings(displayPr, latest.findings, sizeProfile);
-  if (!latest.reviewRun) {
+  let out = formatFindings(displayPr, latest.findings, sizeProfile, gate);
+  if (!run) {
     out += "\n_No completed ReviewRun yet._\n";
   } else {
-    out += `\n_Reviewed commit ${latest.reviewRun.commitHash.slice(0, 7)}${latest.stale ? " (stale)" : ""}._\n`;
+    out += `\n_Reviewed commit ${run.commitHash.slice(0, 7)}${latest.stale ? " (stale)" : ""}._\n`;
     if (latest.rejectedCount > 0) {
       out += `_Verifier filtered ${latest.rejectedCount} finding${latest.rejectedCount === 1 ? "" : "s"}._\n`;
     }
@@ -211,8 +253,8 @@ async function formatLatestFindings(pr: any): Promise<string> {
         out += `  ⚠ [${r.category}|${r.severity}] ${r.filename}:${r.line} — ${r.explanation}\n`;
       }
     }
-    if (latest.reviewRun.refused) {
-      out += `\n> ⚠ **Reviewer flagged incomplete coverage.** ${latest.reviewRun.refusalNote ?? "Parts of the PR were skipped or not fully analyzed."} Re-scan recommended after addressing the underlying cause.\n`;
+    if (run.refused) {
+      out += `\n> ⚠ **Reviewer flagged incomplete coverage.** ${run.refusalNote ?? "Parts of the PR were skipped or not fully analyzed."} Re-scan recommended after addressing the underlying cause.\n`;
     }
   }
   return out;
