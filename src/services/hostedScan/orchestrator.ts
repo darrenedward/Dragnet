@@ -87,6 +87,8 @@ export async function triggerHostedScan(
   const job = await admitScanJobForPr({
     prId: pr.id,
     triggerReason: options?.triggerReason ?? "hosted",
+    // Automatic hosted paths are AFK; operator/API hosted scans are explicit.
+    kind: options?.automatic ? "afk" : "explicit",
   });
   if (!job) return { ok: false, error: "Pull request disappeared before scan admission" };
 

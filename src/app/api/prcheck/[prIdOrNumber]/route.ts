@@ -23,6 +23,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ prIdOrNu
   const job = await admitScanJobForPr({
     prId: pr.id,
     triggerReason: "prcheck",
+    kind: "explicit",
     forced: url.searchParams.get("force") === "true",
     createdByUserId: auth.userId,
   });

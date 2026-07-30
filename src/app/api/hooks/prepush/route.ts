@@ -45,6 +45,7 @@ export async function POST(req: Request) {
   const job = await admitScanJobForPr({
     prId: pr.id,
     triggerReason: "prepush",
+    kind: "explicit",
     createdByUserId: auth.userId,
   });
   if (!job) return NextResponse.json({ error: "Pull request disappeared before scan admission.", passed: false }, { status: 404 });

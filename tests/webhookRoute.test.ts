@@ -40,11 +40,7 @@ vi.mock("@/src/services/reviewService", () => ({
 }));
 
 vi.mock("@/src/services/scanQueue", () => ({
-  admitScanJobForPr: mocks.mockAdmitScanJobForPr,
-}));
-
-vi.mock("@/src/lib/autoRescanPolicy", () => ({
-  isAutoRescanEnabled: () => true,
+  admitAfkScanJobForPr: mocks.mockAdmitScanJobForPr,
 }));
 
 vi.mock("../src/services/hostedScan/orchestrator", () => ({

@@ -94,6 +94,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
       repoId: queuedPr.repoId,
       commitHash: queuedPr.commitHash,
       triggerReason,
+      kind: "explicit",
       forced: force,
       resumeRequested: resume,
       freshRequested: fresh,
