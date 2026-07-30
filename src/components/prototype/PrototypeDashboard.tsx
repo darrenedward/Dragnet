@@ -67,12 +67,9 @@ export function PrototypeDashboard({ variant: _variant }: { variant: "A" | "B" |
                       {r.name}
                     </span>
                     {!r.cloneOk && (
-                      <X
-                        size={12}
-                        className="shrink-0 text-rose-400"
-                        strokeWidth={2.5}
-                        title="Clone failed — checkout missing"
-                      />
+                      <span title="Clone failed — checkout missing" className="shrink-0">
+                        <X size={12} className="text-rose-400" strokeWidth={2.5} />
+                      </span>
                     )}
                     <span
                       title={
@@ -96,7 +93,7 @@ export function PrototypeDashboard({ variant: _variant }: { variant: "A" | "B" |
                     <p className="px-1 py-0.5 text-[8px] font-mono uppercase tracking-wider text-slate-600 font-bold">
                       Overview
                     </p>
-                    {r.prs.map((p, idx) => {
+                    {r.prs.map((p) => {
                       const qPos =
                         p.status === "queued" || p.status === "pending"
                           ? r.prs
