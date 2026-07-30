@@ -312,6 +312,7 @@ export default function App() {
                           rating: workspace.reviewRun?.rating,
                           refused: workspace.reviewRun?.refused,
                           stale: workspace.stale,
+                          blockedGate: workspace.blockedGate,
                         }
                       : null
                   }

@@ -337,16 +337,13 @@ function RepoRow({
   const statusCfg = STATUS_CONFIG[reviewStatus] || STATUS_CONFIG.idle;
   const prCount = repo.prCount || 0;
   const isShared = mode === "shared";
-  const cloneBroken = repo.status === "error" || Boolean(repo.lastFetchError);
+  // Clone failure is shown on the main PR header chip only — no sidebar X.
   const badgeTitle =
-    cloneBroken
-      ? repo.lastFetchError || "Clone or fetch failed — fix credentials / re-fetch"
-      : needsReviewCount > 0
-        ? `${needsReviewCount} of ${prCount} PRs need review (unscored or <8)`
-        : prCount > 0
-          ? `${prCount} PRs`
-          : "No PRs";
-  // Prefer "N to review" when attention needed; otherwise plain PR count.
+    needsReviewCount > 0
+      ? `${needsReviewCount} of ${prCount} PRs need review (unscored or <8)`
+      : prCount > 0
+        ? `${prCount} PRs`
+        : "No PRs";
   const badgeCount = needsReviewCount > 0 ? needsReviewCount : prCount;
   const badgeLabel =
     needsReviewCount > 0 ? "to review" : statusCfg.label === "Complete" ? "ok" : "";
@@ -364,6 +361,7 @@ function RepoRow({
       }}
       data-testid={`sidebar-repo-${repo.id}`}
       data-repo-mode={mode}
+      title={repo.name}
       className={`relative w-full text-left px-3 py-2 rounded-lg transition-all border cursor-pointer ${
         isRepoSelected
           ? "bg-cyan-500/10 border-cyan-500/30 text-cyan-400 shadow-[inset_0_1px_5px_rgba(6,182,212,0.05)]"
@@ -376,17 +374,7 @@ function RepoRow({
           <span className="text-xs font-bold tracking-tight truncate font-mono" title={repo.name}>
             {repo.name}
           </span>
-          {cloneBroken && (
-            <span
-              className="shrink-0 text-red-400"
-              title={repo.lastFetchError || "Clone or fetch failed"}
-              data-testid={`sidebar-repo-clone-failed-${repo.id}`}
-              aria-label="Clone failed"
-            >
-              <XCircle size={12} />
-            </span>
-          )}
-          {repo.status === "cloning" && !cloneBroken && (
+          {repo.status === "cloning" && (
             <span
               className="shrink-0 text-amber-400"
               title="Clone in progress"
@@ -413,14 +401,10 @@ function RepoRow({
           )}
           {prCount > 0 ? (
             <span
-              className={`text-[9px] font-mono font-extrabold px-1.5 py-0.2 rounded-full leading-tight border flex items-center gap-1 ${
-                cloneBroken
-                  ? "bg-red-500/15 text-red-300 border-red-500/30"
-                  : statusCfg.badgeClass
-              }`}
+              className={`text-[9px] font-mono font-extrabold px-1.5 py-0.2 rounded-full leading-tight border flex items-center gap-1 ${statusCfg.badgeClass}`}
               title={badgeTitle}
             >
-              {cloneBroken ? <XCircle size={9} /> : statusCfg.icon}
+              {statusCfg.icon}
               <span>{badgeCount}</span>
               {badgeLabel && (
                 <span className="hidden 2xl:inline text-[7px] uppercase tracking-wider">{badgeLabel}</span>

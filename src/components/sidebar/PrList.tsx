@@ -2,13 +2,12 @@
 
 import { GitBranch } from "lucide-react";
 import type { PullRequest } from "../../lib/types";
-import { getPullRequestStatusPresentation } from "../../lib/types";
-import PrSizeProfileChip from "../PrSizeProfileChip";
+import { buildSidebarPrRow } from "../../lib/prHeaderPresentation";
+import { LayoutCPill } from "../views/prs/LayoutCChips";
 
 /**
  * Renders the active-PR list under a selected repo in the sidebar.
- * Extracted from DashboardSidebar.tsx (#69 PR 3) to keep the file
- * under the 500-line cap.
+ * Layout C: title, PR # · issue #, compact status + rating oblong pills.
  */
 export function PrList({
   prs,
@@ -40,12 +39,19 @@ export function PrList({
 }
 
 function PrRow({ pr, isPrSelected, onSelect }: { pr: PullRequest; isPrSelected: boolean; onSelect: () => void }) {
-  const hasPriorReview = pr.rating !== undefined && pr.rating !== null;
-  const isPending = pr.status === "Pending";
-  const statusPresentation = getPullRequestStatusPresentation(pr.status, pr.rating);
+  const row = buildSidebarPrRow({
+    title: pr.title,
+    githubPrNumber: pr.githubPrNumber,
+    sourceBranch: pr.sourceBranch,
+    status: pr.status,
+    rating: pr.rating,
+  });
+
   return (
     <button
+      type="button"
       onClick={onSelect}
+      title={row.status.title}
       className={`w-full text-left p-2 rounded-lg transition-all flex items-start gap-2 border ${
         isPrSelected
           ? "bg-indigo-500/10 border-indigo-500/30 text-white"
@@ -56,36 +62,31 @@ function PrRow({ pr, isPrSelected, onSelect }: { pr: PullRequest; isPrSelected: 
         <GitBranch size={10} />
       </div>
       <div className="flex-1 min-w-0 font-mono">
-        <div className="text-[11px] font-bold truncate text-slate-300">{pr.title}</div>
-        <div className="flex items-center justify-between mt-0.5 text-[9px] text-slate-500">
-          <span className="truncate max-w-[90px] text-cyan-400 font-semibold">{pr.sourceBranch}</span>
-          <div className="flex items-center gap-1 shrink-0">
-            {pr.sizeProfile && (
-              <PrSizeProfileChip profile={pr.sizeProfile} compact />
+        <div
+          className={`text-[11px] font-bold truncate leading-snug ${
+            isPrSelected ? "text-white" : "text-slate-300"
+          }`}
+        >
+          {row.title}
+        </div>
+        <div className="flex items-center gap-1.5 mt-1 text-[9px] min-w-0">
+          <span className="text-slate-500 truncate flex-1 min-w-0">
+            {row.prNumberLabel ? (
+              <span className="text-cyan-400/90">{row.prNumberLabel}</span>
+            ) : (
+              <span className="text-cyan-400/70 truncate">{pr.sourceBranch}</span>
             )}
-            {pr.rating !== undefined && pr.rating !== null && (
-              <span
-                className={`px-1 py-0.2 rounded font-extrabold text-[7.5px] border leading-none shrink-0 ${
-                  pr.rating >= 8
-                    ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/25"
-                    : "bg-rose-500/10 text-rose-400 border-rose-500/20"
-                }`}
-                title={pr.rating >= 8 ? "Production Ready" : "Requires Improvements"}
-              >
-                {pr.rating}/10
-              </span>
+            {row.issueNumberLabel && (
+              <>
+                <span className="text-slate-600"> · </span>
+                <span>{row.issueNumberLabel}</span>
+              </>
             )}
-            <span
-              className={`px-1 py-0.2 rounded uppercase font-extrabold text-[7px] tracking-wide flex items-center gap-1 leading-none ${statusPresentation.className}`}
-            >
-              {pr.status === "In Progress" && (
-                <span className="inline-block w-1 h-1 rounded-full bg-blue-400 animate-pulse shrink-0" />
-              )}
-              <span title={isPending ? (hasPriorReview ? "Code changed since the last completed review" : "This PR has not been reviewed yet") : undefined}>
-                {statusPresentation.label}
-              </span>
-            </span>
-          </div>
+          </span>
+          <span className="flex items-center gap-1 shrink-0">
+            {row.rating && <LayoutCPill chip={row.rating} compact />}
+            <LayoutCPill chip={row.status} compact />
+          </span>
         </div>
       </div>
     </button>
