@@ -304,12 +304,28 @@ async function handlePrCheckStatus(args: any, _userId: string | null): Promise<s
   if (!freshPr) return `> **No pull requests found** matching that criteria on this repository.`;
 
   const latest = await getLatestCompletedReview(pr.id);
+  const run = latest.reviewRun;
+  const gate = run
+    ? isMergeReady({
+        rating: run.rating,
+        outcome: run.outcome,
+        reliability: run.reliability,
+        refused: run.refused,
+        stale: latest.stale,
+        status: run.status,
+      })
+    : { mergeReady: false, mergeBlockReason: "No completed review yet" };
   const displayPr = {
     ...pr,
-    rating: latest.reviewRun?.rating ?? pr.rating,
+    rating: run?.rating ?? freshPr.rating ?? pr.rating,
+    outcome: run?.outcome ?? null,
+    reliability: run?.reliability ?? null,
+    refused: run?.refused ?? false,
+    stale: latest.stale,
+    status: run?.status ?? null,
   };
   const sizeProfile = await loadPrSizeProfile(pr);
-  let out = formatFindings(displayPr, latest.findings, sizeProfile);
+  let out = formatFindings(displayPr, latest.findings, sizeProfile, gate);
   if (latest.regressions.length > 0) {
     out += `\n## Regressions (reappeared findings)\n\n`;
     out += `The following findings were previously resolved but have reappeared:\n\n`;
@@ -322,15 +338,15 @@ async function handlePrCheckStatus(args: any, _userId: string | null): Promise<s
       out += "\n";
     }
   }
-  if (!latest.reviewRun) {
+  if (!run) {
     out += "\n_No completed ReviewRun yet._\n";
   } else {
-    out += `\n_Reviewed commit ${latest.reviewRun.commitHash.slice(0, 7)}${latest.stale ? " (stale)" : ""}._\n`;
+    out += `\n_Reviewed commit ${run.commitHash.slice(0, 7)}${latest.stale ? " (stale)" : ""}._\n`;
     if (latest.rejectedCount > 0) {
       out += `_Verifier filtered ${latest.rejectedCount} finding${latest.rejectedCount === 1 ? "" : "s"}._\n`;
     }
-    if (latest.reviewRun.refused) {
-      out += `\n> ⚠ **Reviewer flagged incomplete coverage.** ${latest.reviewRun.refusalNote ?? "Parts of the PR were skipped or not fully analyzed."} Re-scan recommended after addressing the underlying cause.\n`;
+    if (run.refused) {
+      out += `\n> ⚠ **Reviewer flagged incomplete coverage.** ${run.refusalNote ?? "Parts of the PR were skipped or not fully analyzed."} Re-scan recommended after addressing the underlying cause.\n`;
     }
   }
   return out;
