@@ -54,6 +54,8 @@ export interface Repository {
 export interface PullRequest {
   id: string;
   repoId: string;
+  /** GitHub PR number when known (hosted/polled); null for local-only discovery. */
+  githubPrNumber?: number | null;
   title: string;
   sourceBranch: string;
   targetBranch: string;
