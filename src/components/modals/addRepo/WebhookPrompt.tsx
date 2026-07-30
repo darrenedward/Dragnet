@@ -45,7 +45,7 @@ export default function WebhookPrompt({ repoName, repoId, hasPat, onClose }: Pro
       const res = await fetch(`/api/repos/${repoId}/webhook`, { method: "POST" });
       const data = await res.json();
       if (res.ok) {
-        setResult({ success: true, message: `Webhook created (ID: ${data.webhookId})` });
+        setResult({ success: true, message: `Webhook created (ID: ${data.webhookId}) — processing enabled` });
       } else {
         setResult({ success: false, message: data.error || "Auto-setup failed" });
       }

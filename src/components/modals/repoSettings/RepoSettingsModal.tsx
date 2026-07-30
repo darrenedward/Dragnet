@@ -299,9 +299,19 @@ export default function RepoSettingsModal({ repo, onClose, onResetIndex, onRefre
           <div className="border-t border-white/10 pt-4 mt-2 space-y-3">
               <div className="flex items-center justify-between bg-slate-900/40 border border-white/10 rounded-lg p-3">
               <div className="flex items-center gap-2">
-                <Globe size={14} className={repo.webhookId && !deletedWebhook && !setupWebhookSuccess ? "text-emerald-400" : "text-slate-500"} />
+                <Globe size={14} className={
+                  repo.webhookId && !deletedWebhook && (setupWebhookSuccess || repo.webhookEnabled)
+                    ? "text-emerald-400"
+                    : repo.webhookId && !deletedWebhook
+                      ? "text-amber-400"
+                      : "text-slate-500"
+                } />
                 <span className="text-xs text-slate-300">
-                  {repo.webhookId && !deletedWebhook ? "Webhook active" : "Webhook not configured"}
+                  {!repo.webhookId || deletedWebhook
+                    ? "Webhook not configured"
+                    : setupWebhookSuccess || repo.webhookEnabled
+                      ? "Webhook processing on"
+                      : "Webhook configured · processing off"}
                 </span>
                 {repo.webhookId && !deletedWebhook && (
                   <code className="text-[10px] text-slate-500 bg-slate-950 px-1.5 py-0.5 rounded">
@@ -352,7 +362,7 @@ export default function RepoSettingsModal({ repo, onClose, onResetIndex, onRefre
             )}
             {setupWebhookSuccess && (
               <div className="p-2 bg-emerald-950/30 border border-emerald-800/20 text-emerald-400 rounded text-xs">
-                Webhook setup complete.
+                Webhook setup complete — processing enabled.
               </div>
             )}
           </div>

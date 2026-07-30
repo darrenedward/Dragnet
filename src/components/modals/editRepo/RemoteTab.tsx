@@ -143,7 +143,7 @@ export default function RemoteTab({
             </button>
           </div>
           <p className="text-[9px] text-slate-600 mt-1">
-            When enabled, GitHub push and pull_request events trigger auto-scanning.
+            When enabled, inbound webhook events are processed. Setup turns this on automatically; delete turns it off.
           </p>
         </Field>
       </div>

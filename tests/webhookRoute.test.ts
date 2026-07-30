@@ -181,6 +181,27 @@ describe("webhooks/github/route POST", () => {
     expect(body.error).toContain("No matching repository found");
   });
 
+  it("returns 403 when webhook processing is disabled", async () => {
+    mocks.mockFindRepo.mockResolvedValue({
+      id: "repo-1",
+      localPath: "/tmp/repo",
+      path: "/tmp/repo",
+      webhookSecret: "test-secret",
+      webhookEnabled: false,
+      hostedMode: false,
+      autoRescanPolicy: "enabled",
+    });
+    const req = buildRequest({
+      body: { repository: { clone_url: "https://github.com/owner/repo.git" } },
+    });
+    const res = await POST(req);
+    expect(res.status).toBe(403);
+    const body = await res.json();
+    expect(body.error).toContain("Webhook processing is disabled");
+    expect(mocks.mockGitFetch).not.toHaveBeenCalled();
+    expect(mocks.mockRunPrScan).not.toHaveBeenCalled();
+  });
+
   it("returns 401 when webhook secret is not configured", async () => {
     mocks.mockFindRepo.mockResolvedValue({
       id: "repo-1",
