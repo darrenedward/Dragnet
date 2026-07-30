@@ -66,24 +66,36 @@ export function ProjectsSidebar({
   }, [repos]);
 
   const repoReviewStatus = useMemo(() => {
-    const map = new Map<string, "idle" | "scanning" | "complete" | "failed" | "pending" | "changes">();
+    type St = "idle" | "scanning" | "complete" | "failed" | "pending" | "changes";
+    const map = new Map<string, { status: St; needsReviewCount: number }>();
     for (const repo of repos) {
       const repoPrs = prs.filter((p) => p.repoId === repo.id);
+      // Needs human/agent attention: unscored, or scored below merge bar, or failed.
+      const needsReviewCount = repoPrs.filter(
+        (p) =>
+          p.status === "Failed" ||
+          p.status === "In Progress" ||
+          p.rating == null ||
+          (typeof p.rating === "number" && p.rating < 8),
+      ).length;
       if (repoPrs.length === 0) {
-        map.set(repo.id, "idle");
+        map.set(repo.id, { status: "idle", needsReviewCount: 0 });
         continue;
       }
       const hasScanning = repoPrs.some((p) => p.status === "In Progress");
       const hasFailed = repoPrs.some((p) => p.status === "Failed");
       const hasPending = repoPrs.some((p) => p.status === "Pending");
       const hasChanges = repoPrs.some((p) => p.status === "Pending" && p.rating != null);
-      const allRated = repoPrs.every((p) => p.rating != null);
-      if (hasScanning) map.set(repo.id, "scanning");
-      else if (hasFailed) map.set(repo.id, "failed");
-      else if (hasChanges) map.set(repo.id, "changes");
-      else if (hasPending) map.set(repo.id, "pending");
-      else if (allRated) map.set(repo.id, "complete");
-      else map.set(repo.id, "idle");
+      const allMergeReady = repoPrs.every(
+        (p) => typeof p.rating === "number" && p.rating >= 8 && p.status !== "Failed",
+      );
+      let status: St = "idle";
+      if (hasScanning) status = "scanning";
+      else if (hasFailed) status = "failed";
+      else if (hasChanges) status = "changes";
+      else if (hasPending || needsReviewCount > 0) status = "pending";
+      else if (allMergeReady) status = "complete";
+      map.set(repo.id, { status, needsReviewCount });
     }
     return map;
   }, [repos, prs]);
@@ -165,7 +177,7 @@ function YourProjectsPane({
   onSelectPr,
 }: {
   repos: Repository[];
-  repoReviewStatus: Map<string, "idle" | "scanning" | "complete" | "failed" | "pending" | "changes">;
+  repoReviewStatus: Map<string, { status: "idle" | "scanning" | "complete" | "failed" | "pending" | "changes"; needsReviewCount: number }>;
   selectedRepoId: string;
   onSelectRepo: (repoId: string) => void;
   onEditRepo: (repo: Repository) => void;
@@ -209,7 +221,8 @@ function YourProjectsPane({
                 <RepoRow
                   repo={repo}
                   isRepoSelected={isRepoSelected}
-                  reviewStatus={repoReviewStatus.get(repo.id) || "idle"}
+                  reviewStatus={repoReviewStatus.get(repo.id)?.status || "idle"}
+                  needsReviewCount={repoReviewStatus.get(repo.id)?.needsReviewCount ?? 0}
                   mode="owner"
                   onSelect={() => onSelectRepo(repo.id)}
                   onEdit={() => onEditRepo(repo)}
@@ -244,7 +257,7 @@ function SharedProjectsPane({
   onSelectPr,
 }: {
   sharedProjects: { id: string; name: string; role: "admin" | "member" | null; invitedAt: string | null }[];
-  repoReviewStatus: Map<string, "idle" | "scanning" | "complete" | "failed" | "pending" | "changes">;
+  repoReviewStatus: Map<string, { status: "idle" | "scanning" | "complete" | "failed" | "pending" | "changes"; needsReviewCount: number }>;
   yourRepoById: Map<string, Repository>;
   selectedRepoId: string;
   onSelectRepo: (repoId: string) => void;
@@ -278,7 +291,8 @@ function SharedProjectsPane({
                 <RepoRow
                   repo={full}
                   isRepoSelected={isRepoSelected}
-                  reviewStatus={repoReviewStatus.get(sp.id) || "idle"}
+                  reviewStatus={repoReviewStatus.get(sp.id)?.status || "idle"}
+                  needsReviewCount={repoReviewStatus.get(sp.id)?.needsReviewCount ?? 0}
                   mode="shared"
                   onSelect={() => onSelectRepo(sp.id)}
                   onMintKey={() => onMintKey({ id: full.id, name: full.name })}
@@ -303,6 +317,7 @@ function RepoRow({
   repo,
   isRepoSelected,
   reviewStatus,
+  needsReviewCount,
   mode,
   onSelect,
   onEdit,
@@ -312,6 +327,7 @@ function RepoRow({
   repo: Repository;
   isRepoSelected: boolean;
   reviewStatus: string;
+  needsReviewCount: number;
   mode: "owner" | "shared";
   onSelect: () => void;
   onEdit?: () => void;
@@ -321,6 +337,20 @@ function RepoRow({
   const statusCfg = STATUS_CONFIG[reviewStatus] || STATUS_CONFIG.idle;
   const prCount = repo.prCount || 0;
   const isShared = mode === "shared";
+  const cloneBroken = repo.status === "error" || Boolean(repo.lastFetchError);
+  const badgeTitle =
+    cloneBroken
+      ? repo.lastFetchError || "Clone or fetch failed — fix credentials / re-fetch"
+      : needsReviewCount > 0
+        ? `${needsReviewCount} of ${prCount} PRs need review (unscored or <8)`
+        : prCount > 0
+          ? `${prCount} PRs`
+          : "No PRs";
+  // Prefer "N to review" when attention needed; otherwise plain PR count.
+  const badgeCount = needsReviewCount > 0 ? needsReviewCount : prCount;
+  const badgeLabel =
+    needsReviewCount > 0 ? "to review" : statusCfg.label === "Complete" ? "ok" : "";
+
   return (
     <div
       role="button"
@@ -340,26 +370,30 @@ function RepoRow({
           : "border-transparent hover:bg-white/5 text-slate-400 hover:text-white"
       }`}
     >
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2 min-w-0">
-          <Folder size={13} className={isRepoSelected ? "text-cyan-400" : "text-slate-500"} />
-          <span className="text-xs font-bold tracking-tight truncate font-mono">{repo.name}</span>
-          {(repo.status === "error" || repo.lastFetchError) && (
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 min-w-0 flex-1">
+          <Folder size={13} className={`shrink-0 ${isRepoSelected ? "text-cyan-400" : "text-slate-500"}`} />
+          <span className="text-xs font-bold tracking-tight truncate font-mono" title={repo.name}>
+            {repo.name}
+          </span>
+          {cloneBroken && (
             <span
-              className="text-[8px] font-mono font-bold px-1 py-0.2 rounded bg-red-950 text-red-400 border border-red-500/30 shrink-0"
+              className="shrink-0 text-red-400"
               title={repo.lastFetchError || "Clone or fetch failed"}
               data-testid={`sidebar-repo-clone-failed-${repo.id}`}
+              aria-label="Clone failed"
             >
-              clone-failed
+              <XCircle size={12} />
             </span>
           )}
-          {repo.status === "cloning" && !repo.lastFetchError && (
+          {repo.status === "cloning" && !cloneBroken && (
             <span
-              className="text-[8px] font-mono font-bold px-1 py-0.2 rounded bg-amber-950 text-amber-400 border border-amber-500/30 shrink-0"
+              className="shrink-0 text-amber-400"
               title="Clone in progress"
               data-testid={`sidebar-repo-cloning-${repo.id}`}
+              aria-label="Cloning"
             >
-              cloning
+              <Loader2 size={12} className="animate-spin" />
             </span>
           )}
           {isShared && (
@@ -367,24 +401,29 @@ function RepoRow({
               className="text-[8px] font-mono font-bold px-1 py-0.2 rounded bg-slate-800 text-slate-400 border border-white/5 shrink-0"
               title="Shared with you"
             >
-              <Users size={8} className="inline-block mr-0.5" />
-              shared
+              <Users size={8} className="inline-block" />
             </span>
           )}
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
-          <span className="text-[8px] font-mono px-1 rounded bg-slate-800 text-slate-400 font-bold">
-            {repo.triggerMode}
-          </span>
+          {repo.triggerMode && repo.triggerMode !== "auto" && (
+            <span className="text-[8px] font-mono px-1 rounded bg-slate-800 text-slate-400 font-bold">
+              {repo.triggerMode}
+            </span>
+          )}
           {prCount > 0 ? (
             <span
-              className={`text-[9px] font-mono font-extrabold px-1.5 py-0.2 rounded-full leading-tight border flex items-center gap-1 ${statusCfg.badgeClass}`}
-              title={`${prCount} PRs — ${statusCfg.label || "No reviews yet"}`}
+              className={`text-[9px] font-mono font-extrabold px-1.5 py-0.2 rounded-full leading-tight border flex items-center gap-1 ${
+                cloneBroken
+                  ? "bg-red-500/15 text-red-300 border-red-500/30"
+                  : statusCfg.badgeClass
+              }`}
+              title={badgeTitle}
             >
-              {statusCfg.icon}
-              <span>{prCount}</span>
-              {statusCfg.label && (
-                <span className="hidden xl:inline text-[7px] uppercase tracking-wider">{statusCfg.label}</span>
+              {cloneBroken ? <XCircle size={9} /> : statusCfg.icon}
+              <span>{badgeCount}</span>
+              {badgeLabel && (
+                <span className="hidden 2xl:inline text-[7px] uppercase tracking-wider">{badgeLabel}</span>
               )}
             </span>
           ) : (
