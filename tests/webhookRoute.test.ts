@@ -111,6 +111,7 @@ describe("webhooks/github/route POST", () => {
       },
     );
     mocks.mockEnqueue.mockResolvedValue("/tmp/remote-repo");
+    mocks.mockGitFetch.mockResolvedValue(true);
     mocks.mockCheckDelivery.mockReturnValue(false);
     mocks.mockScanRepoPrs.mockResolvedValue(["pr-1"]);
     mocks.mockRunPrScan.mockResolvedValue(undefined);
@@ -330,6 +331,29 @@ describe("webhooks/github/route POST", () => {
     expect(mocks.mockRunPrScan).toHaveBeenCalledWith("pr-1");
     const body = await res.json();
     expect(body.afkScans).toBe(1);
+  });
+
+  it("marks delivery failed when git fetch returns false", async () => {
+    mocks.mockGitFetch.mockResolvedValue(false);
+    mocks.mockCreateDeliveryLog.mockResolvedValue("delivery-fetch");
+    const req = buildRequest({
+      event: "push",
+      body: {
+        repository: { clone_url: "https://github.com/owner/repo.git" },
+      },
+    });
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+    expect(mocks.mockScanRepoPrs).not.toHaveBeenCalled();
+    expect(mocks.mockRunPrScan).not.toHaveBeenCalled();
+    const body = await res.json();
+    expect(body.afkScans).toBe(0);
+    expect(body.error).toContain("git fetch failed");
+    expect(mocks.mockUpdateDeliveryStatus).toHaveBeenCalledWith(
+      "delivery-fetch",
+      "failed",
+      expect.stringContaining("clone-failed"),
+    );
   });
 
   it("handles enqueue failure gracefully (no AFK scan) and marks delivery failed", async () => {

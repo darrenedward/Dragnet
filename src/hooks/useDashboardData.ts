@@ -778,6 +778,14 @@ export function useDashboardData() {
           result.message ||
             "Codebase not indexed. Click \"Index Now\" above to build the codebase index, then retry the review.",
         );
+      } else if (
+        res.status === 503 &&
+        (result.error === "CLONE_FAILED" || result.error === "DIFF_UNAVAILABLE" || result.gate === "CLONE_FAILED")
+      ) {
+        setPrs((prev) =>
+          prev.map((p) => (p.id === targetPrId ? { ...p, status: "Pending" } : p)),
+        );
+        toast.warn(result.message || "Repository clone is not ready for scan.");
       } else if (res.status === 409 && result.error === "SCAN_IN_PROGRESS") {
         // Active or stale-but-not-yet-reaped scan is holding the lock.
         // If the user didn't already opt into force, offer it; otherwise

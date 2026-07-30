@@ -98,7 +98,10 @@ export async function POST(request: Request) {
   /** Refresh clone + PR list; on clone failure mark delivery failed (still HTTP 200). */
   const refreshCloneAndPrs = async (): Promise<{ prIds: string[]; cloneError?: string }> => {
     if (matched.path || matched.cloneUrl) {
-      await gitFetch(matched);
+      const ok = await gitFetch(matched);
+      if (!ok) {
+        return { prIds: [], cloneError: "git fetch failed" };
+      }
       return { prIds: await scanRepoPrs(matched) };
     }
     try {
@@ -106,7 +109,10 @@ export async function POST(request: Request) {
       if (!localPath) {
         return { prIds: [], cloneError: "Clone/fetch already in progress" };
       }
-      await gitFetch({ ...matched, path: localPath });
+      const ok = await gitFetch({ ...matched, path: localPath });
+      if (!ok) {
+        return { prIds: [], cloneError: "git fetch failed" };
+      }
       return { prIds: await scanRepoPrs({ ...matched, path: localPath }) };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
