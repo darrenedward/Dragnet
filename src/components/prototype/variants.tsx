@@ -22,9 +22,6 @@ export function VariantC({
             Active pull request
           </div>
           <MainStatusRow repo={repo} pr={pr} queuePos={queuePos} />
-          {!pr.mergeReady && pr.mergeReason && (
-            <p className="text-[11px] font-mono text-slate-500 max-w-lg">{pr.mergeReason}</p>
-          )}
         </div>
         <Actions disabled={blocked} />
       </div>
