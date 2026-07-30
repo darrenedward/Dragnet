@@ -48,8 +48,30 @@ export async function register(): Promise<void> {
             headers: { "Content-Type": "application/json", "x-dragnet-queue-worker": workerKey },
             body: "{}",
           });
-          const body = await res.json().catch(() => ({}));
-          if (!res.ok) throw new Error(body.error || `scan route returned ${res.status}`);
+          const body = await res.json().catch(() => ({} as Record<string, unknown>));
+          if (!res.ok) {
+            const { parseScanGate } = await import("./lib/scanPrelude");
+            const rawError = typeof body.error === "string" ? body.error : null;
+            const message =
+              typeof body.message === "string"
+                ? body.message
+                : rawError || `scan route returned ${res.status}`;
+            // Only durable "Blocked at {gate}" for real prelude gates — never
+            // prefix arbitrary 4xx/5xx errors (SCAN_IN_PROGRESS, 500s, etc.).
+            const gateCode =
+              (typeof body.gate === "string" ? parseScanGate(body.gate) : null) ||
+              parseScanGate(rawError) ||
+              parseScanGate(message);
+            const errorMessage =
+              gateCode && !message.startsWith("Blocked at ")
+                ? `Blocked at ${gateCode}. ${message}`
+                : message;
+            return {
+              state: "failed" as const,
+              errorMessage,
+              reviewRunId: typeof body.runId === "string" ? body.runId : null,
+            };
+          }
           return {
             state: body.interrupted ? "interrupted" : "completed",
             reviewRunId: typeof body.runId === "string" ? body.runId : null,

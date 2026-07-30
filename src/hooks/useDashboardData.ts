@@ -87,6 +87,7 @@ export function useDashboardData() {
     model: string | null;
     triggerReason: string | null;
     reliability?: string | null;
+    refused?: boolean | null;
     status?: string; // lifecycle: "in_progress" | "completed" | "failed"
     outcome?: string | null; // "reviewed" | "skipped" | null (legacy / failed)
     chunksTotal?: number;
@@ -132,6 +133,9 @@ export function useDashboardData() {
     state: "queued" | "running" | "completed" | "failed" | "cancelled" | "interrupted";
     queuePosition: number | null;
   } | null>(null);
+  const [mergeReady, setMergeReady] = useState<boolean | null>(null);
+  const [mergeReadyMessage, setMergeReadyMessage] = useState<string | null>(null);
+  const [blockedGate, setBlockedGate] = useState<string | null>(null);
   const [activeScanChunks, setActiveScanChunks] = useState<ReviewChunk[]>([]);
   // Phase 7 — when a scan comes back as `status: "interrupted"`, store
   // the resume metadata so the UI can render a Continue / Start fresh
@@ -168,8 +172,6 @@ export function useDashboardData() {
     source: string | null;
   }>>([]);
   const [stale, setStale] = useState(false);
-  const [mergeReady, setMergeReady] = useState(false);
-  const [mergeBlockReason, setMergeBlockReason] = useState<string | null>(null);
   const [stability, setStability] = useState<import("@/src/lib/stabilityScore").StabilityProp | null>(null);
   const [logs, setLogs] = useState<ActivityLog[]>([]);
 
@@ -288,6 +290,9 @@ export function useDashboardData() {
       setRejectedCount(0);
       setRejectedFindings([]);
       setStale(false);
+      setMergeReady(null);
+      setMergeReadyMessage(null);
+      setBlockedGate(null);
     }
 
     try {
@@ -360,6 +365,9 @@ export function useDashboardData() {
       setRejectedCount(0);
       setRejectedFindings([]);
       setStale(false);
+      setMergeReady(null);
+      setMergeReadyMessage(null);
+      setBlockedGate(null);
     }
     try {
       const filesRes = await fetchJson(`/api/prs/${prId}/files`);
@@ -386,6 +394,29 @@ export function useDashboardData() {
         setReviewChunks(findingsData.chunks ?? []);
         setActiveScan(findingsData.activeScan ?? null);
         setQueueJob(findingsData.queueJob ?? null);
+        setMergeReady(
+          typeof findingsData.mergeReady === "boolean" ? findingsData.mergeReady : null,
+        );
+        setMergeReadyMessage(
+          typeof findingsData.mergeReadyMessage === "string" ? findingsData.mergeReadyMessage : null,
+        );
+        setBlockedGate(
+          typeof findingsData.blockedGate === "string" ? findingsData.blockedGate : null,
+        );
+        // Terminal gate failure: clear optimistic In Progress so the PR never
+        // looks like a successful empty review after a blocked worker run.
+        if (
+          typeof findingsData.blockedGate === "string" &&
+          !findingsData.queueJob &&
+          !findingsData.activeScan
+        ) {
+          setPrs((prev) =>
+            prev.map((p) =>
+              p.id === prId && p.status === "In Progress" ? { ...p, status: "Pending" } : p,
+            ),
+          );
+          setIsScanning(false);
+        }
         setActiveScanChunks(findingsData.activeChunks ?? []);
         setActiveFindings(findingsData.activeFindings ?? []);
         setActiveIterations(findingsData.activeIterations ?? {});
@@ -393,8 +424,12 @@ export function useDashboardData() {
         setRejectedFindings(findingsData.rejectedFindings ?? []);
         setStale(Boolean(findingsData.stale));
         setMergeReady(Boolean(findingsData.mergeReady));
-        setMergeBlockReason(
-          typeof findingsData.mergeBlockReason === "string" ? findingsData.mergeBlockReason : null,
+        setMergeReadyMessage(
+          typeof findingsData.mergeBlockReason === "string"
+            ? findingsData.mergeBlockReason
+            : typeof findingsData.mergeReadyMessage === "string"
+              ? findingsData.mergeReadyMessage
+              : null,
         );
         setStability(findingsData.stability ? { ...findingsData.stability, weightedStability: findingsData.weightedStability ?? undefined } : null);
         if (findingsData.sizeProfile) {
@@ -409,19 +444,20 @@ export function useDashboardData() {
         setReviewChunks([]);
         setActiveScan(null);
         setQueueJob(null);
+        setMergeReady(null);
+        setMergeReadyMessage(null);
+        setBlockedGate(null);
         setActiveScanChunks([]);
         setActiveFindings([]);
         setActiveIterations({});
         setRejectedCount(0);
         setRejectedFindings([]);
         setStale(false);
-        setMergeReady(false);
-        setMergeBlockReason(null);
       }
     } catch (e) {
       setStale(true);
-      setMergeReady(false);
-      setMergeBlockReason(null);
+      setMergeReady(null);
+      setMergeReadyMessage(null);
       console.error("Failed retrieving PR files/findings detailed block", e);
     }
   };
@@ -480,6 +516,10 @@ export function useDashboardData() {
     setExportStatus(null);
     setInterruptedScan(null);
     setTrivialSkipNotice(null);
+    setMergeReady(null);
+    setMergeReadyMessage(null);
+    setBlockedGate(null);
+    setQueueJob(null);
   }, [selectedRepoId, selectedPrId]);
 
   // Fetch PRs + details immediately when selection changes (no polling reset).
@@ -642,12 +682,16 @@ export function useDashboardData() {
     setActiveIterations({});
     setRejectedCount(0);
     setRejectedFindings([]);
+    setMergeReady(null);
+    setMergeReadyMessage(null);
+    setBlockedGate(null);
 
     setPrs((prev) =>
       prev.map((p) => (p.id === targetPrId ? { ...p, status: "In Progress" } : p)),
     );
 
     const activeRepoName = repos.find((r) => r.id === scanningRepoId)?.name || scanningRepoId;
+    let queueAccepted = false;
 
     try {
       const url = `/api/prs/${targetPrId}/scan${force ? "?force=true" : ""}`;
@@ -662,6 +706,25 @@ export function useDashboardData() {
 
       const result = await res.json();
       console.log(`[scan] handleTriggerPrScan: response status=${res.status}, findings=${result.findings?.length}, rating=${result.rating}, model=${result.usedModel}, status=${result.status ?? "(none)"}`);
+      // Queue admit (HTTP 202): keep UI in Queued/Running until the job is
+      // terminal — never treat accept as an empty successful review.
+      if (res.status === 202 && result.accepted) {
+        queueAccepted = true;
+        setBlockedGate(null);
+        setQueueJob({
+          jobId: result.jobId,
+          state: result.state ?? "queued",
+          queuePosition: result.queuePosition ?? null,
+        });
+        setPrs((prev) =>
+          prev.map((p) => (p.id === targetPrId ? { ...p, status: "In Progress" } : p)),
+        );
+        // Do not apply findings/rating from the admit body — there are none.
+        if (isTargetActive(scanningRepoId, targetPrId)) {
+          await fetchPrDetails(targetPrId, false);
+        }
+        return;
+      }
       // Phase 7 — interrupted scan with valid checkpoint. Don't treat
       // as success or failure; store the resume metadata and let the
       // banner drive Continue / Start fresh.
@@ -697,6 +760,7 @@ export function useDashboardData() {
         setInterruptedScan(null);
       }
       if (res.ok) {
+        setBlockedGate(null);
         await fetchDashboardMetrics();
         if (result.sizeProfile) {
           setPrs((prev) =>
@@ -734,7 +798,11 @@ export function useDashboardData() {
         await fetchRepos();
         await fetchLogs();
         console.log(`[scan] handleTriggerPrScan: refetch complete`);
-      } else if (res.status === 400 && result.error === "SCAN_CONFIGURATION_REQUIRED") {
+      } else if (res.status === 400 && (result.error === "SCAN_CONFIGURATION_REQUIRED" || result.gate === "CONFIG_REQUIRED")) {
+        setBlockedGate(typeof result.gate === "string" ? result.gate : "CONFIG_REQUIRED");
+        setPrs((prev) =>
+          prev.map((p) => (p.id === targetPrId ? { ...p, status: "Pending" } : p)),
+        );
         setScanConfigurationIssue({
           message: result.message || "Configure the required LLM providers before starting a review.",
           issues: Array.isArray(result.issues) ? result.issues : [],
@@ -754,6 +822,14 @@ export function useDashboardData() {
           result.message ||
             "Codebase not indexed. Click \"Index Now\" above to build the codebase index, then retry the review.",
         );
+      } else if (
+        res.status === 503 &&
+        (result.error === "CLONE_FAILED" || result.error === "DIFF_UNAVAILABLE" || result.gate === "CLONE_FAILED")
+      ) {
+        setPrs((prev) =>
+          prev.map((p) => (p.id === targetPrId ? { ...p, status: "Pending" } : p)),
+        );
+        toast.warn(result.message || "Repository clone is not ready for scan.");
       } else if (res.status === 409 && result.error === "SCAN_IN_PROGRESS") {
         // Active or stale-but-not-yet-reaped scan is holding the lock.
         // If the user didn't already opt into force, offer it; otherwise
@@ -770,6 +846,27 @@ export function useDashboardData() {
         } else if (window.confirm(`${msg}\n\nForce restart? This will reap the existing run and start a fresh one.`)) {
           await handleTriggerPrScan({ force: true });
         }
+      } else if (
+        typeof result.gate === "string" ||
+        result.error === "INDEX_REQUIRED" ||
+        result.error === "INDEXING_IN_PROGRESS" ||
+        result.error === "REINDEX_FAILED" ||
+        result.error === "DIFF_UNAVAILABLE" ||
+        result.error === "CLONE_FAILED" ||
+        result.error === "STALE_INDEX"
+      ) {
+        const gate =
+          typeof result.gate === "string"
+            ? result.gate
+            : typeof result.error === "string"
+              ? result.error
+              : "UNKNOWN";
+        setBlockedGate(gate);
+        setPrs((prev) =>
+          prev.map((p) => (p.id === targetPrId ? { ...p, status: "Pending" } : p)),
+        );
+        const msg = result.message || `Blocked at ${gate}.`;
+        toast.warn(msg.startsWith("Blocked at ") ? msg : `Blocked at ${gate}. ${msg}`);
       } else {
         setPrs((prev) =>
           prev.map((p) => (p.id === targetPrId ? { ...p, status: "Failed" } : p)),
@@ -1141,14 +1238,16 @@ export function useDashboardData() {
       reviewChunks,
       activeScan,
       queueJob,
+      mergeReady,
+      mergeReadyMessage,
+      mergeBlockReason: mergeReadyMessage,
+      blockedGate,
       activeScanChunks,
       activeFindings,
       activeIterations,
       rejectedCount,
       rejectedFindings,
       stale,
-      mergeReady,
-      mergeBlockReason,
       stability,
       repoIndexedAt: repos.find((repo) => repo.id === selectedRepoId)?.indexedAt ?? null,
       interruptedScan,

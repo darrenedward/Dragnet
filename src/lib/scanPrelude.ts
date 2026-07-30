@@ -37,6 +37,11 @@ export type ScanPreludeResult = ScanPreludePass | ScanPreludeFail;
 export interface ScanPreludeRepo extends RepoForFreshness {
   path?: string | null;
   cloneUrl?: string | null;
+  /** Repository lifecycle status (e.g. cloning, error, idle). */
+  status?: string | null;
+  /** Last clone/fetch failure reason when status is error. */
+  lastFetchError?: string | null;
+  provider?: string | null;
 }
 
 export interface ScanPreludeDeps {
@@ -101,6 +106,10 @@ export async function runScanPrelude(
       issues,
     };
   }
+
+  // Clone-ready gate for remote repos — fail closed before index/diff work.
+  const cloneGate = cloneReadyResult(repo);
+  if (cloneGate) return cloneGate;
 
   const freshness = await d.assertIndexFresh(repo);
   if (freshness.ok === true) {
@@ -194,6 +203,40 @@ export async function runScanPrelude(
 }
 
 /**
+ * When a remote repo is still cloning or last fetch failed, block scan with
+ * CLONE_FAILED so operators never treat clone-failed as an empty success.
+ * Local-path repos and already-ready remotes return null (continue prelude).
+ */
+export function cloneReadyResult(repo: ScanPreludeRepo): ScanPreludeFail | null {
+  const isRemote = Boolean(repo.cloneUrl) && repo.provider !== "local";
+  if (!isRemote) return null;
+
+  if (repo.status === "error" || repo.lastFetchError) {
+    const detail = repo.lastFetchError?.trim() || "clone or fetch failed";
+    return {
+      ok: false,
+      gate: "CLONE_FAILED",
+      message: `Clone failed — repository is not ready for scan: ${detail}`,
+      httpStatus: 503,
+      repoId: repo.id,
+    };
+  }
+
+  if (repo.status === "cloning") {
+    return {
+      ok: false,
+      gate: "CLONE_FAILED",
+      message:
+        "Clone is still in progress — wait for the repository to finish cloning before running a PR review.",
+      httpStatus: 503,
+      repoId: repo.id,
+    };
+  }
+
+  return null;
+}
+
+/**
  * Classify a sync/diff failure into a stable gate. Callers use this when
  * refreshPrFiles / syncCloneForPr throws so empty diffs are never treated
  * as "no code changes."
@@ -243,4 +286,39 @@ export function preludeFailToJson(fail: ScanPreludeFail): Record<string, unknown
     gate: fail.gate,
     ...(fail.repoId ? { repoId: fail.repoId } : {}),
   };
+}
+
+const GATE_CODES: ReadonlySet<string> = new Set([
+  "CONFIG_REQUIRED",
+  "INDEX_REQUIRED",
+  "INDEXING_IN_PROGRESS",
+  "STALE_INDEX",
+  "REINDEX_FAILED",
+  "DIFF_UNAVAILABLE",
+  "CLONE_FAILED",
+]);
+
+/** Extract a stable gate code from a scan/job error payload or message. */
+export function parseScanGate(
+  value: string | null | undefined,
+): ScanGateCode | null {
+  if (!value) return null;
+  if (GATE_CODES.has(value)) return value as ScanGateCode;
+  // "Blocked at INDEX_REQUIRED: …" or bare code embedded in text
+  const blocked = value.match(/\bBlocked at ([A-Z_]+)\b/i);
+  if (blocked && GATE_CODES.has(blocked[1]!.toUpperCase())) {
+    return blocked[1]!.toUpperCase() as ScanGateCode;
+  }
+  if (value === "SCAN_CONFIGURATION_REQUIRED") return "CONFIG_REQUIRED";
+  for (const code of GATE_CODES) {
+    if (value === code || value.startsWith(`${code}:`) || value.includes(` ${code}`)) {
+      return code as ScanGateCode;
+    }
+  }
+  return null;
+}
+
+/** Operator-facing label for a blocked gate. */
+export function blockedAtLabel(gate: ScanGateCode | string): string {
+  return `Blocked at ${gate}`;
 }

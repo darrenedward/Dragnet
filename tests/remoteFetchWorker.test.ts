@@ -75,6 +75,7 @@ beforeEach(() => {
   }
   mockRunRunner.mockResolvedValue({ exitCode: 0, stdout: "", stderr: "", timedOut: false });
   mockCopyVolumeToHost.mockResolvedValue(undefined);
+  mockUpdate.mockResolvedValue({});
 });
 
 afterEach(() => {
@@ -253,7 +254,7 @@ describe("enqueue", () => {
       expect(mockIndexFolder).toHaveBeenCalledWith("test-repo-1", "/tmp/legacy-repo");
     });
 
-    it("updates lastFetchAt in host mode", async () => {
+    it("updates lastFetchAt and clears error in host mode", async () => {
       mockExecFileSync.mockReturnValue("");
       const { enqueue } = await import("../src/services/remoteFetchWorker");
       mockFindUnique.mockResolvedValue(makeRepo({ localPath: "/tmp/legacy-repo" }));
@@ -263,14 +264,18 @@ describe("enqueue", () => {
       expect(mockUpdate).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { id: "test-repo-1" },
-          data: expect.objectContaining({ lastFetchAt: expect.any(Date) }),
+          data: expect.objectContaining({
+            lastFetchAt: expect.any(Date),
+            lastFetchError: null,
+            status: "idle",
+          }),
         }),
       );
     });
   });
 
   describe("error handling", () => {
-    it("throws when git sync fails (non-zero exit)", async () => {
+    it("throws when git sync fails (non-zero exit) and persists clone-failed", async () => {
       const { enqueue } = await import("../src/services/remoteFetchWorker");
       mockFindUnique.mockResolvedValue(makeRepo());
       mockRunRunner.mockResolvedValue({
@@ -281,9 +286,18 @@ describe("enqueue", () => {
       });
 
       await expect(enqueue("test-repo-1")).rejects.toThrow("Git sync failed");
+      expect(mockUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "test-repo-1" },
+          data: expect.objectContaining({
+            status: "error",
+            lastFetchError: expect.stringContaining("Git sync failed"),
+          }),
+        }),
+      );
     });
 
-    it("throws when git sync times out", async () => {
+    it("throws when git sync times out and persists clone-failed", async () => {
       const { enqueue } = await import("../src/services/remoteFetchWorker");
       mockFindUnique.mockResolvedValue(makeRepo());
       mockRunRunner.mockResolvedValue({
@@ -294,6 +308,15 @@ describe("enqueue", () => {
       });
 
       await expect(enqueue("test-repo-1")).rejects.toThrow("timed out");
+      expect(mockUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "test-repo-1" },
+          data: expect.objectContaining({
+            status: "error",
+            lastFetchError: expect.stringContaining("timed out"),
+          }),
+        }),
+      );
     });
 
     it("throws when DRAGNET_MASTER_KEY is not set and deployKey is present", async () => {
@@ -313,7 +336,7 @@ describe("enqueue", () => {
   });
 
   describe("lastFetchAt update", () => {
-    it("updates lastFetchAt after successful clone", async () => {
+    it("updates lastFetchAt and clears error after successful clone", async () => {
       const { enqueue } = await import("../src/services/remoteFetchWorker");
       mockFindUnique.mockResolvedValue(makeRepo());
 
@@ -322,7 +345,11 @@ describe("enqueue", () => {
       expect(mockUpdate).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { id: "test-repo-1" },
-          data: expect.objectContaining({ lastFetchAt: expect.any(Date) }),
+          data: expect.objectContaining({
+            lastFetchAt: expect.any(Date),
+            lastFetchError: null,
+            status: "idle",
+          }),
         }),
       );
     });

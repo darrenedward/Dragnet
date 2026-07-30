@@ -24,6 +24,7 @@ import ReviewCard from "./prs/ReviewCard";
 import BugFixFeed from "./prs/BugFixFeed";
 import ScanHistory from "./prs/ScanHistory";
 import PrSizeProfileChip from "../PrSizeProfileChip";
+import SeamChips, { type SeamChipInput } from "./prs/SeamChips";
 import type { ReviewLimits } from "../../lib/prSizeConfig";
 import type { StabilityProp } from "../../lib/stabilityScore";
 
@@ -59,6 +60,7 @@ interface Props {
     model: string | null;
     triggerReason: string | null;
     reliability?: string | null;
+    refused?: boolean | null;
     status?: string; // lifecycle: "in_progress" | "completed" | "failed"
     outcome?: string | null; // "reviewed" | "skipped" | null (legacy / failed)
     chunksTotal?: number;
@@ -120,7 +122,7 @@ interface Props {
   }>;
   stale?: boolean;
   /** Shared merge gate from findings payload — not the same as status Completed. */
-  mergeReady?: boolean;
+  mergeReady?: boolean | null;
   mergeBlockReason?: string | null;
   onCopySuggestion: (text: string, id: string) => void;
   copyFeedback: string | null;
@@ -136,6 +138,10 @@ interface Props {
   interruptedScan?: InterruptedScan | null;
   onContinueScan?: (prId: string) => void;
   onStartFreshScan?: (prId: string) => void;
+  mergeReadyMessage?: string | null;
+  blockedGate?: string | null;
+  /** Optional repo/pipeline fields for glanceable seam chips. */
+  seamInput?: SeamChipInput | null;
 }
 
 export default function PrsView({
@@ -163,6 +169,8 @@ export default function PrsView({
   stale,
   mergeReady,
   mergeBlockReason,
+  mergeReadyMessage,
+  blockedGate,
   onCopySuggestion,
   copyFeedback,
   prFiles,
@@ -175,7 +183,9 @@ export default function PrsView({
   interruptedScan,
   onContinueScan,
   onStartFreshScan,
+  seamInput,
 }: Props) {
+  const notReadyReason = mergeBlockReason ?? mergeReadyMessage ?? null;
   const scanSettings = useScanSettingsSummary();
 
   return (
@@ -209,7 +219,9 @@ export default function PrsView({
           onStartFreshScan={onStartFreshScan}
           queueJob={queueJob}
           mergeReady={mergeReady}
-          mergeBlockReason={mergeBlockReason}
+          mergeReadyMessage={mergeReadyMessage}
+          blockedGate={blockedGate}
+          seamInput={seamInput}
         />
 
         <div className="space-y-4 min-w-0 mt-4 flex-1 overflow-y-auto overflow-x-hidden min-h-0 pr-1">
@@ -320,7 +332,9 @@ function PrHeader({
   onStartFreshScan,
   queueJob,
   mergeReady,
-  mergeBlockReason,
+  mergeReadyMessage,
+  blockedGate,
+  seamInput,
 }: {
   activePR: PullRequest | undefined;
   isScanning: boolean;
@@ -337,6 +351,8 @@ function PrHeader({
     outcome?: string | null;
     rating?: number | null;
     completedAt?: string | null;
+    reliability?: string | null;
+    refused?: boolean | null;
   } | null;
   scanSettings: ScanSettingsSummary | null;
   repoId?: string;
@@ -346,11 +362,16 @@ function PrHeader({
   onContinueScan?: (prId: string) => void;
   onStartFreshScan?: (prId: string) => void;
   queueJob?: { jobId: string; state: string; queuePosition: number | null } | null;
-  mergeReady?: boolean;
-  mergeBlockReason?: string | null;
+  mergeReady?: boolean | null;
+  mergeReadyMessage?: string | null;
+  blockedGate?: string | null;
+  seamInput?: SeamChipInput | null;
 }) {
+  const notReadyReason = mergeReadyMessage ?? null;
+
   const scanning = isScanning || activePR?.status === "In Progress";
   const queued = queueJob?.state === "queued";
+  const runningQueued = queueJob?.state === "running";
   // Label/color/tooltip decision tree for the "Run PR Review" button.
   // Pure function of the selected PR's persisted scan state — no
   // dashboard-level sticky memory, so switching PRs can never leak a
@@ -394,14 +415,45 @@ function PrHeader({
                 QUEUED{queueJob?.queuePosition ? ` #${queueJob.queuePosition}` : ""}
               </span>
             )}
+            {runningQueued && (
+              <span className="px-2 py-0.5 rounded uppercase font-extrabold text-[9px] font-mono bg-blue-500/10 text-blue-300 border border-blue-500/25">
+                RUNNING
+              </span>
+            )}
             <span
               className={`px-2 py-0.5 rounded uppercase font-extrabold text-[9px] font-mono flex items-center gap-1.5 shrink-0 select-none ${getStatusBadgeStyle(activePR.status)}`}
             >
-              {activePR.status === "In Progress" && (
+              {(activePR.status === "In Progress" || queued || runningQueued) && (
                 <span className="inline-block w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
               )}
-              <span>{activePR.status}</span>
+              <span>{queued || runningQueued ? "In Progress" : activePR.status}</span>
             </span>
+            {blockedGate && !queued && !runningQueued && (
+              <span
+                title={mergeReadyMessage ?? `Blocked at ${blockedGate}`}
+                className="px-2 py-0.5 rounded uppercase font-mono text-[9px] font-bold border bg-amber-500/10 text-amber-300 border-amber-500/30 max-w-[260px] truncate"
+              >
+                Blocked at {blockedGate}
+              </span>
+            )}
+            {activePR.status === "Completed" && !blockedGate && !queued && !runningQueued && (
+              <span className="px-2 py-0.5 rounded uppercase font-mono text-[9px] font-bold border bg-slate-500/10 text-slate-300 border-slate-500/25">
+                Scan finished
+              </span>
+            )}
+            {mergeReady === true && !blockedGate && !queued && !runningQueued && (
+              <span className="px-2 py-0.5 rounded uppercase font-mono text-[9px] font-bold border bg-emerald-500/10 text-emerald-400 border-emerald-500/25">
+                Merge ready
+              </span>
+            )}
+            {mergeReady === false && mergeReadyMessage && !scanning && !queued && !runningQueued && !blockedGate && (
+              <span
+                title={mergeReadyMessage}
+                className="px-2 py-0.5 rounded uppercase font-mono text-[9px] font-bold border bg-rose-500/10 text-rose-400 border-rose-500/20 max-w-[220px] truncate"
+              >
+                Not ready
+              </span>
+            )}
             {activePR.rating !== undefined && activePR.rating !== null && (
               <span
                 className={`px-2 py-0.5 rounded uppercase font-mono text-[9px] font-bold border ${
@@ -419,7 +471,7 @@ function PrHeader({
                 title={
                   mergeReady
                     ? "Shared merge gate passed — rating, outcome, reliability, and freshness"
-                    : mergeBlockReason ?? "Not merge-ready"
+                    : notReadyReason ?? "Not merge-ready"
                 }
                 className={`px-2 py-0.5 rounded uppercase font-mono text-[9px] font-bold border ${
                   mergeReady
@@ -429,9 +481,26 @@ function PrHeader({
               >
                 {mergeReady
                   ? "Merge ready"
-                  : `Not ready${mergeBlockReason ? ` (${mergeBlockReason})` : ""}`}
+                  : `Not ready${notReadyReason ? ` (${notReadyReason})` : ""}`}
               </span>
             )}
+          </div>
+          <div className="pt-1.5">
+            <SeamChips
+              input={{
+                ...(seamInput ?? {}),
+                indexedAt: seamInput?.indexedAt ?? repoIndexedAt,
+                runStatus: queued
+                  ? "queued"
+                  : scanning
+                    ? "in_progress"
+                    : (seamInput?.runStatus ?? reviewRun?.status),
+                runOutcome: seamInput?.runOutcome ?? reviewRun?.outcome,
+                reliability: seamInput?.reliability ?? reviewRun?.reliability,
+                rating: seamInput?.rating ?? reviewRun?.rating,
+                refused: seamInput?.refused ?? reviewRun?.refused,
+              }}
+            />
           </div>
           <h3 className="text-base sm:text-lg font-bold text-white tracking-tight mt-1">{activePR.title}</h3>
           <PrDescription

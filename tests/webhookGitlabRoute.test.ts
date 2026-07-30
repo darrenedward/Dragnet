@@ -8,7 +8,7 @@ const mocks = vi.hoisted(() => ({
   mockEnqueue: vi.fn(),
   mockCheckDelivery: vi.fn(),
   mockRunPrScan: vi.fn(),
-  mockAdmitScanJobForPr: vi.fn((input: { prId: string }) => {
+  mockAdmitAfkScanJobForPr: vi.fn((input: { prId: string }) => {
     mocks.mockRunPrScan(input.prId);
     return Promise.resolve({ jobId: `job-${input.prId}`, prId: input.prId, state: "queued", queuePosition: 1 });
   }),
@@ -39,7 +39,7 @@ vi.mock("@/src/services/reviewService", () => ({
 }));
 
 vi.mock("@/src/services/scanQueue", () => ({
-  admitAfkScanJobForPr: mocks.mockAdmitScanJobForPr,
+  admitAfkScanJobForPr: mocks.mockAdmitAfkScanJobForPr,
 }));
 
 vi.mock("../src/services/hostedScan/orchestrator", () => ({
@@ -92,9 +92,14 @@ describe("webhooks/gitlab/route POST", () => {
       (token: string, secret: string) => token === secret,
     );
     mocks.mockEnqueue.mockResolvedValue("/tmp/remote-repo");
+    mocks.mockGitFetch.mockResolvedValue(true);
     mocks.mockCheckDelivery.mockReturnValue(false);
     mocks.mockScanRepoPrs.mockResolvedValue(["pr-1"]);
     mocks.mockRunPrScan.mockResolvedValue(undefined);
+    mocks.mockAdmitAfkScanJobForPr.mockImplementation((input: { prId: string }) => {
+      mocks.mockRunPrScan(input.prId);
+      return Promise.resolve({ jobId: `job-${input.prId}`, prId: input.prId, state: "queued", queuePosition: 1 });
+    });
     mocks.mockCreateDeliveryLog.mockResolvedValue("del-1");
     mocks.mockUpdateDeliveryStatus.mockResolvedValue(undefined);
     mocks.mockTriggerHostedScan.mockResolvedValue({ ok: true, prId: "pr-42" });
@@ -287,7 +292,7 @@ describe("webhooks/gitlab/route POST", () => {
     expect(mocks.mockGitFetch).toHaveBeenCalledWith(expect.objectContaining({ id: "repo-1", path: "/tmp/remote-repo" }));
   });
 
-  it("handles enqueue failure gracefully", async () => {
+  it("handles enqueue failure gracefully and marks delivery failed", async () => {
     mocks.mockFindRepo.mockResolvedValue({
       id: "repo-1",
       localPath: null,
@@ -296,6 +301,7 @@ describe("webhooks/gitlab/route POST", () => {
       hostedMode: false,
     });
     mocks.mockEnqueue.mockRejectedValue(new Error("network error"));
+    mocks.mockCreateDeliveryLog.mockResolvedValue("delivery-gl-1");
     const req = buildRequest({
       event: "Push Hook",
       body: {
@@ -306,6 +312,14 @@ describe("webhooks/gitlab/route POST", () => {
     expect(res.status).toBe(200);
     expect(mocks.mockGitFetch).not.toHaveBeenCalled();
     expect(mocks.mockRunPrScan).not.toHaveBeenCalled();
+    const body = await res.json();
+    expect(body.afkScans).toBe(0);
+    expect(body.error).toContain("network error");
+    expect(mocks.mockUpdateDeliveryStatus).toHaveBeenCalledWith(
+      "delivery-gl-1",
+      "failed",
+      expect.stringContaining("clone-failed"),
+    );
   });
 
   it("returns ignored for unknown events", async () => {

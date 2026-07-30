@@ -110,6 +110,19 @@ DRAGNET_REPO_KEY=dr_your_key_here
 
 ---
 
+## Quality gates (deterministic checks)
+
+Per-repo **install** and **test** commands run in an ephemeral container (Tier 2) before the LLM review.
+
+| Setting | Default | Guidance |
+|---------|---------|----------|
+| `installCommand` | `npm install` | Dependency install only. Non-zero exit **fails the scan closed** (no LLM high score after a broken install). |
+| `testCommand` | `npm run typecheck && npm run lint` | Prefer **typecheck + lint**. Optional build can be appended. Full e2e/unit suites are **not** the default merge gate. |
+
+**Remote / volume-backed repos** (clone URL or Docker volume) skip host Tier 1 (local tsc/eslint) and use container Tier 2 only — no host/container double-run. Local path-only repos still run host Tier 1 when a real checkout exists.
+
+---
+
 ## Who can help
 
 Dragnet benefits from contributors with experience in:

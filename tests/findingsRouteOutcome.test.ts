@@ -62,6 +62,16 @@ vi.mock("@/src/lib/prSizeProfile.server", () => ({
   readPrCommitCount: mocks.mockReadPrCommitCount,
 }));
 
+const scanQueueMocks = vi.hoisted(() => ({
+  getScanJobForPr: vi.fn().mockResolvedValue(null),
+  getLatestScanJobForPr: vi.fn().mockResolvedValue(null),
+}));
+
+vi.mock("@/src/services/scanQueue", () => ({
+  getScanJobForPr: scanQueueMocks.getScanJobForPr,
+  getLatestScanJobForPr: scanQueueMocks.getLatestScanJobForPr,
+}));
+
 vi.mock("@/src/lib/prisma", () => ({
   prisma: {
     pullRequest: {
@@ -92,6 +102,8 @@ function makeFindingsRequest(prId: string): Request {
 describe("GET /api/prs/[prId]/findings — outcome field (#19)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    scanQueueMocks.getScanJobForPr.mockResolvedValue(null);
+    scanQueueMocks.getLatestScanJobForPr.mockResolvedValue(null);
     mocks.mockAuthenticateSessionOrKey.mockResolvedValue({
       ok: true,
       user: { id: "u1" },
@@ -299,5 +311,65 @@ describe("GET /api/prs/[prId]/findings — outcome field (#19)", () => {
       status: "failed",
       outcome: null,
     });
+  });
+
+  it("surfaces blockedGate from a failed queue job (prelude gate)", async () => {
+    mocks.mockGetLatestCompletedReview.mockResolvedValue({
+      reviewRun: null,
+      findings: [],
+      regressions: [],
+      rejectedFindings: [],
+      rejectedCount: 0,
+      stale: false,
+    });
+    scanQueueMocks.getLatestScanJobForPr.mockResolvedValue({
+      jobId: "job-1",
+      prId: "pr-blocked",
+      state: "failed",
+      errorMessage: "Blocked at INDEX_REQUIRED. index first",
+      queuePosition: null,
+    });
+
+    const res = await GET(makeFindingsRequest("pr-blocked"), {
+      params: Promise.resolve({ prId: "pr-blocked" }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.blockedGate).toBe("INDEX_REQUIRED");
+    expect(body.mergeReady).toBe(false);
+    expect(body.mergeReadyMessage).toContain("Blocked at INDEX_REQUIRED");
+  });
+
+  it("does not surface blockedGate while a job is still queued", async () => {
+    mocks.mockGetLatestCompletedReview.mockResolvedValue({
+      reviewRun: null,
+      findings: [],
+      regressions: [],
+      rejectedFindings: [],
+      rejectedCount: 0,
+      stale: false,
+    });
+    scanQueueMocks.getScanJobForPr.mockResolvedValue({
+      jobId: "job-active",
+      state: "queued",
+      queuePosition: 1,
+    });
+    scanQueueMocks.getLatestScanJobForPr.mockResolvedValue({
+      jobId: "job-active",
+      state: "queued",
+      errorMessage: null,
+    });
+
+    const res = await GET(makeFindingsRequest("pr-queued"), {
+      params: Promise.resolve({ prId: "pr-queued" }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.blockedGate).toBeNull();
+    expect(body.queueJob).toMatchObject({ state: "queued" });
+    // Queue accept is not a finished empty review
+    expect(body.mergeReady).toBe(false);
   });
 });

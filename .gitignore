@@ -50,7 +50,12 @@ opencode.json*
 # Local deployment and agent orchestration files.
 deploy.sh
 deployment/
-.claude/
+# Ignore local Claude state, but ship the user-facing /dragnet skill.
+.claude/*
+!.claude/skills/
+.claude/skills/*
+!.claude/skills/dragnet/
+!.claude/skills/dragnet/**
 .agent-os/
 docs/agents/
 scripts/_*

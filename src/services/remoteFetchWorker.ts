@@ -38,6 +38,23 @@ export function isFetching(repoId: string): boolean {
   return activeFetches.has(repoId);
 }
 
+async function markCloneFailed(repoId: string, err: unknown): Promise<void> {
+  const message = err instanceof Error ? err.message : String(err);
+  const truncated = message.length > 2000 ? `${message.slice(0, 2000)}…` : message;
+  console.error(`[remoteFetchWorker] clone-failed for ${repoId}:`, truncated);
+  try {
+    await prisma.repository.update({
+      where: { id: repoId },
+      data: {
+        status: "error",
+        lastFetchError: truncated,
+      },
+    });
+  } catch (updateErr) {
+    console.error(`[remoteFetchWorker] failed to persist clone error for ${repoId}:`, updateErr);
+  }
+}
+
 export async function enqueue(repoId: string): Promise<string | null> {
   if (activeFetches.has(repoId)) return null;
   activeFetches.add(repoId);
@@ -145,7 +162,6 @@ export async function enqueue(repoId: string): Promise<string | null> {
       }
     } else {
       // Legacy host-path mode — inline git fetch (no gitRemote dependency)
-      const url = interpolatePat(repo.cloneUrl, effectivePat);
       using ssh = deployKey
         ? buildSshEnv(deployKey, `fetch-${repoId}`)
         : { env: {} as Record<string, string>, [Symbol.dispose]() {} };
@@ -163,10 +179,17 @@ export async function enqueue(repoId: string): Promise<string | null> {
 
     await prisma.repository.update({
       where: { id: repoId },
-      data: { lastFetchAt: new Date() },
+      data: {
+        lastFetchAt: new Date(),
+        lastFetchError: null,
+        status: "idle",
+      },
     });
 
     return localPath;
+  } catch (err) {
+    await markCloneFailed(repoId, err);
+    throw err;
   } finally {
     activeFetches.delete(repoId);
   }

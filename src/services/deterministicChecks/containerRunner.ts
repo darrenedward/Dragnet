@@ -80,9 +80,9 @@ export async function runContainerizedChecks(
 
   const orchestrator = ContainerOrchestrator.getInstance();
 
-  const runInstall = async (): Promise<boolean> => {
+  const runInstall = async (): Promise<void> => {
     const cmd = opts.installCommand.trim();
-    if (!cmd) return true;
+    if (!cmd) return;
     void logReview(
       opts.prId,
       `Containerized checks: installing dependencies (${opts.installCommand})...`,
@@ -100,16 +100,16 @@ export async function runContainerizedChecks(
       networkMode: "bridge",
     });
     logs.push(`[install] exit=${result.exitCode} stdout=${result.stdout.slice(0, 2000)} stderr=${result.stderr.slice(0, 2000)}`);
-    if (result.exitCode !== 0 && !result.timedOut) {
-      void logReview(
-        opts.prId,
-        `Containerized checks: install failed (exit ${result.exitCode})`,
-        "warn",
-        opts.reviewRunId,
-        opts.reviewChunkId,
-      );
+    if (result.timedOut) {
+      const msg = `Containerized checks: install timed out after 300s (${opts.installCommand})`;
+      void logReview(opts.prId, msg, "error", opts.reviewRunId, opts.reviewChunkId);
+      throw new Error(msg);
     }
-    return result.exitCode === 0;
+    if (result.exitCode !== 0) {
+      const msg = `Containerized checks: install failed (exit ${result.exitCode}) — aborting before quality gates and LLM`;
+      void logReview(opts.prId, msg, "error", opts.reviewRunId, opts.reviewChunkId);
+      throw new Error(msg);
+    }
   };
 
   const runTest = async (): Promise<DeterministicFinding[]> => {
@@ -160,12 +160,17 @@ export async function runContainerizedChecks(
     ];
   };
 
-  const installOk = await runInstall();
-
-  if (installOk) {
-    const testFindings = await runTest();
-    findings.push(...testFindings);
+  try {
+    await runInstall();
+  } catch (err) {
+    for (const log of logs) {
+      void logReview(opts.prId, log, "info", opts.reviewRunId, opts.reviewChunkId);
+    }
+    throw err;
   }
+
+  const testFindings = await runTest();
+  findings.push(...testFindings);
 
   const logSummary = findings.length === 0
     ? "clean (no findings)"

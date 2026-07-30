@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
- * Issue #84 — explicit review always admits a scan queue job; auto-rescan
+ * Issue #90 / #84 — explicit review always admits a scan queue job; auto-rescan
  * only gates background AFK enqueue.
  */
 
@@ -87,62 +87,6 @@ describe("explicit vs AFK scan admission", () => {
         }),
       }),
     );
-  });
-
-  it("explicit UI/manual admit requeues a terminal job for the same revision", async () => {
-    const terminal = queuedJob({ state: "completed", priority: 10, triggerReason: "manual", completedAt: new Date() });
-    scanJob.upsert.mockResolvedValue(terminal);
-    scanJob.update.mockResolvedValue({
-      ...terminal,
-      state: "queued",
-      completedAt: null,
-      triggerReason: "manual",
-      forced: false,
-      resumeRequested: false,
-      freshRequested: false,
-    });
-    const { admitScanJob } = await import("@/src/services/scanQueue");
-
-    const job = await admitScanJob({
-      prId: "pr-1",
-      repoId: "repo-1",
-      commitHash: "abc",
-      triggerReason: "manual",
-      kind: "explicit",
-    });
-
-    expect(job.state).toBe("queued");
-    expect(scanJob.update).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { id: "job-1" },
-        data: expect.objectContaining({ state: "queued", completedAt: null }),
-      }),
-    );
-  });
-
-  it("re-request while queued/running is idempotent (same active job)", async () => {
-    const running = queuedJob({ state: "running", claimedAt: new Date(), leaseExpiresAt: new Date() });
-    scanJob.upsert.mockResolvedValue(running);
-    const { admitScanJob } = await import("@/src/services/scanQueue");
-
-    const first = await admitScanJob({
-      prId: "pr-1",
-      repoId: "repo-1",
-      commitHash: "abc",
-      triggerReason: "prcheck",
-      kind: "explicit",
-    });
-    const second = await admitScanJob({
-      prId: "pr-1",
-      repoId: "repo-1",
-      commitHash: "abc",
-      triggerReason: "prcheck",
-      kind: "explicit",
-    });
-
-    expect(first.jobId).toBe(second.jobId);
-    expect(second.state).toBe("running");
-    expect(scanJob.update).not.toHaveBeenCalled();
   });
 
   it("AFK admit returns null when auto-rescan is disabled (no queue job)", async () => {

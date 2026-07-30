@@ -205,9 +205,9 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
     }
 
     if (remoteTouched) {
+      // Worker persists status=error + lastFetchError on failure.
       enqueue(id).catch((err) => {
         console.error(`[repos PUT] re-fetch failed for ${id}:`, err);
-        prisma.repository.update({ where: { id }, data: { status: "error" } }).catch(() => {});
       });
     }
 

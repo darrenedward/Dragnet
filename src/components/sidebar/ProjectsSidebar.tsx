@@ -344,6 +344,24 @@ function RepoRow({
         <div className="flex items-center gap-2 min-w-0">
           <Folder size={13} className={isRepoSelected ? "text-cyan-400" : "text-slate-500"} />
           <span className="text-xs font-bold tracking-tight truncate font-mono">{repo.name}</span>
+          {(repo.status === "error" || repo.lastFetchError) && (
+            <span
+              className="text-[8px] font-mono font-bold px-1 py-0.2 rounded bg-red-950 text-red-400 border border-red-500/30 shrink-0"
+              title={repo.lastFetchError || "Clone or fetch failed"}
+              data-testid={`sidebar-repo-clone-failed-${repo.id}`}
+            >
+              clone-failed
+            </span>
+          )}
+          {repo.status === "cloning" && !repo.lastFetchError && (
+            <span
+              className="text-[8px] font-mono font-bold px-1 py-0.2 rounded bg-amber-950 text-amber-400 border border-amber-500/30 shrink-0"
+              title="Clone in progress"
+              data-testid={`sidebar-repo-cloning-${repo.id}`}
+            >
+              cloning
+            </span>
+          )}
           {isShared && (
             <span
               className="text-[8px] font-mono font-bold px-1 py-0.2 rounded bg-slate-800 text-slate-400 border border-white/5 shrink-0"

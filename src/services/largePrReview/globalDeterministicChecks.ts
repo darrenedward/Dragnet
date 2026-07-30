@@ -1,4 +1,12 @@
-import { runDeterministicChecks, runContainerizedChecks, logReview, type DeterministicFinding } from "@/src/services/deterministicChecks";
+import {
+  runDeterministicChecks,
+  runContainerizedChecks,
+  logReview,
+  shouldRunHostTier1,
+  DEFAULT_INSTALL_COMMAND,
+  DEFAULT_TEST_COMMAND,
+  type DeterministicFinding,
+} from "@/src/services/deterministicChecks";
 import { detectBuildSystem } from "@/src/lib/buildsystemDetect";
 import { withRetry, isStepFailure } from "@/src/services/stepPipeline";
 import { prisma } from "@/src/lib/prisma";
@@ -26,6 +34,7 @@ export async function runGlobalDeterministicChecks(
       select: {
         id: true,
         path: true,
+        localPath: true,
         cloneUrl: true,
         skipTier2: true,
         runnerImage: true,
@@ -49,11 +58,12 @@ export async function runGlobalDeterministicChecks(
 
   const findings: DeterministicFinding[] = [];
 
-  // Tier 1: tsc/eslint (non-critical — crashes produce info findings, no abort)
+  // Tier 1: host tsc/eslint only for meaningful local checkouts (not remote/volume).
   let tier1HadErrors = false;
-  if (repo.path) {
+  const runHostTier1 = shouldRunHostTier1(repo);
+  if (runHostTier1) {
     try {
-      const tier1 = await runDeterministicChecks(repo.path);
+      const tier1 = await runDeterministicChecks(repo.path!);
       findings.push(...tier1);
       tier1HadErrors = tier1.some((f) => f.severity === "error");
       const counts = tier1.reduce((acc, f) => {
@@ -74,11 +84,18 @@ export async function runGlobalDeterministicChecks(
         source: "runner",
       });
     }
+  } else if (repo.cloneUrl || repo.localPath === "/workspace") {
+    void logReview(
+      prId,
+      "[global] Tier 1 skipped: remote/volume-backed repo uses container Tier 2 only",
+      "info",
+      reviewRunId,
+    );
   }
 
-  // Detect build system for Tier 2 gating
+  // Detect build system for Tier 2 gating (host path only; remote uses node default)
   let tier2Supported = true;
-  if (repo.path) {
+  if (runHostTier1 && repo.path) {
     try {
       const detected = await detectBuildSystem(repo.path);
       tier2Supported = detected.buildSystem === "node";
@@ -124,8 +141,8 @@ export async function runGlobalDeterministicChecks(
             deployKey,
             pat,
             runnerImage: tier2Image,
-            installCommand: repo.installCommand ?? "npm install",
-            testCommand: repo.testCommand ?? "npm test && npm run lint",
+            installCommand: repo.installCommand ?? DEFAULT_INSTALL_COMMAND,
+            testCommand: repo.testCommand ?? DEFAULT_TEST_COMMAND,
             prId,
             reviewRunId,
           });

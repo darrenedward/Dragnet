@@ -13,7 +13,15 @@ import { rerateWithSurvivors } from "@/src/services/findingVerifier/skepticRerat
 import { reasoningOptions, supportsJsonResponseFormat } from "@/src/lib/llmResponseFormat";
 import { completeReviewRun, setReviewRunTokens, setReviewRunLastCheckpointAt, setReviewChunkLastCheckpointAt } from "@/src/lib/reviewFreshness";
 import { safeReadFileSync, resolveSafePath } from "@/src/lib/pathSafety";
-import { runDeterministicChecks, runContainerizedChecks, logReview, type DeterministicFinding } from "@/src/services/deterministicChecks";
+import {
+  runDeterministicChecks,
+  runContainerizedChecks,
+  logReview,
+  shouldRunHostTier1,
+  DEFAULT_INSTALL_COMMAND,
+  DEFAULT_TEST_COMMAND,
+  type DeterministicFinding,
+} from "@/src/services/deterministicChecks";
 import { StepPipeline, StepError, isStepFailure, isStepSuccess, type StepResult } from "@/src/services/stepPipeline";
 import { detectBuildSystem } from "@/src/lib/buildsystemDetect";
 import { classifyDiff } from "@/src/lib/diffClassifier";
@@ -1083,13 +1091,13 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
   const diffPayload = codePayload +
     (contextPayload ? `\n\n=== CONTEXT FILES (NOT REVIEWABLE — DO NOT CITE IN FINDINGS) ===\n${contextPayload}\n` : "");
 
-  // 5a. Build system detection — scan the repo for config files and
-  //     select the appropriate container image. Falls back to node:20-alpine
-  //     with a logged warning when nothing is recognized.
+  // 5a. Build system detection — host checkout only. Remote/volume repos
+  //     skip host probes (stale/empty mirrors would report "unknown" and
+  //     incorrectly disable Tier 2). They use repo.runnerImage + container Tier 2.
   let runnerImage = repo.runnerImage ?? "node:20-alpine";
   let buildSystemWarn: string | null = null;
   let tier2Supported = true;
-  if (repo?.path) {
+  if (shouldRunHostTier1(repo) && repo?.path) {
     try {
       const detected = await detectBuildSystem(repo.path);
       runnerImage = detected.image;
@@ -1127,15 +1135,26 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
     //       the LLM is ever called, matching the "no rating written" invariant.
     const pipeline = new StepPipeline();
 
-    // Tier 1: deterministic checks (tsc/eslint). Only runs for local repos.
+    // Tier 1: host tsc/eslint. Skipped for remote/volume-backed repos (Tier 2 only).
     pipeline.addStep({
       name: "Tier1: tsc/eslint",
       critical: false,
       maxRetries: 2,
       fn: async () => {
-        if (!repo?.path) return { ok: true, data: [] as DeterministicFinding[] };
+        if (!shouldRunHostTier1(repo)) {
+          if (repo?.cloneUrl || repo?.localPath === "/workspace") {
+            void logReview(
+              prId,
+              "Tier 1 skipped: remote/volume-backed repo uses container Tier 2 only",
+              "info",
+              reviewRunId,
+              reviewChunkId,
+            );
+          }
+          return { ok: true, data: [] as DeterministicFinding[] };
+        }
         try {
-          const findings = await runDeterministicChecks(repo.path);
+          const findings = await runDeterministicChecks(repo!.path!);
           tier1HadErrors = findings.some((f) => f.severity === "error");
           const counts = findings.reduce((acc, f) => {
             acc[f.source] = (acc[f.source] ?? 0) + 1; return acc;
@@ -1192,7 +1211,9 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
           if (repo?.patCipher && repo?.patIv && repo?.patTag && hasMasterKey()) {
             pat = decryptSecret(repo.patCipher, repo.patIv, repo.patTag);
           }
-          const tier2Image = repo.path ? runnerImage : (repo.runnerImage ?? "node:20-alpine");
+          const tier2Image = shouldRunHostTier1(repo) && repo.path
+            ? runnerImage
+            : (repo.runnerImage ?? "node:20-alpine");
           const tier2Findings = await runContainerizedChecks({
             repoId: repo.id,
             cloneUrl: repo.cloneUrl ?? "",
@@ -1200,8 +1221,8 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
             deployKey,
             pat,
             runnerImage: tier2Image,
-            installCommand: repo.installCommand ?? "npm install",
-            testCommand: repo.testCommand ?? "npm test && npm run lint",
+            installCommand: repo.installCommand ?? DEFAULT_INSTALL_COMMAND,
+            testCommand: repo.testCommand ?? DEFAULT_TEST_COMMAND,
             prId,
             reviewRunId,
             reviewChunkId,

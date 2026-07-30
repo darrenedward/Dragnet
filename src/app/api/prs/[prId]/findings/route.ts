@@ -3,11 +3,12 @@ import { getActiveScan, getLatestCompletedReview, getRecentRuns } from "@/src/li
 import { computeStability, computeWeightedStability } from "@/src/lib/stabilityScore";
 import { lookupTrustWeight } from "@/src/lib/modelTrustWeights";
 import { authenticateSessionOrKey, enforcePrRepoScope } from "@/src/lib/apiAuth";
-import { isMergeReady } from "@/src/lib/isMergeReady";
 import { prisma } from "@/src/lib/prisma";
 import { computePrSizeProfile } from "@/src/lib/prSizeProfile";
 import { readPrCommitCount } from "@/src/lib/prSizeProfile.server";
-import { getScanJobForPr } from "@/src/services/scanQueue";
+import { getLatestScanJobForPr, getScanJobForPr } from "@/src/services/scanQueue";
+import { isMergeReady, mergeReadyLabel } from "@/src/lib/mergeReady";
+import { parseScanGate } from "@/src/lib/scanPrelude";
 
 const CHUNK_SELECT = {
   id: true,
@@ -53,7 +54,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ prId: st
     const prScopeErr = await enforcePrRepoScope(auth, prId);
     if (prScopeErr) return NextResponse.json(prScopeErr, { status: 403 });
 
-    const [latest, pr, files, activeScan, queueJob] = await Promise.all([
+    const [latest, pr, files, activeScan, queueJob, latestJob] = await Promise.all([
       getLatestCompletedReview(prId),
       prisma.pullRequest.findUnique({
         where: { id: prId },
@@ -83,7 +84,14 @@ export async function GET(req: Request, { params }: { params: Promise<{ prId: st
       }),
       getActiveScan(prId),
       getScanJobForPr(prId),
+      getLatestScanJobForPr(prId),
     ]);
+    // Active queue work is never "blocked finished." Terminal failed jobs may
+    // carry a prelude gate code so the UI can show Blocked at {gate}.
+    const blockedGate =
+      !queueJob && latestJob?.state === "failed"
+        ? parseScanGate(latestJob.errorMessage)
+        : null;
     const commitCount = pr
       ? await readPrCommitCount(
           pr.repository,
@@ -132,6 +140,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ prId: st
     const activeIterations = activeScan.iterationsByChunk;
 
     if (!latest.reviewRun) {
+      const noRun = isMergeReady(null);
       return NextResponse.json({
         reviewRun: null,
         findings: [],
@@ -139,8 +148,12 @@ export async function GET(req: Request, { params }: { params: Promise<{ prId: st
         rejectedCount: 0,
         regressions: [],
         stale: false,
-        mergeReady: false,
-        mergeBlockReason: "No completed review yet",
+        mergeReady: noRun.mergeReady,
+        mergeBlockReason: noRun.mergeBlockReason,
+        mergeReadyMessage: blockedGate
+          ? mergeReadyLabel(noRun, blockedGate)
+          : noRun.message,
+        blockedGate,
         sizeProfile,
         stability: null,
         weightedStability: null,
@@ -150,14 +163,16 @@ export async function GET(req: Request, { params }: { params: Promise<{ prId: st
         activeFindings,
         activeIterations,
         queueJob,
-        message: "No completed review yet. Run a scan.",
+        message: blockedGate
+          ? mergeReadyLabel(noRun, blockedGate)
+          : "No completed review yet. Run a scan.",
       });
     }
 
     const ratingTrend = await getRecentRuns(prId, 5);
     const stability = computeStability(ratingTrend);
     const weighted = computeWeightedStability(ratingTrend, lookupTrustWeight);
-    const gate = isMergeReady({
+    const merge = isMergeReady({
       rating: latest.reviewRun.rating,
       outcome: latest.reviewRun.outcome,
       reliability: latest.reviewRun.reliability,
@@ -169,8 +184,12 @@ export async function GET(req: Request, { params }: { params: Promise<{ prId: st
     return NextResponse.json({
       weightedStability: weighted.weightedStability,
       weightedReadyToMerge: weighted.readyToMerge,
-      mergeReady: gate.mergeReady,
-      mergeBlockReason: gate.mergeBlockReason,
+      mergeReady: merge.mergeReady,
+      mergeBlockReason: merge.mergeBlockReason,
+      mergeReadyMessage: blockedGate
+        ? mergeReadyLabel(merge, blockedGate)
+        : merge.message,
+      blockedGate,
       reviewRun: {
         id: latest.reviewRun.id,
         commitHash: latest.reviewRun.commitHash,

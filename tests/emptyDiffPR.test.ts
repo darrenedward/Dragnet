@@ -61,6 +61,10 @@ vi.mock("../src/services/deterministicChecks", () => ({
   runDeterministicChecks: vi.fn().mockResolvedValue([]),
   runContainerizedChecks: vi.fn().mockResolvedValue([]),
   logReview: vi.fn().mockResolvedValue(undefined),
+  shouldRunHostTier1: (repo?: { path?: string | null; cloneUrl?: string | null; localPath?: string | null } | null) =>
+    Boolean(repo?.path) && !repo?.cloneUrl && repo?.localPath !== "/workspace",
+  DEFAULT_INSTALL_COMMAND: "npm install",
+  DEFAULT_TEST_COMMAND: "npm run typecheck && npm run lint",
 }));
 
 vi.mock("../src/services/findingVerifier", () => ({
