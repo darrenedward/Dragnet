@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   mockFindUnique: vi.fn(),
@@ -30,6 +30,8 @@ vi.mock("../src/lib/publicUrl", () => ({
 import { setupWebhookWithPat, deleteWebhook } from "../src/lib/webhookSetup";
 
 describe("webhookSetup processing flag", () => {
+  const originalFetch = global.fetch;
+
   beforeEach(() => {
     vi.clearAllMocks();
     global.fetch = mocks.mockFetch as unknown as typeof fetch;
@@ -48,6 +50,11 @@ describe("webhookSetup processing flag", () => {
       patIv: "i",
       patTag: "t",
     });
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+    vi.restoreAllMocks();
   });
 
   it("setup enables webhook processing", async () => {

@@ -5,7 +5,7 @@ import { refreshPrFiles } from "@/src/lib/getRealPrs";
 import { runPrScan, SYSTEM_INSTRUCTION } from "@/src/services/reviewService";
 import { authenticateApiRequest } from "@/src/lib/apiAuth";
 import { isReviewActive, acquireReviewLock } from "@/src/lib/reviewLocks";
-import { runScanPrelude } from "@/src/lib/scanPrelude";
+import { blocksExplicitAdmit, runScanPrelude } from "@/src/lib/scanPrelude";
 import { isMergeReady } from "@/src/lib/mergeReady";
 import { getChatChain } from "@/src/lib/llmClient";
 import { computePrSizeProfile, type PrSizeProfile } from "@/src/lib/prSizeProfile";
@@ -254,19 +254,11 @@ async function handlePrCheck(args: any, userId: string | null): Promise<string> 
     return `> ⚠ Repository for PR \`${pr.sourceBranch}\` could not be loaded.`;
   }
 
-  // Explicit review always admits; prelude only gates index freshness
-  // (volume-aware STALE reindex) before queue so /dragnet fix loops heal.
+  // Explicit review always admits when gates pass; fail-fast on config/index/clone
+  // so /dragnet does not queue work known to fail in the worker.
   const prelude = await runScanPrelude(repo);
-  if (prelude.ok === false) {
-    // CONFIG is checked by the worker path; INDEX_REQUIRED still blocks
-    // admission with a clear CTA. REINDEX_FAILED / others surface too.
-    if (
-      prelude.gate === "INDEX_REQUIRED" ||
-      prelude.gate === "INDEXING_IN_PROGRESS" ||
-      prelude.gate === "REINDEX_FAILED"
-    ) {
-      return `> ⚠ **Blocked at ${prelude.gate}.** ${prelude.message}`;
-    }
+  if (prelude.ok === false && blocksExplicitAdmit(prelude.gate)) {
+    return `> ⚠ **Blocked at ${prelude.gate}.** ${prelude.message}`;
   }
 
   const started = await startTrackedReview(pr, repo, userId);
@@ -498,12 +490,7 @@ async function handleLegacyCommand(body: any, defRepo: string | null, userId: st
         });
       }
 const prelude = await runScanPrelude(repo);
-      if (
-        prelude.ok === false &&
-        (prelude.gate === "INDEX_REQUIRED" ||
-          prelude.gate === "INDEXING_IN_PROGRESS" ||
-          prelude.gate === "REINDEX_FAILED")
-      ) {
+      if (prelude.ok === false && blocksExplicitAdmit(prelude.gate)) {
         return NextResponse.json({
           status: "Error",
           message: `> ⚠ **Blocked at ${prelude.gate}.** ${prelude.message}`,

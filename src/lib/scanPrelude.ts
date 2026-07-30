@@ -189,6 +189,21 @@ export function diffUnavailableResult(err: unknown, repoId?: string): ScanPrelud
   };
 }
 
+/**
+ * Gates that must fail-fast on explicit review admit (`/dragnet` prcheck,
+ * UI Run). Worker path still re-checks; explicit commands should not queue
+ * work that is known to fail (e.g. missing LLM config).
+ */
+export function blocksExplicitAdmit(gate: ScanGateCode): boolean {
+  return (
+    gate === "CONFIG_REQUIRED" ||
+    gate === "INDEX_REQUIRED" ||
+    gate === "INDEXING_IN_PROGRESS" ||
+    gate === "REINDEX_FAILED" ||
+    gate === "CLONE_FAILED"
+  );
+}
+
 /** Map prelude failure to the JSON body historically used by the scan route. */
 export function preludeFailToJson(fail: ScanPreludeFail): Record<string, unknown> {
   if (fail.gate === "CONFIG_REQUIRED") {

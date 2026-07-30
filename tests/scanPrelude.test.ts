@@ -3,6 +3,7 @@ import {
   runScanPrelude,
   diffUnavailableResult,
   preludeFailToJson,
+  blocksExplicitAdmit,
   type ScanPreludeDeps,
 } from "../src/lib/scanPrelude";
 
@@ -153,5 +154,16 @@ describe("diffUnavailableResult", () => {
       repoId: "r1",
     });
     expect(body).toMatchObject({ error: "INDEX_REQUIRED", gate: "INDEX_REQUIRED", repoId: "r1" });
+  });
+
+  it("blocksExplicitAdmit includes CONFIG_REQUIRED for fail-fast prcheck", () => {
+    expect(blocksExplicitAdmit("CONFIG_REQUIRED")).toBe(true);
+    expect(blocksExplicitAdmit("INDEX_REQUIRED")).toBe(true);
+    expect(blocksExplicitAdmit("INDEXING_IN_PROGRESS")).toBe(true);
+    expect(blocksExplicitAdmit("REINDEX_FAILED")).toBe(true);
+    expect(blocksExplicitAdmit("CLONE_FAILED")).toBe(true);
+    // STALE is healed inside prelude; DIFF is checked after admit/sync
+    expect(blocksExplicitAdmit("STALE_INDEX")).toBe(false);
+    expect(blocksExplicitAdmit("DIFF_UNAVAILABLE")).toBe(false);
   });
 });
