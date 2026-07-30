@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Folder, GitBranch, X } from "lucide-react";
+import { Folder, GitBranch } from "lucide-react";
 import { REPOS } from "./mockData";
 import { ratingPill, statusPill } from "./atoms";
 import { VariantC } from "./variants";
@@ -67,11 +67,6 @@ export function PrototypeDashboard({ variant: _variant }: { variant: "A" | "B" |
                     >
                       {r.name}
                     </span>
-                    {!r.cloneOk && (
-                      <span title="Clone failed — checkout missing" className="shrink-0">
-                        <X size={12} className="text-rose-400" strokeWidth={2.5} />
-                      </span>
-                    )}
                     <span
                       title={
                         r.needsReviewCount > 0
