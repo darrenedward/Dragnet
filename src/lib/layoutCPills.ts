@@ -149,6 +149,11 @@ export function presentStatusPill(input: PresentStatusPillInput): LayoutCStatusP
  * Rating color bands: 1–4 red · 5–7 amber · 8–10 green · null → no score amber.
  * Tooltips explain the merge bar (need 8+).
  */
+function formatRatingLabel(score: number): string {
+  const n = Number.isInteger(score) ? score : Math.round(score * 10) / 10;
+  return `${n}/10`;
+}
+
 export function presentRatingPill(rating: number | null | undefined): LayoutCRatingPill {
   if (rating == null || !Number.isFinite(rating)) {
     return {
@@ -160,31 +165,32 @@ export function presentRatingPill(rating: number | null | undefined): LayoutCRat
     };
   }
 
-  const score = Math.round(rating);
+  const score = rating;
+  const label = formatRatingLabel(score);
 
   if (score >= 8) {
     return {
       score,
-      label: `${score}/10`,
+      label,
       tone: "green",
-      tooltip: `${score}/10 — at or above the merge bar (need 8+). Merge-ready if other gates pass.`,
+      tooltip: `${label} — at or above the merge bar (need 8+). Merge-ready if other gates pass.`,
     };
   }
 
   if (score >= 5) {
     return {
       score,
-      label: `${score}/10`,
+      label,
       tone: "amber",
-      tooltip: `${score}/10 — below the merge bar (need 8+). Fix findings and re-scan.`,
+      tooltip: `${label} — below the merge bar (need 8+). Fix findings and re-scan.`,
     };
   }
 
   return {
     score,
-    label: `${score}/10`,
+    label,
     tone: "red",
-    tooltip: `${score}/10 — well below the merge bar (need 8+). Expect serious issues; fix and re-scan.`,
+    tooltip: `${label} — well below the merge bar (need 8+). Expect serious issues; fix and re-scan.`,
   };
 }
 
