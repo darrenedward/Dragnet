@@ -1,16 +1,20 @@
 /** PROTOTYPE — throwaway fake data. */
 
+export type ProtoPrStatus = "pending" | "queued" | "completed";
+export type ProtoSize = "small" | "medium" | "oversized";
+
 export type ProtoPr = {
   id: string;
   title: string;
   githubPrNumber: number;
   ticketNumber: number | null;
   branch: string;
-  status: "Completed" | "Pending" | "In Progress" | "Failed";
+  /** Sidebar only shows these three */
+  status: ProtoPrStatus;
+  size: ProtoSize;
   rating: number | null;
   mergeReason: string | null;
   mergeReady: boolean;
-  logLines: string[];
 };
 
 export type ProtoRepo = {
@@ -18,9 +22,7 @@ export type ProtoRepo = {
   name: string;
   githubUrl: string;
   cloneOk: boolean;
-  cloneError: string | null;
   indexOk: boolean;
-  /** Installed + processing → GitHub notifies Dragnet on push/PR */
   webhookConnected: boolean;
   needsReviewCount: number;
   prs: ProtoPr[];
@@ -32,7 +34,6 @@ export const REPOS: ProtoRepo[] = [
     name: "Dragnet",
     githubUrl: "https://github.com/darrenedward/Dragnet",
     cloneOk: true,
-    cloneError: null,
     indexOk: true,
     webhookConnected: false,
     needsReviewCount: 1,
@@ -43,17 +44,11 @@ export const REPOS: ProtoRepo[] = [
         githubPrNumber: 80,
         ticketNumber: null,
         branch: "test/dragnet-runner-smoke",
-        status: "Completed",
+        status: "completed",
+        size: "small",
         rating: null,
         mergeReason: "no score — findings rejected after LLM rated 10",
         mergeReady: false,
-        logLines: [
-          "clone ok · index ready",
-          "[install] exit=0",
-          "JSON finalReview: rating=10, 0 findings",
-          "verifier rejected findings — nulling rating (was 10)",
-          "Review complete — not merge-ready (no score)",
-        ],
       },
     ],
   },
@@ -62,7 +57,6 @@ export const REPOS: ProtoRepo[] = [
     name: "NWATrade",
     githubUrl: "https://github.com/darrenedward/NWATrade",
     cloneOk: false,
-    cloneError: "cannot change to '/app/repos/nwatrade-…': No such file or directory",
     indexOk: true,
     webhookConnected: false,
     needsReviewCount: 6,
@@ -73,14 +67,11 @@ export const REPOS: ProtoRepo[] = [
         githubPrNumber: 31,
         ticketNumber: 25,
         branch: "ticket-25-admin-pm-user",
-        status: "Pending",
+        status: "pending",
+        size: "medium",
         rating: null,
         mergeReason: null,
         mergeReady: false,
-        logLines: [
-          "prelude blocked gate=CLONE_FAILED",
-          "fatal: cannot change to '/app/repos/nwatrade-…': No such file or directory",
-        ],
       },
       {
         id: "pr-30",
@@ -88,11 +79,11 @@ export const REPOS: ProtoRepo[] = [
         githubPrNumber: 30,
         ticketNumber: 24,
         branch: "ticket-24-promote",
-        status: "Completed",
+        status: "completed",
+        size: "small",
         rating: 7,
         mergeReason: "7/10 below merge bar (need 8+)",
         mergeReady: false,
-        logLines: ["Review complete — 7/10"],
       },
       {
         id: "pr-29",
@@ -100,11 +91,11 @@ export const REPOS: ProtoRepo[] = [
         githubPrNumber: 29,
         ticketNumber: 23,
         branch: "ticket-23-search",
-        status: "Completed",
+        status: "completed",
+        size: "small",
         rating: 6,
         mergeReason: "6/10 below merge bar",
         mergeReady: false,
-        logLines: ["Review complete — 6/10"],
       },
       {
         id: "pr-28",
@@ -112,11 +103,11 @@ export const REPOS: ProtoRepo[] = [
         githubPrNumber: 28,
         ticketNumber: 22,
         branch: "ticket-22-middleware",
-        status: "Completed",
+        status: "completed",
+        size: "medium",
         rating: 6,
         mergeReason: "6/10 below merge bar",
         mergeReady: false,
-        logLines: ["Review complete — 6/10"],
       },
       {
         id: "pr-27",
@@ -124,11 +115,11 @@ export const REPOS: ProtoRepo[] = [
         githubPrNumber: 27,
         ticketNumber: 21,
         branch: "ticket-21-rbac",
-        status: "Completed",
+        status: "completed",
+        size: "small",
         rating: 6,
         mergeReason: "6/10 below merge bar",
         mergeReady: false,
-        logLines: ["Review complete — 6/10"],
       },
       {
         id: "pr-18",
@@ -136,11 +127,11 @@ export const REPOS: ProtoRepo[] = [
         githubPrNumber: 18,
         ticketNumber: 18,
         branch: "ticket-18-followups",
-        status: "Completed",
+        status: "completed",
+        size: "oversized",
         rating: 6,
         mergeReason: "6/10 below merge bar",
         mergeReady: false,
-        logLines: ["Review complete — 6/10"],
       },
     ],
   },
@@ -149,7 +140,6 @@ export const REPOS: ProtoRepo[] = [
     name: "NWAPages",
     githubUrl: "https://github.com/darrenedward/NWAPages",
     cloneOk: true,
-    cloneError: null,
     indexOk: true,
     webhookConnected: true,
     needsReviewCount: 0,
@@ -160,11 +150,23 @@ export const REPOS: ProtoRepo[] = [
         githubPrNumber: 42,
         ticketNumber: 146,
         branch: "ticket-146-correspondence",
-        status: "Completed",
+        status: "completed",
+        size: "small",
         rating: 9,
         mergeReason: null,
         mergeReady: true,
-        logLines: ["install ok", "lint ok", "rating 9/10", "Merge ready"],
+      },
+      {
+        id: "pr-41",
+        title: "chore: deps bump",
+        githubPrNumber: 41,
+        ticketNumber: null,
+        branch: "chore/deps",
+        status: "queued",
+        size: "small",
+        rating: null,
+        mergeReason: null,
+        mergeReady: false,
       },
     ],
   },

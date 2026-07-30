@@ -1,16 +1,54 @@
 "use client";
 
-import { AlertTriangle, Check, X, Zap } from "lucide-react";
-import type { ProtoPr, ProtoRepo } from "./mockData";
+import { AlertTriangle, Zap } from "lucide-react";
+import type { ProtoPr, ProtoRepo, ProtoSize } from "./mockData";
 
 export function pill(className: string, children: React.ReactNode, title?: string) {
   return (
     <span
       title={title}
-      className={`px-2 py-0.5 rounded uppercase font-mono text-[9px] font-bold border ${className}`}
+      className={`px-2 py-0.5 rounded-full uppercase font-mono text-[9px] font-bold border inline-flex items-center gap-1 ${className}`}
     >
       {children}
     </span>
+  );
+}
+
+/** size: small green · medium amber · oversized red */
+export function sizePill(size: ProtoSize) {
+  if (size === "small") {
+    return pill("bg-emerald-500/10 text-emerald-400 border-emerald-500/30", "small");
+  }
+  if (size === "medium") {
+    return pill("bg-amber-500/10 text-amber-300 border-amber-500/30", "medium");
+  }
+  return pill("bg-rose-500/10 text-rose-400 border-rose-500/35", "oversized");
+}
+
+/**
+ * rating colors:
+ * 1–5 red · 5–7 amber · 8–10 green · null = no score (amber)
+ */
+export function ratingPill(rating: number | null) {
+  if (rating == null) {
+    return pill("bg-amber-500/10 text-amber-300 border-amber-500/25", "no score");
+  }
+  if (rating >= 8) {
+    return pill("bg-emerald-500/10 text-emerald-400 border-emerald-500/30", `${rating}/10`);
+  }
+  if (rating >= 5) {
+    return pill("bg-amber-500/10 text-amber-300 border-amber-500/30", `${rating}/10`);
+  }
+  return pill("bg-rose-500/10 text-rose-400 border-rose-500/30", `${rating}/10`);
+}
+
+export function rgPill(ok: boolean, okLabel: string, failLabel: string, title?: string) {
+  return pill(
+    ok
+      ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/30"
+      : "bg-rose-500/10 text-rose-400 border-rose-500/30",
+    ok ? okLabel : failLabel,
+    title,
   );
 }
 
@@ -29,7 +67,7 @@ export function PrIdentity({ pr }: { pr: ProtoPr }) {
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] font-mono text-slate-500">
         <span className="text-cyan-400/90 font-semibold">GitHub PR #{pr.githubPrNumber}</span>
         {pr.ticketNumber != null && pr.ticketNumber !== pr.githubPrNumber && (
-          <span title="Issue tracker ticket number is not the same as the GitHub PR number">
+          <span title="Issue tracker # ≠ GitHub PR #">
             Ticket #{pr.ticketNumber} ≠ PR #{pr.githubPrNumber}
           </span>
         )}
@@ -39,90 +77,30 @@ export function PrIdentity({ pr }: { pr: ProtoPr }) {
   );
 }
 
-/** Repo health strip — MAIN content only, not sidebar. */
-export function RepoHealthStrip({ repo }: { repo: ProtoRepo }) {
+/** Main-content chip row: size · webhook · cloned · indexed · rating (+ merge outcome) */
+export function MainStatusRow({ repo, pr }: { repo: ProtoRepo; pr: ProtoPr }) {
   return (
-    <div className="rounded-xl border border-white/10 bg-[#0F1219] px-4 py-3 flex flex-wrap items-center gap-x-6 gap-y-2">
-      <div className="min-w-0">
-        <p className="text-[9px] font-mono uppercase tracking-wider text-slate-500">Active project</p>
-        <p className="text-sm font-bold font-mono text-white truncate">{repo.name}</p>
-      </div>
-      <div className="h-8 w-px bg-white/10 hidden sm:block" />
-      <HealthLine
-        ok={repo.cloneOk}
-        label="Cloned"
-        failDetail={repo.cloneError}
-        okTitle="Checkout ready for scans"
-      />
-      <HealthLine
-        ok={repo.indexOk}
-        label="Indexed"
-        okTitle="AST index present"
-        failDetail="Index missing — run Index now"
-      />
-      <HealthLine
-        ok={repo.webhookConnected}
-        label="Webhook"
-        okTitle="GitHub notifies Dragnet on push/PR (installed + processing on)"
-        failDetail="Off — no automatic GitHub → Dragnet events"
-        mutedFail
-      />
-    </div>
-  );
-}
-
-/** Status only — error text lives in real scan logs, not here. */
-function HealthLine({
-  ok,
-  label,
-  okTitle,
-  failDetail,
-  mutedFail,
-}: {
-  ok: boolean;
-  label: string;
-  okTitle: string;
-  failDetail?: string | null;
-  mutedFail?: boolean;
-}) {
-  const failColor = mutedFail ? "text-slate-500" : "text-rose-400";
-  return (
-    <div
-      className="font-mono text-[11px] flex items-center gap-1.5"
-      title={ok ? okTitle : failDetail ?? undefined}
-    >
-      {ok ? (
-        <Check size={14} className="text-emerald-400 shrink-0" />
-      ) : (
-        <X size={14} className={`${failColor} shrink-0`} strokeWidth={2.5} />
+    <div className="flex flex-wrap items-center gap-1.5">
+      {sizePill(pr.size)}
+      {rgPill(
+        repo.webhookConnected,
+        "webhook on",
+        "webhook off",
+        repo.webhookConnected
+          ? "GitHub ↔ Dragnet ON"
+          : "GitHub ↔ Dragnet OFF — no auto events",
       )}
-      <span className="text-slate-400">{label}</span>
-      <span className={`font-bold ${ok ? "text-emerald-400" : failColor}`}>
-        {ok ? "OK" : mutedFail ? "OFF" : "FAIL"}
-      </span>
+      {rgPill(repo.cloneOk, "cloned", "clone failed")}
+      {rgPill(repo.indexOk, "indexed", "index missing")}
+      {ratingPill(pr.rating)}
+      {pr.mergeReady && pr.rating != null
+        ? pill("bg-emerald-500/10 text-emerald-400 border-emerald-500/30", "merge ready")
+        : pill(
+            "bg-amber-500/10 text-amber-300 border-amber-500/25",
+            "not ready",
+            pr.mergeReason ?? undefined,
+          )}
     </div>
-  );
-}
-
-export function MergeChip({ pr }: { pr: ProtoPr }) {
-  if (pr.mergeReady && pr.rating != null) {
-    return pill(
-      "bg-emerald-500/10 text-emerald-400 border-emerald-500/25",
-      `${pr.rating}/10 · Merge ready`,
-    );
-  }
-  if (pr.rating != null) {
-    return pill(
-      "bg-amber-500/10 text-amber-300 border-amber-500/25",
-      `${pr.rating}/10 · Not ready`,
-      pr.mergeReason ?? undefined,
-    );
-  }
-  return pill(
-    "bg-amber-500/10 text-amber-300 border-amber-500/25",
-    "Not ready · no score",
-    pr.mergeReason ??
-      "Finished without a trusted score (e.g. findings rejected after a clean LLM pass)",
   );
 }
 
@@ -157,3 +135,30 @@ export function Actions({ disabled }: { disabled?: boolean }) {
   );
 }
 
+/** @deprecated health strip replaced by MainStatusRow chips */
+export function RepoHealthStrip({ repo }: { repo: ProtoRepo }) {
+  return (
+    <div className="rounded-xl border border-white/10 bg-[#0F1219] px-4 py-3 flex flex-wrap items-center gap-x-4 gap-y-2">
+      <div className="min-w-0 mr-2">
+        <p className="text-[9px] font-mono uppercase tracking-wider text-slate-500">Active project</p>
+        <p className="text-sm font-bold font-mono text-white truncate">{repo.name}</p>
+      </div>
+      {rgPill(repo.cloneOk, "cloned", "cloned")}
+      {rgPill(repo.indexOk, "indexed", "indexed")}
+      {rgPill(repo.webhookConnected, "webhook", "webhook")}
+    </div>
+  );
+}
+
+export function MergeChip({ pr }: { pr: ProtoPr }) {
+  if (pr.mergeReady && pr.rating != null) {
+    return pill(
+      "bg-emerald-500/10 text-emerald-400 border-emerald-500/25",
+      `${pr.rating}/10 · Merge ready`,
+    );
+  }
+  if (pr.rating != null) {
+    return ratingPill(pr.rating);
+  }
+  return pill("bg-amber-500/10 text-amber-300 border-amber-500/25", "Not ready · no score");
+}

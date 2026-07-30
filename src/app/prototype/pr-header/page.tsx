@@ -2,7 +2,8 @@
 
 /**
  * PROTOTYPE — throwaway.
- * Sidebar = nav only. Main center = repo health + PR (like Diff Scanner).
+ * Sidebar: one repo per row; PR status = pending|queued|completed.
+ * Main chips: size · webhook · cloned · indexed · rating (color rules).
  * ?variant=A|B|C
  */
 
@@ -13,9 +14,9 @@ import { PrototypeDashboard } from "@/src/components/prototype/prHeaderVariants"
 
 const VARIANTS = ["A", "B", "C"] as const;
 const LABELS: Record<string, string> = {
-  A: "Minimal PR card",
-  B: "Same + notes",
-  C: "Status card PR",
+  A: "status + chips",
+  B: "chips only",
+  C: "status card",
 };
 
 function PrototypeBody() {
@@ -34,17 +35,18 @@ function PrototypeBody() {
           <p className="text-[10px] font-mono uppercase tracking-widest text-amber-400/90">
             Prototype — throwaway · not production
           </p>
-          <h1 className="text-xl font-bold tracking-tight">Main content declutter</h1>
-          <div className="text-xs text-slate-400 font-mono max-w-3xl space-y-1">
-            <p>
-              <strong className="text-slate-300">Sidebar</strong> = minimal nav (full names, PR # ·
-              ticket #, rating, status). No health/logs.
-            </p>
-            <p>
-              <strong className="text-slate-300">Main</strong> = Cloned / Indexed / Webhook (OK/FAIL
-              only — detail stays in real scan logs) + PR card.
-            </p>
-          </div>
+          <h1 className="text-xl font-bold tracking-tight">Sidebar + main chips</h1>
+          <ul className="text-xs text-slate-400 font-mono max-w-3xl space-y-1 list-disc pl-4">
+            <li>
+              <strong className="text-slate-300">Repos</strong> — one row each (scrolls for 30+);
+              PR shows only pending / queued / completed
+            </li>
+            <li>
+              <strong className="text-slate-300">Main chips</strong> — size (small green · medium
+              amber · oversized red), webhook / cloned / indexed (red|green), rating (1–5 red · 5–7
+              amber · 8–10 green)
+            </li>
+          </ul>
         </header>
 
         <PrototypeDashboard variant={key} />
