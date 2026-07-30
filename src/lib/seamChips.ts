@@ -267,9 +267,7 @@ function ratingChip(input: SeamChipInput): SeamChip {
     stale: input.stale,
   };
   const merge = isMergeReady(
-    input.runStatus || input.rating != null || input.runOutcome
-      ? mergeInput
-      : null,
+    input.runStatus != null || input.runOutcome != null ? mergeInput : null,
   );
 
   if (merge.mergeReady) {
