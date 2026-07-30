@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import type { PRFile, PullRequest, ReviewChunk, ReviewFinding } from "../../lib/types";
 import { getStatusBadgeStyle } from "../../lib/types";
+import { canForceRescan } from "../../lib/forceRescan";
 import IndexNowBanner from "./prs/IndexNowBanner";
 import InterruptedScanBanner, { type InterruptedScan } from "./prs/InterruptedScanBanner";
 import ReviewProgress from "./prs/ReviewProgress";
@@ -479,24 +480,28 @@ function PrHeader({
             </span>
           </button>
           {scanning && (
-            <>
-              <button
-                onClick={() => onStopScan?.()}
-                title="Stop the currently running scan without starting a replacement."
-                className="min-h-11 px-3 py-2 bg-amber-500/15 border border-amber-500/30 text-amber-300 hover:bg-amber-500/25 text-xs font-mono font-bold rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer"
-              >
-                <X size={13} />
-                <span>Stop</span>
-              </button>
-              <button
-                onClick={() => onTriggerScan({ force: true })}
-                title="Reap the current run (orphaned or stuck) and start a fresh scan. Use when a scan appears hung after a dev-server restart."
-                className="min-h-11 px-3 py-2 bg-rose-500/15 border border-rose-500/30 text-rose-300 hover:bg-rose-500/25 text-xs font-mono font-bold rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer"
-              >
-                <AlertTriangle size={13} />
-                <span>Force Restart</span>
-              </button>
-            </>
+            <button
+              onClick={() => onStopScan?.()}
+              title="Stop the currently running scan without starting a replacement."
+              className="min-h-11 px-3 py-2 bg-amber-500/15 border border-amber-500/30 text-amber-300 hover:bg-amber-500/25 text-xs font-mono font-bold rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer"
+            >
+              <X size={13} />
+              <span>Stop</span>
+            </button>
+          )}
+          {canForceRescan({
+            hasSelectedPr: !!activePR,
+            repoReviewable: !!repoIndexedAt,
+          }) && (
+            <button
+              type="button"
+              onClick={() => onTriggerScan({ force: true })}
+              title="Force re-scan: clear locks, bypass cache, and admit a fresh queue job. Always available after complete, null-rating, failed, or stuck runs."
+              className="min-h-11 px-3 py-2 bg-rose-500/15 border border-rose-500/30 text-rose-300 hover:bg-rose-500/25 text-xs font-mono font-bold rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer"
+            >
+              <AlertTriangle size={13} />
+              <span>{scanning ? "Force Restart" : "Force re-scan"}</span>
+            </button>
           )}
           {hasFindings && (
             <>
