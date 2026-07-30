@@ -9,7 +9,7 @@ const mocks = vi.hoisted(() => ({
   mockEnqueue: vi.fn(),
   mockCheckDelivery: vi.fn(),
   mockRunPrScan: vi.fn(),
-  mockAdmitScanJobForPr: vi.fn((input: { prId: string }) => {
+  mockAdmitAfkScanJobForPr: vi.fn((input: { prId: string }) => {
     mocks.mockRunPrScan(input.prId);
     return Promise.resolve({ jobId: `job-${input.prId}`, prId: input.prId, state: "queued", queuePosition: 1 });
   }),
@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   mockCreateDeliveryLog: vi.fn(),
   mockUpdateDeliveryStatus: vi.fn(),
   mockGetOpenPrIds: vi.fn(),
+  mockRepoUpdate: vi.fn().mockResolvedValue({}),
 }));
 
 vi.mock("../src/lib/webhook", () => ({
@@ -40,11 +41,15 @@ vi.mock("@/src/services/reviewService", () => ({
 }));
 
 vi.mock("@/src/services/scanQueue", () => ({
-  admitScanJobForPr: mocks.mockAdmitScanJobForPr,
+  admitAfkScanJobForPr: mocks.mockAdmitAfkScanJobForPr,
 }));
 
-vi.mock("@/src/lib/autoRescanPolicy", () => ({
-  isAutoRescanEnabled: () => true,
+vi.mock("@/src/lib/prisma", () => ({
+  prisma: {
+    repository: {
+      update: (...args: unknown[]) => mocks.mockRepoUpdate(...args),
+    },
+  },
 }));
 
 vi.mock("../src/services/hostedScan/orchestrator", () => ({
@@ -109,6 +114,10 @@ describe("webhooks/github/route POST", () => {
     mocks.mockCheckDelivery.mockReturnValue(false);
     mocks.mockScanRepoPrs.mockResolvedValue(["pr-1"]);
     mocks.mockRunPrScan.mockResolvedValue(undefined);
+    mocks.mockAdmitAfkScanJobForPr.mockImplementation((input: { prId: string }) => {
+      mocks.mockRunPrScan(input.prId);
+      return Promise.resolve({ jobId: `job-${input.prId}`, prId: input.prId, state: "queued", queuePosition: 1 });
+    });
     mocks.mockCreateDeliveryLog.mockResolvedValue("del-1");
     mocks.mockUpdateDeliveryStatus.mockResolvedValue(undefined);
     mocks.mockTriggerHostedScan.mockResolvedValue({ ok: true, prId: "pr-42" });
@@ -323,7 +332,7 @@ describe("webhooks/github/route POST", () => {
     expect(body.afkScans).toBe(1);
   });
 
-  it("handles enqueue failure gracefully (no AFK scan)", async () => {
+  it("handles enqueue failure gracefully (no AFK scan) and marks delivery failed", async () => {
     mocks.mockFindRepo.mockResolvedValue({
       id: "repo-1",
       localPath: null,
@@ -332,6 +341,7 @@ describe("webhooks/github/route POST", () => {
       hostedMode: false,
     });
     mocks.mockEnqueue.mockRejectedValue(new Error("network error"));
+    mocks.mockCreateDeliveryLog.mockResolvedValue("delivery-1");
     const req = buildRequest({
       event: "push",
       body: {
@@ -346,6 +356,49 @@ describe("webhooks/github/route POST", () => {
     expect(mocks.mockRunPrScan).not.toHaveBeenCalled();
     const body = await res.json();
     expect(body.afkScans).toBe(0);
+    expect(body.error).toContain("network error");
+    expect(mocks.mockUpdateDeliveryStatus).toHaveBeenCalledWith(
+      "delivery-1",
+      "failed",
+      expect.stringContaining("clone-failed"),
+    );
+  });
+
+  it("does not background-enqueue when AFK admit returns null (auto-rescan off)", async () => {
+    mocks.mockAdmitAfkScanJobForPr.mockResolvedValue(null);
+    const req = buildRequest({
+      event: "push",
+      body: {
+        repository: { clone_url: "https://github.com/owner/repo.git" },
+      },
+    });
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+    expect(mocks.mockAdmitAfkScanJobForPr).toHaveBeenCalled();
+    expect(mocks.mockRunPrScan).not.toHaveBeenCalled();
+    const body = await res.json();
+    expect(body.afkScans).toBe(0);
+  });
+
+  it("marks delivery failed when AFK admit throws", async () => {
+    mocks.mockCreateDeliveryLog.mockResolvedValue("delivery-afk");
+    mocks.mockAdmitAfkScanJobForPr.mockRejectedValue(new Error("queue down"));
+    const req = buildRequest({
+      event: "push",
+      body: {
+        repository: { clone_url: "https://github.com/owner/repo.git" },
+      },
+    });
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.afkScans).toBe(0);
+    expect(body.error).toContain("queue down");
+    expect(mocks.mockUpdateDeliveryStatus).toHaveBeenCalledWith(
+      "delivery-afk",
+      "failed",
+      expect.stringContaining("afk-admit-failed"),
+    );
   });
 
   it("returns ignored for unknown events", async () => {

@@ -156,9 +156,9 @@ export async function POST(req: Request) {
         throw createErr;
       }
 
+      // Worker persists status=error + lastFetchError on failure.
       enqueue(cleanId).catch((err) => {
         console.error(`[repos] initial fetch failed for ${cleanId}:`, err);
-        prisma.repository.update({ where: { id: cleanId }, data: { status: "error" } }).catch(() => {});
       });
 
       const ghKey = generateApiKey();
@@ -275,9 +275,9 @@ export async function POST(req: Request) {
       throw createErr;
     }
 
+    // Worker persists status=error + lastFetchError on failure.
     enqueue(cleanId).catch((err) => {
       console.error(`[repos] initial fetch failed for ${cleanId}:`, err);
-      prisma.repository.update({ where: { id: cleanId }, data: { status: "error" } }).catch(() => {});
     });
 
     const remoteKey = generateApiKey();

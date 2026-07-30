@@ -156,6 +156,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
         patCipher: true,
         patIv: true,
         patTag: true,
+        status: true,
+        lastFetchError: true,
+        provider: true,
       },
     });
     if (!repo) {

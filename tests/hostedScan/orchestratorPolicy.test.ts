@@ -69,6 +69,7 @@ describe("triggerHostedScan automatic policy", () => {
     expect(mocks.admitScanJobForPr).toHaveBeenCalledWith({
       prId: expect.any(String),
       triggerReason: "webhook",
+      kind: "afk",
     });
   });
 });

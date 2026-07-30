@@ -37,6 +37,11 @@ export type ScanPreludeResult = ScanPreludePass | ScanPreludeFail;
 export interface ScanPreludeRepo extends RepoForFreshness {
   path?: string | null;
   cloneUrl?: string | null;
+  /** Repository lifecycle status (e.g. cloning, error, idle). */
+  status?: string | null;
+  /** Last clone/fetch failure reason when status is error. */
+  lastFetchError?: string | null;
+  provider?: string | null;
 }
 
 export interface ScanPreludeDeps {
@@ -101,6 +106,10 @@ export async function runScanPrelude(
       issues,
     };
   }
+
+  // Clone-ready gate for remote repos — fail closed before index/diff work.
+  const cloneGate = cloneReadyResult(repo);
+  if (cloneGate) return cloneGate;
 
   const freshness = await d.assertIndexFresh(repo);
   if (freshness.ok === true) {
@@ -168,6 +177,40 @@ export async function runScanPrelude(
       repoId: repo.id,
     };
   }
+}
+
+/**
+ * When a remote repo is still cloning or last fetch failed, block scan with
+ * CLONE_FAILED so operators never treat clone-failed as an empty success.
+ * Local-path repos and already-ready remotes return null (continue prelude).
+ */
+export function cloneReadyResult(repo: ScanPreludeRepo): ScanPreludeFail | null {
+  const isRemote = Boolean(repo.cloneUrl) && repo.provider !== "local";
+  if (!isRemote) return null;
+
+  if (repo.status === "error" || repo.lastFetchError) {
+    const detail = repo.lastFetchError?.trim() || "clone or fetch failed";
+    return {
+      ok: false,
+      gate: "CLONE_FAILED",
+      message: `Clone failed — repository is not ready for scan: ${detail}`,
+      httpStatus: 503,
+      repoId: repo.id,
+    };
+  }
+
+  if (repo.status === "cloning") {
+    return {
+      ok: false,
+      gate: "CLONE_FAILED",
+      message:
+        "Clone is still in progress — wait for the repository to finish cloning before running a PR review.",
+      httpStatus: 503,
+      repoId: repo.id,
+    };
+  }
+
+  return null;
 }
 
 /**

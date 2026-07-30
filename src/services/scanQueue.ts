@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { prisma } from "@/src/lib/prisma";
 import { readLimits } from "@/src/lib/prSizeConfig";
+import { isAutoRescanEnabledForRepo } from "@/src/lib/autoRescanPolicy";
 
 export type ScanJobState =
   | "queued"
@@ -9,6 +10,9 @@ export type ScanJobState =
   | "failed"
   | "cancelled"
   | "interrupted";
+
+/** Explicit = user/agent requested; AFK = background auto-rescan path. */
+export type ScanAdmitKind = "explicit" | "afk";
 
 export type QueueJobView = {
   jobId: string;
@@ -32,6 +36,18 @@ export type QueueJobView = {
 };
 
 const DEFAULT_LEASE_MS = 5 * 60 * 1000;
+const AFK_TRIGGER_REASONS = new Set(["webhook", "auto", "polling"]);
+const TERMINAL_STATES = new Set(["completed", "failed", "interrupted", "cancelled"]);
+
+/** Resolve admit kind from an optional override or the trigger reason. */
+export function resolveAdmitKind(
+  triggerReason?: string,
+  kind?: ScanAdmitKind,
+): ScanAdmitKind {
+  if (kind) return kind;
+  if (triggerReason && AFK_TRIGGER_REASONS.has(triggerReason)) return "afk";
+  return "explicit";
+}
 
 function view(job: {
   id: string;
@@ -73,17 +89,17 @@ function view(job: {
   };
 }
 
-function isManualTrigger(triggerReason: string | undefined): boolean {
-  return !triggerReason || triggerReason === "manual" || triggerReason.startsWith("manual-");
+function isExplicitPriorityTrigger(triggerReason: string | undefined): boolean {
+  return resolveAdmitKind(triggerReason) === "explicit";
 }
 
 function queuePriority(job: { priority?: number; forced?: boolean; triggerReason?: string }): number {
-  return job.priority ?? (job.forced || isManualTrigger(job.triggerReason) ? 10 : 0);
+  return job.priority ?? (job.forced || isExplicitPriorityTrigger(job.triggerReason) ? 10 : 0);
 }
 
 async function positionFor(job: { id?: string; state: string; priority?: number; createdAt?: Date }): Promise<number | null> {
   if (job.state !== "queued" || !job.createdAt || !job.id) return null;
-  await normalizeManualPriorities();
+  await normalizeExplicitPriorities();
   const priority = job.priority ?? 0;
   return (await prisma.scanJob.count({
     where: {
@@ -97,12 +113,18 @@ async function positionFor(job: { id?: string; state: string; priority?: number;
   })) + 1;
 }
 
-async function normalizeManualPriorities(): Promise<void> {
+async function normalizeExplicitPriorities(): Promise<void> {
   await prisma.scanJob.updateMany({
     where: {
       state: "queued",
       priority: 0,
-      OR: [{ triggerReason: "manual" }, { triggerReason: { startsWith: "manual-" } }],
+      OR: [
+        { triggerReason: "manual" },
+        { triggerReason: { startsWith: "manual-" } },
+        { triggerReason: "prcheck" },
+        { triggerReason: "prepush" },
+        { triggerReason: "hosted" },
+      ],
     },
     data: { priority: 10 },
   });
@@ -114,11 +136,15 @@ export async function admitScanJob(input: {
   repoId: string;
   commitHash: string;
   triggerReason?: string;
+  /** explicit always queues; afk never requeues terminal work. */
+  kind?: ScanAdmitKind;
   forced?: boolean;
   resumeRequested?: boolean;
   freshRequested?: boolean;
   createdByUserId?: string | null;
 }): Promise<QueueJobView> {
+  const kind = resolveAdmitKind(input.triggerReason, input.kind);
+  const explicit = kind === "explicit";
   const job = await prisma.scanJob.upsert({
     where: { prId_commitHash: { prId: input.prId, commitHash: input.commitHash } },
     create: {
@@ -130,15 +156,17 @@ export async function admitScanJob(input: {
       forced: input.forced ?? false,
       resumeRequested: input.resumeRequested ?? false,
       freshRequested: input.freshRequested ?? false,
-      priority: input.forced || isManualTrigger(input.triggerReason) ? 10 : 0,
+      priority: input.forced || explicit ? 10 : 0,
     },
     update: {},
   });
-  // A force/recovery request is allowed to reuse the durable identity while
-  // moving a terminal job back through the queue. Ordinary duplicate
-  // requests remain idempotent and never restart completed work.
-  if ((input.forced || input.resumeRequested || input.freshRequested)
-    && ["completed", "failed", "interrupted", "cancelled"].includes(job.state)) {
+  // Explicit review (and force/resume/fresh) may reuse the durable identity
+  // while moving a terminal job back onto the queue. AFK duplicates stay
+  // idempotent and never restart completed work for the same revision.
+  // In-flight (queued/running) re-requests always return the active job.
+  const mayRequeueTerminal =
+    explicit || input.forced || input.resumeRequested || input.freshRequested;
+  if (mayRequeueTerminal && TERMINAL_STATES.has(job.state)) {
     const requeued = await prisma.scanJob.update({
       where: { id: job.id },
       data: {
@@ -147,6 +175,7 @@ export async function admitScanJob(input: {
         resumeRequested: input.resumeRequested ?? job.resumeRequested,
         freshRequested: input.freshRequested ?? job.freshRequested,
         triggerReason: input.triggerReason ?? job.triggerReason,
+        priority: input.forced || explicit ? 10 : job.priority,
         completedAt: null,
         errorMessage: null,
         workerId: null,
@@ -163,6 +192,7 @@ export async function admitScanJob(input: {
 export async function admitScanJobForPr(input: {
   prId: string;
   triggerReason: string;
+  kind?: ScanAdmitKind;
   forced?: boolean;
   resumeRequested?: boolean;
   freshRequested?: boolean;
@@ -174,6 +204,44 @@ export async function admitScanJobForPr(input: {
   });
   if (!pr) return null;
   return admitScanJob({ ...input, repoId: pr.repoId, commitHash: pr.commitHash });
+}
+
+/**
+ * Background AFK admit. Auto-rescan disabled → null (no queue work).
+ * Does not requeue terminal jobs for the same revision.
+ */
+export async function admitAfkScanJob(input: {
+  prId: string;
+  repoId: string;
+  commitHash: string;
+  triggerReason: string;
+}): Promise<QueueJobView | null> {
+  if (!(await isAutoRescanEnabledForRepo(input.repoId))) return null;
+  return admitScanJob({
+    prId: input.prId,
+    repoId: input.repoId,
+    commitHash: input.commitHash,
+    triggerReason: input.triggerReason,
+    kind: "afk",
+  });
+}
+
+/** AFK admit using the PR's current revision; null when policy disables auto-rescan. */
+export async function admitAfkScanJobForPr(input: {
+  prId: string;
+  triggerReason: string;
+}): Promise<QueueJobView | null> {
+  const pr = await prisma.pullRequest.findUnique({
+    where: { id: input.prId },
+    select: { repoId: true, commitHash: true },
+  });
+  if (!pr) return null;
+  return admitAfkScanJob({
+    prId: input.prId,
+    repoId: pr.repoId,
+    commitHash: pr.commitHash,
+    triggerReason: input.triggerReason,
+  });
 }
 
 /**
@@ -204,7 +272,13 @@ export async function claimNextScanJob(options?: {
       where: {
         state: "queued",
         priority: 0,
-        OR: [{ triggerReason: "manual" }, { triggerReason: { startsWith: "manual-" } }],
+        OR: [
+          { triggerReason: "manual" },
+          { triggerReason: { startsWith: "manual-" } },
+          { triggerReason: "prcheck" },
+          { triggerReason: "prepush" },
+          { triggerReason: "hosted" },
+        ],
       },
       data: { priority: 10 },
     });
@@ -373,7 +447,7 @@ export async function prioritizeScanJob(jobId: string): Promise<boolean> {
 }
 
 export async function listScanJobs(): Promise<QueueJobView[]> {
-  await normalizeManualPriorities();
+  await normalizeExplicitPriorities();
   const jobs = await prisma.scanJob.findMany({
     orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
     include: { repository: { select: { name: true } }, pullRequest: { select: { title: true, sourceBranch: true } } },
