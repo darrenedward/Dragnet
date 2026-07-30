@@ -96,45 +96,40 @@ export function rgPill(ok: boolean, okLabel: string, failLabel: string, titleOk:
 }
 
 /**
- * Two lines only — no repeated ticket/PR wording:
- *   Title
- *   GitHub  PR #31 · branch
- *   Issue   #25   (only if ticket known)
+ * Two lines:
+ *   GITHUB
+ *   PR #31 - feat(admin): Add PM User page…
+ *   ISSUE #25 - ticket-25-admin-pm-user
+ * (no ticket → ISSUE line omitted; branch still on ISSUE when present)
  */
 export function PrIdentity({ pr }: { pr: ProtoPr }) {
   return (
-    <div className="space-y-1.5 min-w-0">
-      <h3 className="text-base sm:text-lg font-bold text-white tracking-tight leading-snug">
-        {pr.title}
-      </h3>
-      <div className="font-mono text-[11px] space-y-0.5">
-        <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-          <span className="text-slate-500 uppercase text-[9px] font-bold tracking-wider w-14 shrink-0">
-            GitHub
-          </span>
-          <span className="text-cyan-400 font-semibold">PR #{pr.githubPrNumber}</span>
-          <span className="text-slate-600">·</span>
-          <span className="text-slate-500 truncate max-w-[240px]" title={pr.branch}>
-            {pr.branch}
-          </span>
+    <div className="space-y-2 min-w-0 font-mono">
+      <div className="space-y-0.5">
+        <div className="text-[9px] uppercase tracking-widest text-slate-500 font-bold">GitHub</div>
+        <div className="text-sm sm:text-base font-bold text-white leading-snug">
+          <span className="text-cyan-400">PR #{pr.githubPrNumber}</span>
+          <span className="text-slate-500 font-semibold"> — </span>
+          <span>{pr.title}</span>
         </div>
-        {pr.ticketNumber != null && (
-          <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-            <span className="text-slate-500 uppercase text-[9px] font-bold tracking-wider w-14 shrink-0">
-              Issue
-            </span>
-            <span className="text-cyan-300/90 font-semibold">#{pr.ticketNumber}</span>
-            {pr.ticketNumber !== pr.githubPrNumber && (
-              <span
-                className="text-slate-600 text-[10px]"
-                title="Tracker issue number is not the same as the GitHub pull request number"
-              >
-                (not the same as PR #{pr.githubPrNumber})
-              </span>
-            )}
-          </div>
-        )}
       </div>
+      {pr.ticketNumber != null && (
+        <div className="space-y-0.5">
+          <div className="text-[9px] uppercase tracking-widest text-slate-500 font-bold">Issue</div>
+          <div className="text-sm font-semibold text-slate-200 leading-snug">
+            <span className="text-cyan-300/90">#{pr.ticketNumber}</span>
+            <span className="text-slate-500"> — </span>
+            <span className="text-slate-400" title={pr.branch}>
+              {pr.branch}
+            </span>
+          </div>
+        </div>
+      )}
+      {pr.ticketNumber == null && (
+        <div className="text-[11px] text-slate-500 truncate" title={pr.branch}>
+          {pr.branch}
+        </div>
+      )}
     </div>
   );
 }
