@@ -92,6 +92,7 @@ describe("webhooks/gitlab/route POST", () => {
       (token: string, secret: string) => token === secret,
     );
     mocks.mockEnqueue.mockResolvedValue("/tmp/remote-repo");
+    mocks.mockGitFetch.mockResolvedValue(true);
     mocks.mockCheckDelivery.mockReturnValue(false);
     mocks.mockScanRepoPrs.mockResolvedValue(["pr-1"]);
     mocks.mockRunPrScan.mockResolvedValue(undefined);

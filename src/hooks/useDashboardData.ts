@@ -805,6 +805,29 @@ export function useDashboardData() {
           message: result.message || "Configure the required LLM providers before starting a review.",
           issues: Array.isArray(result.issues) ? result.issues : [],
         });
+      } else if (res.status === 409 && result.error === "INDEXING_IN_PROGRESS") {
+        setPrs((prev) =>
+          prev.map((p) => (p.id === targetPrId ? { ...p, status: "Pending" } : p)),
+        );
+        toast.warn(
+          result.message || "Indexing is currently running. Please wait for it to complete before reviewing.",
+        );
+      } else if (res.status === 409 && result.error === "INDEX_REQUIRED") {
+        setPrs((prev) =>
+          prev.map((p) => (p.id === targetPrId ? { ...p, status: "Pending" } : p)),
+        );
+        toast.warn(
+          result.message ||
+            "Codebase not indexed. Click \"Index Now\" above to build the codebase index, then retry the review.",
+        );
+      } else if (
+        res.status === 503 &&
+        (result.error === "CLONE_FAILED" || result.error === "DIFF_UNAVAILABLE" || result.gate === "CLONE_FAILED")
+      ) {
+        setPrs((prev) =>
+          prev.map((p) => (p.id === targetPrId ? { ...p, status: "Pending" } : p)),
+        );
+        toast.warn(result.message || "Repository clone is not ready for scan.");
       } else if (res.status === 409 && result.error === "SCAN_IN_PROGRESS") {
         // Active or stale-but-not-yet-reaped scan is holding the lock.
         // If the user didn't already opt into force, offer it; otherwise

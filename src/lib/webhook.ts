@@ -139,18 +139,59 @@ export async function getOpenPrIds(repoId: string): Promise<string[]> {
   return prs.map((p) => p.id);
 }
 
+async function persistFetchOutcome(repoId: string, ok: boolean, detail?: string): Promise<void> {
+  try {
+    if (ok) {
+      await prisma.repository.update({
+        where: { id: repoId },
+        data: {
+          lastFetchAt: new Date(),
+          lastFetchError: null,
+          status: "idle",
+        },
+      });
+      return;
+    }
+    const message = (detail?.trim() || "git fetch failed").slice(0, 2000);
+    await prisma.repository.update({
+      where: { id: repoId },
+      data: {
+        status: "error",
+        lastFetchError: message,
+      },
+    });
+  } catch (err) {
+    console.error(`[webhook] failed to persist fetch outcome for ${repoId}:`, err);
+  }
+}
+
 /**
  * Run `git fetch origin` against the repo. Legacy mode (local-path):
  * execFileSync directly. Remote-volume mode: spin up an alpine/git
  * sidecar with the named volume mounted. Returns true on success,
- * false on failure (webhook flow continues regardless).
+ * false on failure. Persists lastFetchError/status so clone-failed is
+ * visible and scan prelude can fail closed.
  */
 export async function gitFetch(repo: RepoLike): Promise<boolean> {
-  const { exitCode } = await runGitInRepo(repo, ["fetch", "origin"], {
-    networkMode: "bridge",
-    timeoutMs: 60_000,
-  });
-  return exitCode === 0;
+  try {
+    const { exitCode, stderr, stdout } = await runGitInRepo(repo, ["fetch", "origin"], {
+      networkMode: "bridge",
+      timeoutMs: 60_000,
+    });
+    if (exitCode === 0) {
+      await persistFetchOutcome(repo.id, true);
+      return true;
+    }
+    const detail = stderr?.trim() || stdout?.trim() || `git fetch failed (exit ${exitCode})`;
+    console.error(`[webhook] git fetch failed for ${repo.id}:`, detail);
+    await persistFetchOutcome(repo.id, false, detail);
+    return false;
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    console.error(`[webhook] git fetch threw for ${repo.id}:`, err);
+    await persistFetchOutcome(repo.id, false, detail);
+    return false;
+  }
 }
 
 export async function scanRepoPrs(repo: RepoLike): Promise<string[]> {
