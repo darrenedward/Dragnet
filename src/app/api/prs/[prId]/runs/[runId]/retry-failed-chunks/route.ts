@@ -34,6 +34,7 @@ export async function POST(
     const job = await admitScanJobForPr({
       prId,
       triggerReason: `retry-failed-chunks:${runId}`,
+      kind: "explicit",
       forced: true,
       createdByUserId: auth.userId,
     });

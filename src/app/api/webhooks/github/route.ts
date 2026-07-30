@@ -3,11 +3,10 @@ import { prisma } from "@/src/lib/prisma";
 import { verifyGithubSignature, findRepoByCloneUrl, gitFetch, scanRepoPrs, getOpenPrIds } from "../../../../lib/webhook";
 import { enqueue } from "@/src/services/remoteFetchWorker";
 import { checkDelivery } from "../../../../lib/webhookReplay";
-import { admitScanJobForPr } from "@/src/services/scanQueue";
+import { admitAfkScanJobForPr } from "@/src/services/scanQueue";
 import { triggerHostedScan } from "@/src/services/hostedScan/orchestrator";
 import { createDeliveryLog, updateDeliveryStatus } from "../../../../lib/webhookDelivery";
 import type { HostedPrData } from "@/src/services/hostedScan/orchestrator";
-import { isAutoRescanEnabled } from "@/src/lib/autoRescanPolicy";
 
 export async function POST(request: Request) {
   const event = request.headers.get("x-github-event");
@@ -62,11 +61,11 @@ export async function POST(request: Request) {
   }
 
   const triggerAfkScans = async (prIds: string[]) => {
-    if (!isAutoRescanEnabled(matched.autoRescanPolicy)) return 0;
     let admitted = 0;
     for (const prId of prIds) {
       try {
-        if (await admitScanJobForPr({ prId, triggerReason: "webhook" })) admitted++;
+        // Policy-gated AFK admit — disabled auto-rescan returns null.
+        if (await admitAfkScanJobForPr({ prId, triggerReason: "webhook" })) admitted++;
       } catch (err) {
         console.error(`[webhook] AFK scan failed for ${prId}:`, err);
       }

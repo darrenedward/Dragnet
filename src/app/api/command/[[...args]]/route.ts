@@ -45,6 +45,7 @@ async function startTrackedReview(pr: any, repo: any, userId: string | null): Pr
   const job = await admitScanJobForPr({
     prId: pr.id,
     triggerReason: "prcheck",
+    kind: "explicit",
     createdByUserId: userId,
   });
   if (!job) throw new Error("Pull request disappeared before scan admission");
