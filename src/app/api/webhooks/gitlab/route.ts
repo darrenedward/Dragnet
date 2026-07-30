@@ -54,17 +54,20 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Duplicate delivery UUID — replay rejected" }, { status: 429 });
   }
 
-  const triggerAfkScans = async (prIds: string[]) => {
+  const triggerAfkScans = async (prIds: string[]): Promise<{ admitted: number; error?: string }> => {
     let admitted = 0;
+    const errors: string[] = [];
     for (const prId of prIds) {
       try {
-        // Policy-gated AFK admit — disabled auto-rescan returns null.
+        // Policy-gated AFK admit — disabled auto-rescan returns null (no queue work).
         if (await admitAfkScanJobForPr({ prId, triggerReason: "webhook" })) admitted++;
       } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
         console.error(`[webhook] AFK scan failed for ${prId}:`, err);
+        errors.push(`${prId}: ${msg}`);
       }
     }
-    return admitted;
+    return { admitted, error: errors.length > 0 ? errors.join("; ") : undefined };
   };
 
   const logDelivery = deliveryGuid
@@ -76,6 +79,34 @@ export async function POST(request: Request) {
         hostedMode: matched.hostedMode,
       })
     : null;
+
+  const finishOk = async (
+    body: Record<string, unknown>,
+    deliveryStatus: "completed" | "failed" | "ignored" = "completed",
+    error?: string,
+  ) => {
+    if (logDelivery) await updateDeliveryStatus(logDelivery, deliveryStatus, error);
+    return NextResponse.json(body);
+  };
+
+  const refreshCloneAndPrs = async (): Promise<{ prIds: string[]; cloneError?: string }> => {
+    if (matched.path || matched.cloneUrl) {
+      await gitFetch(matched);
+      return { prIds: await scanRepoPrs(matched) };
+    }
+    try {
+      const localPath = await enqueue(matched.id);
+      if (!localPath) {
+        return { prIds: [], cloneError: "Clone/fetch already in progress" };
+      }
+      await gitFetch({ ...matched, path: localPath });
+      return { prIds: await scanRepoPrs({ ...matched, path: localPath }) };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[webhook] enqueue failed for ${matched.id}:`, err);
+      return { prIds: [], cloneError: msg };
+    }
+  };
 
   if (event === "Merge Request Hook") {
     const mr = payload.object_attributes;
@@ -110,54 +141,59 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: true, repo: matched.id, mr: mr.iid, hosted: true, prId: result.prId });
     }
 
-    const prIds: string[] = [];
-    if (matched.path || matched.cloneUrl) {
-      await gitFetch(matched);
-      const ids = await scanRepoPrs(matched);
-      prIds.push(...ids);
-    } else {
-      const localPath = await enqueue(matched.id).catch((err) => {
-        console.error(`[webhook] enqueue failed for ${matched.id}:`, err);
-        return null;
-      });
-      if (localPath) {
-        await gitFetch({ ...matched, path: localPath });
-        const ids = await scanRepoPrs({ ...matched, path: localPath });
-        prIds.push(...ids);
-      }
+    const { prIds, cloneError } = await refreshCloneAndPrs();
+    if (cloneError) {
+      return finishOk(
+        { ok: true, repo: matched.id, mr: mr.iid, afkScans: 0, error: cloneError },
+        "failed",
+        `clone-failed: ${cloneError}`,
+      );
     }
-    const afkScans = await triggerAfkScans(prIds);
-    if (logDelivery) await updateDeliveryStatus(logDelivery, "completed");
-    return NextResponse.json({ ok: true, repo: matched.id, mr: mr.iid, afkScans });
+    const { admitted: afkScans, error: afkError } = await triggerAfkScans(prIds);
+    if (afkError) {
+      return finishOk(
+        { ok: true, repo: matched.id, mr: mr.iid, afkScans, error: afkError },
+        "failed",
+        `afk-admit-failed: ${afkError}`,
+      );
+    }
+    return finishOk({ ok: true, repo: matched.id, mr: mr.iid, afkScans });
   }
 
   if (event === "Push Hook") {
     if (matched.hostedMode) {
       const prIds = await getOpenPrIds(matched.id);
-      const afkScans = await triggerAfkScans(prIds);
-      if (logDelivery) await updateDeliveryStatus(logDelivery, afkScans > 0 ? "completed" : "ignored");
-      return NextResponse.json({ ok: true, repo: matched.id, hosted: true, afkScans });
+      const { admitted: afkScans, error: afkError } = await triggerAfkScans(prIds);
+      if (afkError) {
+        return finishOk(
+          { ok: true, repo: matched.id, hosted: true, afkScans, error: afkError },
+          "failed",
+          `afk-admit-failed: ${afkError}`,
+        );
+      }
+      return finishOk(
+        { ok: true, repo: matched.id, hosted: true, afkScans },
+        afkScans > 0 ? "completed" : "ignored",
+      );
     }
 
-    const prIds: string[] = [];
-    if (matched.path || matched.cloneUrl) {
-      await gitFetch(matched);
-      const ids = await scanRepoPrs(matched);
-      prIds.push(...ids);
-    } else {
-      const localPath = await enqueue(matched.id).catch((err) => {
-        console.error(`[webhook] enqueue failed for ${matched.id}:`, err);
-        return null;
-      });
-      if (localPath) {
-        await gitFetch({ ...matched, path: localPath });
-        const ids = await scanRepoPrs({ ...matched, path: localPath });
-        prIds.push(...ids);
-      }
+    const { prIds, cloneError } = await refreshCloneAndPrs();
+    if (cloneError) {
+      return finishOk(
+        { ok: true, repo: matched.id, afkScans: 0, error: cloneError },
+        "failed",
+        `clone-failed: ${cloneError}`,
+      );
     }
-    const afkScans = await triggerAfkScans(prIds);
-    if (logDelivery) await updateDeliveryStatus(logDelivery, "completed");
-    return NextResponse.json({ ok: true, repo: matched.id, afkScans });
+    const { admitted: afkScans, error: afkError } = await triggerAfkScans(prIds);
+    if (afkError) {
+      return finishOk(
+        { ok: true, repo: matched.id, afkScans, error: afkError },
+        "failed",
+        `afk-admit-failed: ${afkError}`,
+      );
+    }
+    return finishOk({ ok: true, repo: matched.id, afkScans });
   }
 
   if (logDelivery) await updateDeliveryStatus(logDelivery, "ignored");

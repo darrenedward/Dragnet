@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   runScanPrelude,
   diffUnavailableResult,
+  cloneReadyResult,
   preludeFailToJson,
   blocksExplicitAdmit,
   parseScanGate,
@@ -33,6 +34,45 @@ describe("runScanPrelude", () => {
 
   it("passes when config and index are fresh", async () => {
     const r = await runScanPrelude(repo, deps);
+    expect(r).toEqual({ ok: true, reindexed: false });
+  });
+
+  it("blocks remote repos with status error as CLONE_FAILED", async () => {
+    const r = await runScanPrelude(
+      {
+        ...repo,
+        status: "error",
+        lastFetchError: "Git sync failed (exit 128)",
+        provider: "github",
+      },
+      deps,
+    );
+    expect(r.ok).toBe(false);
+    if (r.ok === false) {
+      expect(r.gate).toBe("CLONE_FAILED");
+      expect(r.message).toContain("Git sync failed");
+      expect(r.httpStatus).toBe(503);
+    }
+    expect(deps.assertIndexFresh).not.toHaveBeenCalled();
+  });
+
+  it("blocks remote repos still cloning as CLONE_FAILED", async () => {
+    const r = await runScanPrelude(
+      { ...repo, status: "cloning", provider: "github" },
+      deps,
+    );
+    expect(r.ok).toBe(false);
+    if (r.ok === false) {
+      expect(r.gate).toBe("CLONE_FAILED");
+      expect(r.message).toMatch(/still in progress/i);
+    }
+  });
+
+  it("does not clone-gate local repos", async () => {
+    const r = await runScanPrelude(
+      { ...repo, cloneUrl: null, path: "/local", status: "error", provider: "local" },
+      deps,
+    );
     expect(r).toEqual({ ok: true, reindexed: false });
   });
 
@@ -174,6 +214,36 @@ describe("runScanPrelude", () => {
       expect(r.gate).toBe("INDEXING_IN_PROGRESS");
       expect(r.httpStatus).toBe(409);
     }
+  });
+});
+
+describe("cloneReadyResult", () => {
+  it("returns CLONE_FAILED for error status or lastFetchError", () => {
+    expect(
+      cloneReadyResult({
+        id: "r1",
+        name: "x",
+        indexedAt: null,
+        lastCommitHash: "",
+        cloneUrl: "https://github.com/o/r.git",
+        status: "error",
+        lastFetchError: "boom",
+      })?.gate,
+    ).toBe("CLONE_FAILED");
+  });
+
+  it("returns null when remote clone is ready", () => {
+    expect(
+      cloneReadyResult({
+        id: "r1",
+        name: "x",
+        indexedAt: null,
+        lastCommitHash: "",
+        cloneUrl: "https://github.com/o/r.git",
+        status: "idle",
+        lastFetchError: null,
+      }),
+    ).toBeNull();
   });
 });
 

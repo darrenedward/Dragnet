@@ -15,7 +15,7 @@ vi.mock("@/src/lib/prSizeConfig", () => ({
 }));
 vi.mock("@/src/lib/autoRescanPolicy", () => ({
   isAutoRescanEnabled: () => true,
-  isAutoRescanEnabledForRepo: async () => true,
+  isAutoRescanEnabledForRepo: vi.fn(async () => true),
 }));
 
 import { pollOnce } from "@/src/lib/prPollingWorker";

@@ -38,7 +38,7 @@ export interface WatchedRepo {
   triggerMode: 'auto' | 'mention';
   quietPeriodSeconds: number;
   branchPattern: string;
-  status: 'idle' | 'detected' | 'stabilizing' | 'ready' | 'reviewing';
+  status: 'idle' | 'detected' | 'stabilizing' | 'ready' | 'reviewing' | 'cloning' | 'error' | 'indexing';
   lastCommitHash: string;
   lastCommitMessage: string;
   lastActivityTime: Date;
