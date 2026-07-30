@@ -424,6 +424,17 @@ export async function getScanJobForPr(prId: string): Promise<QueueJobView | null
   return job ? view(job, await positionFor(job), job.forced, job.resumeRequested, job.freshRequested) : null;
 }
 
+/** Most recent job for a PR (any state) — used to surface terminal gate failures. */
+export async function getLatestScanJobForPr(prId: string): Promise<QueueJobView | null> {
+  if (typeof (prisma as typeof prisma & { scanJob?: unknown }).scanJob === "undefined") return null;
+  const job = await prisma.scanJob.findFirst({
+    where: { prId },
+    orderBy: { createdAt: "desc" },
+    include: { repository: { select: { name: true } }, pullRequest: { select: { title: true, sourceBranch: true } } },
+  });
+  return job ? view(job, await positionFor(job), job.forced, job.resumeRequested, job.freshRequested) : null;
+}
+
 /** Wait for a queued job when the caller has a synchronous contract (pre-push). */
 export async function waitForScanJob(jobId: string, options?: { timeoutMs?: number; pollMs?: number }): Promise<{
   state: ScanJobState;

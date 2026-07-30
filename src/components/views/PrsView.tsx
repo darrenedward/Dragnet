@@ -136,6 +136,9 @@ interface Props {
   interruptedScan?: InterruptedScan | null;
   onContinueScan?: (prId: string) => void;
   onStartFreshScan?: (prId: string) => void;
+  mergeReady?: boolean | null;
+  mergeReadyMessage?: string | null;
+  blockedGate?: string | null;
 }
 
 export default function PrsView({
@@ -175,6 +178,9 @@ export default function PrsView({
   interruptedScan,
   onContinueScan,
   onStartFreshScan,
+  mergeReady,
+  mergeReadyMessage,
+  blockedGate,
 }: Props) {
   const scanSettings = useScanSettingsSummary();
 
@@ -209,7 +215,8 @@ export default function PrsView({
           onStartFreshScan={onStartFreshScan}
           queueJob={queueJob}
           mergeReady={mergeReady}
-          mergeBlockReason={mergeBlockReason}
+          mergeReadyMessage={mergeReadyMessage}
+          blockedGate={blockedGate}
         />
 
         <div className="space-y-4 min-w-0 mt-4 flex-1 overflow-y-auto overflow-x-hidden min-h-0 pr-1">
@@ -320,7 +327,8 @@ function PrHeader({
   onStartFreshScan,
   queueJob,
   mergeReady,
-  mergeBlockReason,
+  mergeReadyMessage,
+  blockedGate,
 }: {
   activePR: PullRequest | undefined;
   isScanning: boolean;
@@ -346,11 +354,13 @@ function PrHeader({
   onContinueScan?: (prId: string) => void;
   onStartFreshScan?: (prId: string) => void;
   queueJob?: { jobId: string; state: string; queuePosition: number | null } | null;
-  mergeReady?: boolean;
-  mergeBlockReason?: string | null;
+  mergeReady?: boolean | null;
+  mergeReadyMessage?: string | null;
+  blockedGate?: string | null;
 }) {
   const scanning = isScanning || activePR?.status === "In Progress";
   const queued = queueJob?.state === "queued";
+  const runningQueued = queueJob?.state === "running";
   // Label/color/tooltip decision tree for the "Run PR Review" button.
   // Pure function of the selected PR's persisted scan state — no
   // dashboard-level sticky memory, so switching PRs can never leak a
@@ -394,14 +404,45 @@ function PrHeader({
                 QUEUED{queueJob?.queuePosition ? ` #${queueJob.queuePosition}` : ""}
               </span>
             )}
+            {runningQueued && (
+              <span className="px-2 py-0.5 rounded uppercase font-extrabold text-[9px] font-mono bg-blue-500/10 text-blue-300 border border-blue-500/25">
+                RUNNING
+              </span>
+            )}
             <span
               className={`px-2 py-0.5 rounded uppercase font-extrabold text-[9px] font-mono flex items-center gap-1.5 shrink-0 select-none ${getStatusBadgeStyle(activePR.status)}`}
             >
-              {activePR.status === "In Progress" && (
+              {(activePR.status === "In Progress" || queued || runningQueued) && (
                 <span className="inline-block w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
               )}
-              <span>{activePR.status}</span>
+              <span>{queued || runningQueued ? "In Progress" : activePR.status}</span>
             </span>
+            {blockedGate && !queued && !runningQueued && (
+              <span
+                title={mergeReadyMessage ?? `Blocked at ${blockedGate}`}
+                className="px-2 py-0.5 rounded uppercase font-mono text-[9px] font-bold border bg-amber-500/10 text-amber-300 border-amber-500/30 max-w-[260px] truncate"
+              >
+                Blocked at {blockedGate}
+              </span>
+            )}
+            {activePR.status === "Completed" && !blockedGate && !queued && !runningQueued && (
+              <span className="px-2 py-0.5 rounded uppercase font-mono text-[9px] font-bold border bg-slate-500/10 text-slate-300 border-slate-500/25">
+                Scan finished
+              </span>
+            )}
+            {mergeReady === true && !blockedGate && !queued && !runningQueued && (
+              <span className="px-2 py-0.5 rounded uppercase font-mono text-[9px] font-bold border bg-emerald-500/10 text-emerald-400 border-emerald-500/25">
+                Merge ready
+              </span>
+            )}
+            {mergeReady === false && mergeReadyMessage && !scanning && !queued && !runningQueued && !blockedGate && (
+              <span
+                title={mergeReadyMessage}
+                className="px-2 py-0.5 rounded uppercase font-mono text-[9px] font-bold border bg-rose-500/10 text-rose-400 border-rose-500/20 max-w-[220px] truncate"
+              >
+                Not ready
+              </span>
+            )}
             {activePR.rating !== undefined && activePR.rating !== null && (
               <span
                 className={`px-2 py-0.5 rounded uppercase font-mono text-[9px] font-bold border ${

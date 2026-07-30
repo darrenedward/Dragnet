@@ -393,3 +393,132 @@ describe("POST /api/prs/[prId]/scan — priorReviewRun field (#19)", () => {
     expect(mocks.mockClearPendingAbort).not.toHaveBeenCalled();
   });
 });
+
+describe("POST /api/prs/[prId]/scan — gated prelude execute (#88)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.mockAuthenticateSessionOrKey.mockResolvedValue({ ok: true, user: { id: "u1" } });
+    mocks.mockEnforcePrRepoScope.mockResolvedValue(null);
+    mocks.mockRefreshPrFiles.mockResolvedValue([
+      { filename: "src/foo.ts", status: "modified", additions: 1, deletions: 1 },
+    ]);
+    mocks.mockIsBranchMerged.mockResolvedValue(false);
+    mocks.mockRunScanPrelude.mockResolvedValue({ ok: true, reindexed: false });
+    mocks.mockAcquireReviewLock.mockResolvedValue({ status: "acquired", release: vi.fn(), signal: undefined });
+    mocks.mockEndReview.mockReturnValue(undefined);
+    mocks.mockCheckPendingAbort.mockReturnValue(false);
+    mocks.mockAssertTier.mockReturnValue({ tier: "normal" });
+    mocks.mockBuildDiffManifest.mockReturnValue({ codeLines: 10 });
+    mocks.mockReadCheckpoint.mockReturnValue(null);
+    mocks.mockReadPrCommitCount.mockResolvedValue(1);
+    mocks.mockAssertReviewFreshness.mockResolvedValue({ ok: false, kind: "NO_RUN" });
+    mocks.mockReviewRunCreate.mockResolvedValue("run-current");
+    mocks.mockPullRequestFindUnique.mockResolvedValue({
+      id: "pr-1",
+      repoId: "repo-1",
+      commitHash: "abc",
+      sourceBranch: "feature/x",
+      targetBranch: "main",
+    });
+    mocks.mockRepositoryFindUnique.mockResolvedValue({
+      id: "repo-1",
+      name: "demo",
+      indexedAt: "2026-01-01T00:00:00Z",
+      lastCommitHash: "abc",
+      path: "/tmp/repo",
+      baseBranch: "main",
+      cloneUrl: "https://example.com/repo.git",
+    });
+    mocks.mockPullRequestUpdateMany.mockResolvedValue({ count: 1 });
+    mocks.mockRunPrScan.mockResolvedValue({
+      success: true,
+      rating: 9,
+      findings: [],
+      usedModel: "test-model",
+      systemWarn: null,
+    });
+    mocks.mockReviewRunFindFirst.mockResolvedValue(null);
+  });
+
+  it("prelude INDEX_REQUIRED blocks LLM (no runPrScan)", async () => {
+    mocks.mockRunScanPrelude.mockResolvedValue({
+      ok: false,
+      gate: "INDEX_REQUIRED",
+      message: "index first",
+      httpStatus: 409,
+      repoId: "repo-1",
+    });
+
+    const res = await POST(makeScanRequest("pr-1", { repoId: "repo-1" }), {
+      params: Promise.resolve({ prId: "pr-1" }),
+    });
+
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.gate).toBe("INDEX_REQUIRED");
+    expect(body.error).toBe("INDEX_REQUIRED");
+    expect(mocks.mockRunPrScan).not.toHaveBeenCalled();
+    expect(mocks.mockRefreshPrFiles).not.toHaveBeenCalled();
+  });
+
+  it("prelude CONFIG_REQUIRED surfaces gate and skips LLM", async () => {
+    mocks.mockRunScanPrelude.mockResolvedValue({
+      ok: false,
+      gate: "CONFIG_REQUIRED",
+      message: "Configure chat and embed",
+      httpStatus: 400,
+      issues: [{ code: "CHAT", message: "missing" }],
+    });
+
+    const res = await POST(makeScanRequest("pr-1", { repoId: "repo-1" }), {
+      params: Promise.resolve({ prId: "pr-1" }),
+    });
+
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.gate).toBe("CONFIG_REQUIRED");
+    expect(body.error).toBe("SCAN_CONFIGURATION_REQUIRED");
+    expect(mocks.mockRunPrScan).not.toHaveBeenCalled();
+  });
+
+  it("admitted prelude runs LLM path (runPrScan called)", async () => {
+    const res = await POST(makeScanRequest("pr-1", { repoId: "repo-1" }), {
+      params: Promise.resolve({ prId: "pr-1" }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(mocks.mockRunScanPrelude).toHaveBeenCalled();
+    expect(mocks.mockRunPrScan).toHaveBeenCalled();
+    const body = await res.json();
+    expect(body.rating).toBe(9);
+    expect(body.gate).toBeUndefined();
+  });
+
+  it("sync failure aborts with DIFF_UNAVAILABLE — not empty-diff success", async () => {
+    mocks.mockRefreshPrFiles.mockRejectedValue(new Error("clone sync failed: timeout"));
+
+    const res = await POST(makeScanRequest("pr-1", { repoId: "repo-1" }), {
+      params: Promise.resolve({ prId: "pr-1" }),
+    });
+
+    expect(res.status).toBe(503);
+    const body = await res.json();
+    expect(body.gate).toBe("DIFF_UNAVAILABLE");
+    expect(mocks.mockRunPrScan).not.toHaveBeenCalled();
+  });
+
+  it("true empty after successful sync keeps merged short-circuit (not LLM)", async () => {
+    mocks.mockRefreshPrFiles.mockResolvedValue([]);
+    mocks.mockIsBranchMerged.mockResolvedValue(true);
+
+    const res = await POST(makeScanRequest("pr-1", { repoId: "repo-1" }), {
+      params: Promise.resolve({ prId: "pr-1" }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.merged).toBe(true);
+    expect(body.rating).toBeNull();
+    expect(mocks.mockRunPrScan).not.toHaveBeenCalled();
+  });
+});

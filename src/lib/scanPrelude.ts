@@ -244,3 +244,38 @@ export function preludeFailToJson(fail: ScanPreludeFail): Record<string, unknown
     ...(fail.repoId ? { repoId: fail.repoId } : {}),
   };
 }
+
+const GATE_CODES: ReadonlySet<string> = new Set([
+  "CONFIG_REQUIRED",
+  "INDEX_REQUIRED",
+  "INDEXING_IN_PROGRESS",
+  "STALE_INDEX",
+  "REINDEX_FAILED",
+  "DIFF_UNAVAILABLE",
+  "CLONE_FAILED",
+]);
+
+/** Extract a stable gate code from a scan/job error payload or message. */
+export function parseScanGate(
+  value: string | null | undefined,
+): ScanGateCode | null {
+  if (!value) return null;
+  if (GATE_CODES.has(value)) return value as ScanGateCode;
+  // "Blocked at INDEX_REQUIRED: …" or bare code embedded in text
+  const blocked = value.match(/\bBlocked at ([A-Z_]+)\b/i);
+  if (blocked && GATE_CODES.has(blocked[1]!.toUpperCase())) {
+    return blocked[1]!.toUpperCase() as ScanGateCode;
+  }
+  if (value === "SCAN_CONFIGURATION_REQUIRED") return "CONFIG_REQUIRED";
+  for (const code of GATE_CODES) {
+    if (value === code || value.startsWith(`${code}:`) || value.includes(` ${code}`)) {
+      return code as ScanGateCode;
+    }
+  }
+  return null;
+}
+
+/** Operator-facing label for a blocked gate. */
+export function blockedAtLabel(gate: ScanGateCode | string): string {
+  return `Blocked at ${gate}`;
+}
