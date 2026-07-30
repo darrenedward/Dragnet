@@ -78,7 +78,7 @@ export function PrototypeDashboard({ variant: _variant }: { variant: "A" | "B" |
                           ? `${r.needsReviewCount} PR(s) still need review`
                           : `${r.prs.length} PR(s) in this repo`
                       }
-                      className={`shrink-0 text-[9px] font-mono font-extrabold min-w-[1.25rem] text-center px-1.5 py-0.5 rounded-full border cursor-help ${
+                      className={`shrink-0 text-[9px] font-mono font-extrabold min-w-[1.25rem] text-center px-1.5 py-0.5 rounded-full border ${
                         r.needsReviewCount > 0
                           ? "bg-amber-500/15 text-amber-300 border-amber-500/35"
                           : "bg-slate-800 text-slate-500 border-transparent"
