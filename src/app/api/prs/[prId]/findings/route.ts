@@ -3,7 +3,6 @@ import { getActiveScan, getLatestCompletedReview, getRecentRuns } from "@/src/li
 import { computeStability, computeWeightedStability } from "@/src/lib/stabilityScore";
 import { lookupTrustWeight } from "@/src/lib/modelTrustWeights";
 import { authenticateSessionOrKey, enforcePrRepoScope } from "@/src/lib/apiAuth";
-import { isMergeReady } from "@/src/lib/isMergeReady";
 import { prisma } from "@/src/lib/prisma";
 import { computePrSizeProfile } from "@/src/lib/prSizeProfile";
 import { readPrCommitCount } from "@/src/lib/prSizeProfile.server";
@@ -141,6 +140,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ prId: st
     const activeIterations = activeScan.iterationsByChunk;
 
     if (!latest.reviewRun) {
+      const noRun = isMergeReady(null);
       return NextResponse.json({
         reviewRun: null,
         findings: [],
@@ -172,7 +172,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ prId: st
     const ratingTrend = await getRecentRuns(prId, 5);
     const stability = computeStability(ratingTrend);
     const weighted = computeWeightedStability(ratingTrend, lookupTrustWeight);
-    const gate = isMergeReady({
+    const merge = isMergeReady({
       rating: latest.reviewRun.rating,
       outcome: latest.reviewRun.outcome,
       reliability: latest.reviewRun.reliability,

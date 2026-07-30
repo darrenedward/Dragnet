@@ -172,8 +172,6 @@ export function useDashboardData() {
     source: string | null;
   }>>([]);
   const [stale, setStale] = useState(false);
-  const [mergeReady, setMergeReady] = useState(false);
-  const [mergeBlockReason, setMergeBlockReason] = useState<string | null>(null);
   const [stability, setStability] = useState<import("@/src/lib/stabilityScore").StabilityProp | null>(null);
   const [logs, setLogs] = useState<ActivityLog[]>([]);
 
@@ -426,8 +424,12 @@ export function useDashboardData() {
         setRejectedFindings(findingsData.rejectedFindings ?? []);
         setStale(Boolean(findingsData.stale));
         setMergeReady(Boolean(findingsData.mergeReady));
-        setMergeBlockReason(
-          typeof findingsData.mergeBlockReason === "string" ? findingsData.mergeBlockReason : null,
+        setMergeReadyMessage(
+          typeof findingsData.mergeBlockReason === "string"
+            ? findingsData.mergeBlockReason
+            : typeof findingsData.mergeReadyMessage === "string"
+              ? findingsData.mergeReadyMessage
+              : null,
         );
         setStability(findingsData.stability ? { ...findingsData.stability, weightedStability: findingsData.weightedStability ?? undefined } : null);
         if (findingsData.sizeProfile) {
@@ -451,13 +453,11 @@ export function useDashboardData() {
         setRejectedCount(0);
         setRejectedFindings([]);
         setStale(false);
-        setMergeReady(false);
-        setMergeBlockReason(null);
       }
     } catch (e) {
       setStale(true);
-      setMergeReady(false);
-      setMergeBlockReason(null);
+      setMergeReady(null);
+      setMergeReadyMessage(null);
       console.error("Failed retrieving PR files/findings detailed block", e);
     }
   };
@@ -691,6 +691,7 @@ export function useDashboardData() {
     );
 
     const activeRepoName = repos.find((r) => r.id === scanningRepoId)?.name || scanningRepoId;
+    let queueAccepted = false;
 
     try {
       const url = `/api/prs/${targetPrId}/scan${force ? "?force=true" : ""}`;
@@ -1239,6 +1240,7 @@ export function useDashboardData() {
       queueJob,
       mergeReady,
       mergeReadyMessage,
+      mergeBlockReason: mergeReadyMessage,
       blockedGate,
       activeScanChunks,
       activeFindings,
@@ -1246,8 +1248,6 @@ export function useDashboardData() {
       rejectedCount,
       rejectedFindings,
       stale,
-      mergeReady,
-      mergeBlockReason,
       stability,
       repoIndexedAt: repos.find((repo) => repo.id === selectedRepoId)?.indexedAt ?? null,
       interruptedScan,

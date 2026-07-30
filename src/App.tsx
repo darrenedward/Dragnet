@@ -280,7 +280,9 @@ export default function App() {
                   rejectedFindings={workspace.rejectedFindings}
                   stale={workspace.stale}
                   mergeReady={workspace.mergeReady}
-                  mergeBlockReason={workspace.mergeBlockReason}
+                  mergeBlockReason={workspace.mergeBlockReason ?? workspace.mergeReadyMessage}
+                  mergeReadyMessage={workspace.mergeReadyMessage}
+                  blockedGate={workspace.blockedGate}
                   onCopySuggestion={workspaceCommands.copySuggestion}
                   copyFeedback={workspace.feedback.copyFeedback}
                   prFiles={workspace.files}
@@ -293,8 +295,6 @@ export default function App() {
                   interruptedScan={workspace.interruptedScan}
                   onContinueScan={workspaceCommands.continueScan}
                   onStartFreshScan={workspaceCommands.startFreshScan}
-                  mergeReady={workspace.mergeReady}
-                  mergeReadyMessage={workspace.mergeReadyMessage}
                   seamInput={
                     activeRepo
                       ? {

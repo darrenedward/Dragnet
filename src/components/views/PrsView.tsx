@@ -122,7 +122,7 @@ interface Props {
   }>;
   stale?: boolean;
   /** Shared merge gate from findings payload — not the same as status Completed. */
-  mergeReady?: boolean;
+  mergeReady?: boolean | null;
   mergeBlockReason?: string | null;
   onCopySuggestion: (text: string, id: string) => void;
   copyFeedback: string | null;
@@ -138,8 +138,8 @@ interface Props {
   interruptedScan?: InterruptedScan | null;
   onContinueScan?: (prId: string) => void;
   onStartFreshScan?: (prId: string) => void;
-  mergeReady?: boolean | null;
   mergeReadyMessage?: string | null;
+  blockedGate?: string | null;
   /** Optional repo/pipeline fields for glanceable seam chips. */
   seamInput?: SeamChipInput | null;
 }
@@ -169,6 +169,8 @@ export default function PrsView({
   stale,
   mergeReady,
   mergeBlockReason,
+  mergeReadyMessage,
+  blockedGate,
   onCopySuggestion,
   copyFeedback,
   prFiles,
@@ -181,10 +183,9 @@ export default function PrsView({
   interruptedScan,
   onContinueScan,
   onStartFreshScan,
-  mergeReady,
-  mergeReadyMessage,
   seamInput,
 }: Props) {
+  const notReadyReason = mergeBlockReason ?? mergeReadyMessage ?? null;
   const scanSettings = useScanSettingsSummary();
 
   return (
@@ -219,6 +220,7 @@ export default function PrsView({
           queueJob={queueJob}
           mergeReady={mergeReady}
           mergeReadyMessage={mergeReadyMessage}
+          blockedGate={blockedGate}
           seamInput={seamInput}
         />
 
@@ -331,6 +333,7 @@ function PrHeader({
   queueJob,
   mergeReady,
   mergeReadyMessage,
+  blockedGate,
   seamInput,
 }: {
   activePR: PullRequest | undefined;
@@ -361,8 +364,11 @@ function PrHeader({
   queueJob?: { jobId: string; state: string; queuePosition: number | null } | null;
   mergeReady?: boolean | null;
   mergeReadyMessage?: string | null;
+  blockedGate?: string | null;
   seamInput?: SeamChipInput | null;
 }) {
+  const notReadyReason = mergeReadyMessage ?? null;
+
   const scanning = isScanning || activePR?.status === "In Progress";
   const queued = queueJob?.state === "queued";
   const runningQueued = queueJob?.state === "running";
@@ -465,7 +471,7 @@ function PrHeader({
                 title={
                   mergeReady
                     ? "Shared merge gate passed — rating, outcome, reliability, and freshness"
-                    : mergeBlockReason ?? "Not merge-ready"
+                    : notReadyReason ?? "Not merge-ready"
                 }
                 className={`px-2 py-0.5 rounded uppercase font-mono text-[9px] font-bold border ${
                   mergeReady
@@ -475,7 +481,7 @@ function PrHeader({
               >
                 {mergeReady
                   ? "Merge ready"
-                  : `Not ready${mergeBlockReason ? ` (${mergeBlockReason})` : ""}`}
+                  : `Not ready${notReadyReason ? ` (${notReadyReason})` : ""}`}
               </span>
             )}
           </div>

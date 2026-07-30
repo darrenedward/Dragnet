@@ -258,6 +258,16 @@ function checksChip(input: SeamChipInput): SeamChip {
 
 function ratingChip(input: SeamChipInput): SeamChip {
   const label = "rating";
+  // Bare rating without a finished run is not merge-ready (no run to gate on).
+  if (input.runStatus == null && input.runOutcome == null) {
+    return {
+      id: "rating",
+      label,
+      tone: "pending",
+      detail: "—",
+      title: "No completed scan yet — not merge-ready.",
+    };
+  }
   const mergeInput: MergeReadyInput = {
     status: input.runStatus,
     outcome: input.runOutcome,
@@ -266,9 +276,7 @@ function ratingChip(input: SeamChipInput): SeamChip {
     refused: input.refused,
     stale: input.stale,
   };
-  const merge = isMergeReady(
-    input.runStatus != null || input.runOutcome != null ? mergeInput : null,
-  );
+  const merge = isMergeReady(mergeInput);
 
   if (merge.mergeReady) {
     return {
@@ -280,7 +288,13 @@ function ratingChip(input: SeamChipInput): SeamChip {
     };
   }
 
-  if (merge.mergeBlockReason === "no_run" || merge.mergeBlockReason === "not_finished") {
+  // In-flight / no finished run: pending (not a red "fail" on an old score)
+  if (
+    input.runStatus === "in_progress" ||
+    input.runStatus === "queued" ||
+    merge.mergeBlockReason === "no_run" ||
+    merge.mergeBlockReason === "not_finished"
+  ) {
     return {
       id: "rating",
       label,
@@ -298,8 +312,8 @@ function ratingChip(input: SeamChipInput): SeamChip {
     label,
     tone: "fail",
     detail,
-    title: merge.message
-      ? `Not merge-ready: ${merge.message}`
+    title: merge.mergeBlockReason
+      ? `Not merge-ready: ${merge.mergeBlockReason}`
       : "Not merge-ready (shared isMergeReady gate).",
   };
 }
