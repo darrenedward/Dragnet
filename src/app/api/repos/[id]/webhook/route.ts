@@ -24,7 +24,7 @@ export async function POST(
     if (body.webhookId) {
       await prisma.repository.update({
         where: { id },
-        data: { webhookId: String(body.webhookId) },
+        data: { webhookId: String(body.webhookId), webhookEnabled: true },
       });
       return NextResponse.json({ success: true, webhookId: String(body.webhookId) });
     }

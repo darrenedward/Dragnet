@@ -39,6 +39,10 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "No matching repository found" }, { status: 404 });
   }
 
+  if (matched.webhookEnabled === false) {
+    return NextResponse.json({ error: "Webhook processing is disabled for this repository" }, { status: 403 });
+  }
+
   if (!matched.webhookSecret) {
     return NextResponse.json({ error: "Webhook secret not configured for this repository" }, { status: 401 });
   }
