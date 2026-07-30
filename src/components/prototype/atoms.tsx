@@ -232,8 +232,10 @@ export function MainStatusRow({
 }
 
 export function Actions({ disabled }: { disabled?: boolean }) {
+  const base =
+    "h-8 px-3 text-[11px] font-bold rounded-md inline-flex items-center gap-1.5 shrink-0 whitespace-nowrap self-start";
   return (
-    <div className="flex gap-2 shrink-0">
+    <div className="flex gap-1.5 shrink-0 self-start">
       <button
         type="button"
         disabled={disabled}
@@ -242,13 +244,13 @@ export function Actions({ disabled }: { disabled?: boolean }) {
             ? "Disabled while clone is failed — fix the repo checkout first."
             : "Queue a full PR review scan now."
         }
-        className={`min-h-10 px-4 py-2 text-xs font-bold rounded-lg flex items-center gap-1.5 shadow-md ${
+        className={`${base} ${
           disabled
             ? "bg-slate-700 text-slate-500 cursor-not-allowed"
-            : "bg-gradient-to-r from-cyan-500 to-indigo-500 text-black"
+            : "bg-gradient-to-r from-cyan-500 to-indigo-500 text-black shadow-sm"
         }`}
       >
-        <Zap size={14} className={disabled ? "" : "fill-black"} />
+        <Zap size={12} className={disabled ? "" : "fill-black"} />
         Run PR Review
       </button>
       <button
@@ -259,13 +261,13 @@ export function Actions({ disabled }: { disabled?: boolean }) {
             ? "Disabled while clone is failed."
             : "Force a fresh scan, ignoring cache / freshness shortcuts."
         }
-        className={`min-h-10 px-3 py-2 text-xs font-mono font-bold rounded-lg flex items-center gap-1.5 border ${
+        className={`${base} font-mono ${
           disabled
-            ? "bg-slate-800/50 border-slate-700 text-slate-600 cursor-not-allowed"
-            : "bg-rose-500/15 border-rose-500/30 text-rose-300"
+            ? "bg-slate-800/50 border border-slate-700 text-slate-600 cursor-not-allowed"
+            : "bg-rose-500/15 border border-rose-500/30 text-rose-300"
         }`}
       >
-        <AlertTriangle size={13} />
+        <AlertTriangle size={12} />
         Force re-scan
       </button>
     </div>
