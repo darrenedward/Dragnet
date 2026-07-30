@@ -84,18 +84,27 @@ vi.mock("../src/services/largePrReview/reconcile", () => ({
   dedupFindingsWithinRun: vi.fn().mockResolvedValue(0),
 }));
 
-vi.mock("../src/lib/buildsystemDetect", () => ({
-  detectBuildSystem: vi.fn().mockResolvedValue({
+const detectBuildSystem = vi.hoisted(() =>
+  vi.fn().mockResolvedValue({
     buildSystem: "node",
     image: "node:20-alpine",
     warn: null,
   }),
+);
+
+vi.mock("../src/lib/buildsystemDetect", () => ({
+  detectBuildSystem,
 }));
 
 describe("StepPipeline infrastructure abort in runPrScan", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     runContainerizedChecks.mockRejectedValue(new Error("Docker daemon not responding"));
+    detectBuildSystem.mockResolvedValue({
+      buildSystem: "node",
+      image: "node:20-alpine",
+      warn: null,
+    });
   });
 
   it("infrastructure failure in Tier 2 sets PR status to Failed and aborts before LLM", async () => {
@@ -177,6 +186,13 @@ describe("StepPipeline infrastructure abort in runPrScan", () => {
       installCommand: "npm install",
       testCommand: "npm run typecheck && npm run lint",
     });
+    // Stale host mirror has no package.json — host detect would say "unknown"
+    // and must not disable container Tier 2 for remote/volume repos.
+    detectBuildSystem.mockResolvedValue({
+      buildSystem: "unknown",
+      image: "node:20-alpine",
+      warn: "No recognized build config found",
+    });
     runContainerizedChecks.mockResolvedValue([]);
     create.mockResolvedValue({
       choices: [{
@@ -211,6 +227,7 @@ describe("StepPipeline infrastructure abort in runPrScan", () => {
     ], "run-infra");
 
     expect(det.runDeterministicChecks).not.toHaveBeenCalled();
+    expect(detectBuildSystem).not.toHaveBeenCalled();
     expect(runContainerizedChecks).toHaveBeenCalled();
   });
 
