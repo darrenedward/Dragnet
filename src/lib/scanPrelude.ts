@@ -130,6 +130,18 @@ export async function runScanPrelude(
   // STALE_INDEX — must reindex; volume-only repos use remote fetch worker.
   try {
     if (repo.path) {
+      // Match remote null-enqueue: concurrent local index must not surface as
+      // REINDEX_FAILED (500) when work is already in flight.
+      if (d.isIndexing(repo.id)) {
+        return {
+          ok: false,
+          gate: "INDEXING_IN_PROGRESS",
+          message:
+            "Indexing is currently running for this repo. Please wait for it to complete before running a PR review.",
+          httpStatus: 409,
+          repoId: repo.id,
+        };
+      }
       await d.indexFolder(repo.id, repo.path);
       return { ok: true, reindexed: true };
     }
@@ -160,6 +172,17 @@ export async function runScanPrelude(
     };
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
+    // indexFolder throws when a race slips past isIndexing; map to 409.
+    if (/already in progress/i.test(msg)) {
+      return {
+        ok: false,
+        gate: "INDEXING_IN_PROGRESS",
+        message:
+          "Indexing is currently running for this repo. Please wait for it to complete before running a PR review.",
+        httpStatus: 409,
+        repoId: repo.id,
+      };
+    }
     return {
       ok: false,
       gate: "REINDEX_FAILED",

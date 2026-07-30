@@ -100,6 +100,39 @@ describe("runScanPrelude", () => {
     expect(deps.indexFolder).toHaveBeenCalledWith("repo-1", "/host/repo");
   });
 
+  it("STALE local path with index already running fails closed as INDEXING_IN_PROGRESS", async () => {
+    deps.assertIndexFresh = vi.fn().mockResolvedValue({
+      ok: false,
+      kind: "STALE_INDEX",
+      message: "stale",
+    });
+    deps.isIndexing = () => true;
+    const r = await runScanPrelude({ ...repo, path: "/host/repo", cloneUrl: null }, deps);
+    expect(r.ok).toBe(false);
+    if (r.ok === false) {
+      expect(r.gate).toBe("INDEXING_IN_PROGRESS");
+      expect(r.httpStatus).toBe(409);
+    }
+    expect(deps.indexFolder).not.toHaveBeenCalled();
+  });
+
+  it("STALE local race throw maps to INDEXING_IN_PROGRESS not REINDEX_FAILED", async () => {
+    deps.assertIndexFresh = vi.fn().mockResolvedValue({
+      ok: false,
+      kind: "STALE_INDEX",
+      message: "stale",
+    });
+    deps.indexFolder = vi
+      .fn()
+      .mockRejectedValue(new Error("Index already in progress for this repo — wait for the current run to finish."));
+    const r = await runScanPrelude({ ...repo, path: "/host/repo", cloneUrl: null }, deps);
+    expect(r.ok).toBe(false);
+    if (r.ok === false) {
+      expect(r.gate).toBe("INDEXING_IN_PROGRESS");
+      expect(r.httpStatus).toBe(409);
+    }
+  });
+
   it("reindex failure blocks with REINDEX_FAILED", async () => {
     deps.assertIndexFresh = vi.fn().mockResolvedValue({
       ok: false,
