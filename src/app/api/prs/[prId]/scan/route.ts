@@ -2,9 +2,12 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/src/lib/prisma";
 import { runPrScan, SYSTEM_INSTRUCTION } from "@/src/services/reviewService";
 import { refreshPrFiles, isBranchMerged } from "@/src/lib/getRealPrs";
-import { assertIndexFresh } from "@/src/lib/indexFreshness";
-import { IndexingService } from "@/src/services/indexingService";
 import { getChatChain, getEmbeddingChain } from "@/src/lib/llmClient";
+import {
+  runScanPrelude,
+  diffUnavailableResult,
+  preludeFailToJson,
+} from "@/src/lib/scanPrelude";
 import { acquireReviewLock, endReview, checkPendingAbort } from "@/src/lib/reviewLocks";
 import { computePrSizeProfile } from "@/src/lib/prSizeProfile";
 import { readPrCommitCount } from "@/src/lib/prSizeProfile.server";
@@ -161,42 +164,36 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
     }
     console.log(`[scan] route: repo=${repo.name}, indexedAt=${repo.indexedAt}, path=${repo.path}`);
 
-    const freshness = await assertIndexFresh(repo);
-    if (freshness.ok === false) {
-      console.log(`[scan] route: freshness not ok kind=${freshness.kind} message=${freshness.message}`);
-      if (freshness.kind === "INDEX_REQUIRED") {
-        const indexingInProgress = IndexingService.isIndexing(pr.repoId);
-        if (indexingInProgress) {
-          console.log(`[scan] route: INDEX_REQUIRED but indexing is in progress — returning 409`);
-          return NextResponse.json(
-            { error: "INDEXING_IN_PROGRESS", message: "Indexing is currently running for this repo. Please wait for it to complete before running a PR review.", repoId: pr.repoId },
-            { status: 409 },
-          );
-        }
-        console.log(`[scan] route: INDEX_REQUIRED - returning 409`);
-        return NextResponse.json(
-          { error: freshness.kind, message: freshness.message, repoId: pr.repoId },
-          { status: 409 },
-        );
-      }
-      console.log(`[scan] route: STALE_INDEX - triggering incremental index`);
-    void logReview(prId, `> Index is stale — running incremental reindex inline…`, "info");
-      if (repo.path) {
-        await IndexingService.indexFolder(pr.repoId, repo.path);
-        console.log(`[scan] route: incremental index complete`);
-      }
+    // Gated prelude: config + index freshness (volume-aware STALE reindex).
+    // Fail closed before deterministic checks / LLM.
+    const prelude = await runScanPrelude(repo);
+    if (prelude.ok === false) {
+      console.log(`[scan] route: prelude blocked gate=${prelude.gate} message=${prelude.message}`);
+      return NextResponse.json(preludeFailToJson(prelude), { status: prelude.httpStatus });
+    }
+    if (prelude.reindexed) {
+      void logReview(prId, `> Index was stale — reindexed before scan`, "info");
+      console.log(`[scan] route: prelude reindexed ok`);
     } else {
-      console.log(`[scan] route: freshness check OK (indexedAt=${repo.indexedAt})`);
+      console.log(`[scan] route: prelude OK (indexedAt=${repo.indexedAt})`);
     }
 
-    // Refresh PR files BEFORE freshness check — diffHash needs the files
-    // whether we hit cache or run the scan. Cheap if files haven't changed.
+    // Refresh PR files BEFORE cache check — diffHash needs the files
+    // whether we hit cache or run the scan. Sync failure is fail-closed
+    // (DIFF_UNAVAILABLE / CLONE_FAILED), never empty-diff success.
     const repoPath = repo.path;
     const baseBranch = pr.targetBranch || repo.baseBranch || "main";
     let files: any[] = [];
     if ((repo.path || repo.cloneUrl) && pr.sourceBranch) {
       console.log(`[scan] route: refreshing PR files from git`);
-      files = await refreshPrFiles(repo, pr.sourceBranch, prId);
+      try {
+        files = await refreshPrFiles(repo, pr.sourceBranch, prId, { failOnSyncError: true });
+      } catch (syncErr: unknown) {
+        const fail = diffUnavailableResult(syncErr, pr.repoId);
+        console.log(`[scan] route: diff gate blocked gate=${fail.gate} message=${fail.message}`);
+        void logReview(prId, `> Blocked at ${fail.gate}: ${fail.message}`, "error");
+        return NextResponse.json(preludeFailToJson(fail), { status: fail.httpStatus });
+      }
       console.log(`[scan] route: got ${files.length} files`);
     void logReview(prId, `> Diff files refreshed — ${files.length} file${files.length === 1 ? "" : "s"} in scope`, "info");
 

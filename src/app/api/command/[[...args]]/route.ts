@@ -4,9 +4,8 @@ import { findPrByIdOrNumber, findPrByBranch } from "@/src/lib/findPr";
 import { refreshPrFiles } from "@/src/lib/getRealPrs";
 import { runPrScan, SYSTEM_INSTRUCTION } from "@/src/services/reviewService";
 import { authenticateApiRequest } from "@/src/lib/apiAuth";
-import { IndexingService } from "@/src/services/indexingService";
-import { assertIndexFresh } from "@/src/lib/indexFreshness";
 import { isReviewActive, acquireReviewLock } from "@/src/lib/reviewLocks";
+import { blocksExplicitAdmit, runScanPrelude } from "@/src/lib/scanPrelude";
 import { getChatChain } from "@/src/lib/llmClient";
 import { computePrSizeProfile, type PrSizeProfile } from "@/src/lib/prSizeProfile";
 import { readPrCommitCount } from "@/src/lib/prSizeProfile.server";
@@ -229,15 +228,12 @@ async function handlePrCheck(args: any, userId: string | null): Promise<string> 
     return `> ⚠ Repository for PR \`${pr.sourceBranch}\` could not be loaded.`;
   }
 
-  const freshness = await assertIndexFresh(repo);
-  if (freshness.ok === false) {
-    if (freshness.kind === "INDEX_REQUIRED") {
-      return `> ⚠ **Index required.** ${freshness.message}`;
-    }
-    // STALE_INDEX — auto-trigger incremental index
-    if (repo.path) {
-      await IndexingService.indexFolder(pr.repoId, repo.path);
-    }
+  // Explicit review always admits when gates pass; fail-fast on config/index
+  // so /dragnet does not queue work known to fail. STALE volume repos
+  // reindex via prelude (never no-op when only clone URL exists).
+  const prelude = await runScanPrelude(repo);
+  if (prelude.ok === false && blocksExplicitAdmit(prelude.gate)) {
+    return `> ⚠ **Blocked at ${prelude.gate}.** ${prelude.message}`;
   }
 
   const started = await startTrackedReview(pr, repo, userId);
@@ -462,22 +458,15 @@ async function handleLegacyCommand(body: any, defRepo: string | null, userId: st
           message: `> Repository for PR \`${pr.sourceBranch}\` could not be loaded.`,
         });
       }
-const freshness = await assertIndexFresh(repo);
-      if (freshness.ok === false) {
-        if (freshness.kind === "INDEX_REQUIRED") {
-          return NextResponse.json({
-            status: "Error",
-            message: `> ⚠ **Index required.** ${freshness.message}`,
-          });
-        }
-        // STALE_INDEX — auto-trigger incremental index inline so /dragnet fix
-        // --auto loops don't dead-end after each fix commit advances HEAD.
-        // Matches the behavior in handlePrCheck (JSON-RPC tool path).
-        if (repo.path) {
-          await IndexingService.indexFolder(pr.repoId, repo.path);
-        }
+      const prelude = await runScanPrelude(repo);
+      if (prelude.ok === false && blocksExplicitAdmit(prelude.gate)) {
+        return NextResponse.json({
+          status: "Error",
+          message: `> ⚠ **Blocked at ${prelude.gate}.** ${prelude.message}`,
+          gate: prelude.gate,
+        });
       }
-const started = await startTrackedReview(pr, repo, userId);
+      const started = await startTrackedReview(pr, repo, userId);
       if ("conflict" in started) {
         return NextResponse.json({
           status: "Conflict",

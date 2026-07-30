@@ -26,8 +26,7 @@ const mocks = vi.hoisted(() => ({
   mockRepositoryFindUnique: vi.fn(),
   mockRefreshPrFiles: vi.fn(),
   mockIsBranchMerged: vi.fn(),
-  mockAssertIndexFresh: vi.fn(),
-  mockIndexingServiceIsIndexing: vi.fn(),
+  mockRunScanPrelude: vi.fn(),
   mockAcquireReviewLock: vi.fn(),
   mockEndReview: vi.fn(),
   mockCheckPendingAbort: vi.fn(),
@@ -54,14 +53,22 @@ vi.mock("@/src/lib/getRealPrs", () => ({
   isBranchMerged: mocks.mockIsBranchMerged,
 }));
 
-vi.mock("@/src/lib/indexFreshness", () => ({
-  assertIndexFresh: mocks.mockAssertIndexFresh,
-}));
-
-vi.mock("@/src/services/indexingService", () => ({
-  IndexingService: {
-    isIndexing: mocks.mockIndexingServiceIsIndexing,
-  },
+vi.mock("@/src/lib/scanPrelude", () => ({
+  runScanPrelude: mocks.mockRunScanPrelude,
+  diffUnavailableResult: (err: unknown, repoId?: string) => ({
+    ok: false,
+    gate: "DIFF_UNAVAILABLE",
+    message: err instanceof Error ? err.message : String(err),
+    httpStatus: 503,
+    repoId,
+  }),
+  preludeFailToJson: (fail: { gate: string; message: string; repoId?: string; issues?: unknown[] }) => ({
+    error: fail.gate === "CONFIG_REQUIRED" ? "SCAN_CONFIGURATION_REQUIRED" : fail.gate,
+    message: fail.message,
+    gate: fail.gate,
+    ...(fail.repoId ? { repoId: fail.repoId } : {}),
+    ...(fail.issues ? { issues: fail.issues } : {}),
+  }),
 }));
 
 vi.mock("@/src/lib/llmClient", () => ({
@@ -125,6 +132,7 @@ vi.mock("@/src/lib/prisma", () => ({
     pullRequest: {
       findUnique: mocks.mockPullRequestFindUnique,
       updateMany: mocks.mockPullRequestUpdateMany,
+      update: vi.fn().mockResolvedValue({}),
     },
     repository: {
       findUnique: mocks.mockRepositoryFindUnique,
@@ -162,8 +170,7 @@ describe("POST /api/prs/[prId]/scan — priorReviewRun field (#19)", () => {
       { filename: "src/foo.ts", status: "modified", additions: 1, deletions: 1 },
     ]);
     mocks.mockIsBranchMerged.mockResolvedValue(false);
-    mocks.mockAssertIndexFresh.mockResolvedValue({ ok: true });
-    mocks.mockIndexingServiceIsIndexing.mockResolvedValue(false);
+    mocks.mockRunScanPrelude.mockResolvedValue({ ok: true, reindexed: false });
     mocks.mockAcquireReviewLock.mockResolvedValue({ status: "acquired" });
     mocks.mockEndReview.mockReturnValue(undefined);
     mocks.mockCheckPendingAbort.mockReturnValue(false);
@@ -189,6 +196,9 @@ describe("POST /api/prs/[prId]/scan — priorReviewRun field (#19)", () => {
     });
     mocks.mockRepositoryFindUnique.mockResolvedValue({
       id: "repo-1",
+      name: "demo",
+      indexedAt: "2026-01-01T00:00:00Z",
+      lastCommitHash: "abc",
       path: "/tmp/repo",
       localPath: null,
       baseBranch: "main",
@@ -287,5 +297,54 @@ describe("POST /api/prs/[prId]/scan — priorReviewRun field (#19)", () => {
     expect(call?.where?.outcome).toEqual({ not: "skipped" });
     // Status filter ensures we don't surface in_progress / failed prior runs.
     expect(call?.where?.status).toBe("completed");
+  });
+
+  it("prelude INDEX_REQUIRED blocks LLM (no runPrScan)", async () => {
+    mocks.mockRunScanPrelude.mockResolvedValue({
+      ok: false,
+      gate: "INDEX_REQUIRED",
+      message: "index first",
+      httpStatus: 409,
+      repoId: "repo-1",
+    });
+
+    const res = await POST(makeScanRequest("pr-1", { repoId: "repo-1" }), {
+      params: Promise.resolve({ prId: "pr-1" }),
+    });
+
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.gate).toBe("INDEX_REQUIRED");
+    expect(body.error).toBe("INDEX_REQUIRED");
+    expect(mocks.mockRunPrScan).not.toHaveBeenCalled();
+    expect(mocks.mockRefreshPrFiles).not.toHaveBeenCalled();
+  });
+
+  it("sync failure aborts with DIFF_UNAVAILABLE — not empty-diff success", async () => {
+    mocks.mockRefreshPrFiles.mockRejectedValue(new Error("clone sync failed: timeout"));
+
+    const res = await POST(makeScanRequest("pr-1", { repoId: "repo-1" }), {
+      params: Promise.resolve({ prId: "pr-1" }),
+    });
+
+    expect(res.status).toBe(503);
+    const body = await res.json();
+    expect(body.gate).toBe("DIFF_UNAVAILABLE");
+    expect(mocks.mockRunPrScan).not.toHaveBeenCalled();
+  });
+
+  it("true empty after successful sync keeps merged short-circuit (not LLM)", async () => {
+    mocks.mockRefreshPrFiles.mockResolvedValue([]);
+    mocks.mockIsBranchMerged.mockResolvedValue(true);
+
+    const res = await POST(makeScanRequest("pr-1", { repoId: "repo-1" }), {
+      params: Promise.resolve({ prId: "pr-1" }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.merged).toBe(true);
+    expect(body.rating).toBeNull();
+    expect(mocks.mockRunPrScan).not.toHaveBeenCalled();
   });
 });

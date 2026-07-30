@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("../../src/lib/repoAccess", () => ({
   runGitInRepo: mocks.mockRunGitInRepo,
+  syncCloneForPr: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("../../src/lib/prisma", () => ({
@@ -394,5 +395,42 @@ describe("refreshPrFiles — concurrent call chaining (issue #13)", () => {
     expect(mocks.mockPrFileDeleteMany).toHaveBeenCalledTimes(1);
     expect(mocks.mockPrFileCreateMany).toHaveBeenCalledTimes(1);
     expect(isRefreshInFlight("pr-test-1")).toBe(false);
+  });
+});
+
+describe("refreshPrFiles — failOnSyncError (scan prelude path)", () => {
+  it("throws on missing branch ref when failOnSyncError is set", async () => {
+    mocks.mockRepoFindUnique.mockResolvedValue({ id: "r-remote", baseBranch: "main" });
+    mocks.mockPrFileDeleteMany.mockResolvedValue({ count: 0 });
+    mocks.mockRunGitInRepo.mockImplementation(async (_r, args) => {
+      if (args[0] === "rev-parse" && args.includes("refs/heads/feature/missing")) {
+        return { stdout: "", stderr: "fatal", exitCode: 1 };
+      }
+      return { stdout: "", stderr: "", exitCode: 0 };
+    });
+
+    const { refreshPrFiles } = await getMod();
+    const repo = { id: "r-remote", path: null, cloneUrl: "https://example.com/r.git" };
+
+    await expect(
+      refreshPrFiles(repo, "feature/missing", "pr-fail-1", { failOnSyncError: true }),
+    ).rejects.toThrow(/branch feature\/missing not found/);
+  });
+
+  it("returns empty list on missing branch when failOnSyncError is unset (legacy)", async () => {
+    mocks.mockRepoFindUnique.mockResolvedValue({ id: "r-remote", baseBranch: "main" });
+    mocks.mockPrFileDeleteMany.mockResolvedValue({ count: 0 });
+    mocks.mockRunGitInRepo.mockImplementation(async (_r, args) => {
+      if (args[0] === "rev-parse" && args.includes("refs/heads/feature/missing")) {
+        return { stdout: "", stderr: "fatal", exitCode: 1 };
+      }
+      return { stdout: "", stderr: "", exitCode: 0 };
+    });
+
+    const { refreshPrFiles } = await getMod();
+    const repo = { id: "r-remote", path: null, cloneUrl: "https://example.com/r.git" };
+
+    const files = await refreshPrFiles(repo, "feature/missing", "pr-legacy-1");
+    expect(files).toEqual([]);
   });
 });
