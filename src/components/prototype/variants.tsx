@@ -16,14 +16,15 @@ export function VariantC({
   const blocked = !repo.cloneOk;
   return (
     <div className="p-4 bg-[#0F1219] border border-white/10 rounded-xl space-y-4">
-      <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-4">
-        <div className="space-y-2.5 min-w-0">
-          <div className="text-[10px] font-mono uppercase text-slate-500 tracking-wider">
-            Active pull request
-          </div>
-          <MainStatusRow repo={repo} pr={pr} queuePos={queuePos} />
+      <div className="space-y-2 min-w-0">
+        <div className="text-[10px] font-mono uppercase text-slate-500 tracking-wider">
+          Active pull request
         </div>
-        <Actions disabled={blocked} />
+        {/* chips + actions on one row, vertically centered */}
+        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+          <MainStatusRow repo={repo} pr={pr} queuePos={queuePos} />
+          <Actions disabled={blocked} />
+        </div>
       </div>
       <div className="pt-3 border-t border-white/5">
         <PrIdentity pr={pr} />
