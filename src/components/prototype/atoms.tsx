@@ -1,104 +1,192 @@
 "use client";
 
 import { AlertTriangle, Zap } from "lucide-react";
-import type { ProtoPr, ProtoRepo, ProtoSize } from "./mockData";
+import type { ProtoPr, ProtoPrStatus, ProtoRepo, ProtoSize } from "./mockData";
 
 export function pill(className: string, children: React.ReactNode, title?: string) {
   return (
     <span
       title={title}
-      className={`px-2 py-0.5 rounded-full uppercase font-mono text-[9px] font-bold border inline-flex items-center gap-1 ${className}`}
+      className={`px-2 py-0.5 rounded-full uppercase font-mono text-[9px] font-bold border inline-flex items-center gap-1 cursor-help ${className}`}
     >
       {children}
     </span>
   );
 }
 
+const SIZE_TIP: Record<ProtoSize, string> = {
+  small:
+    "Small PR — quick scan. Few files/lines so the review stays sharp and finishes fast.",
+  medium:
+    "Medium PR — normal scan cost. Still within the usual review budget.",
+  oversized:
+    "Oversized PR — large diff. Scan will take longer and may miss cross-file issues; split if you can.",
+};
+
+const STATUS_TIP: Record<ProtoPrStatus, string> = {
+  pending:
+    "Pending — waiting to enter the scan queue. Not running yet.",
+  queued:
+    "Queued — admitted to the scan queue. Position depends on how many jobs are ahead.",
+  completed:
+    "Completed — a scan finished. Check the rating chip to see if it is merge-ready (8+).",
+};
+
 /** size: small green · medium amber · oversized red */
 export function sizePill(size: ProtoSize) {
   if (size === "small") {
-    return pill("bg-emerald-500/10 text-emerald-400 border-emerald-500/30", "small");
+    return pill("bg-emerald-500/10 text-emerald-400 border-emerald-500/30", "small", SIZE_TIP.small);
   }
   if (size === "medium") {
-    return pill("bg-amber-500/10 text-amber-300 border-amber-500/30", "medium");
+    return pill("bg-amber-500/10 text-amber-300 border-amber-500/30", "medium", SIZE_TIP.medium);
   }
-  return pill("bg-rose-500/10 text-rose-400 border-rose-500/35", "oversized");
+  return pill("bg-rose-500/10 text-rose-400 border-rose-500/35", "oversized", SIZE_TIP.oversized);
 }
 
 /**
  * rating colors:
- * 1–5 red · 5–7 amber · 8–10 green · null = no score (amber)
+ * 1–4 red · 5–7 amber · 8–10 green · null = no score (amber)
  */
 export function ratingPill(rating: number | null) {
   if (rating == null) {
-    return pill("bg-amber-500/10 text-amber-300 border-amber-500/25", "no score");
+    return pill(
+      "bg-amber-500/10 text-amber-300 border-amber-500/25",
+      "no score",
+      "No trusted score — scan finished without a usable rating (e.g. findings rejected after the model scored 10). Not merge-ready.",
+    );
   }
   if (rating >= 8) {
-    return pill("bg-emerald-500/10 text-emerald-400 border-emerald-500/30", `${rating}/10`);
+    return pill(
+      "bg-emerald-500/10 text-emerald-400 border-emerald-500/30",
+      `${rating}/10`,
+      `${rating}/10 — at or above the merge bar (need 8+). Merge-ready if other gates pass.`,
+    );
   }
   if (rating >= 5) {
-    return pill("bg-amber-500/10 text-amber-300 border-amber-500/30", `${rating}/10`);
+    return pill(
+      "bg-amber-500/10 text-amber-300 border-amber-500/30",
+      `${rating}/10`,
+      `${rating}/10 — below the merge bar (need 8+). Fix findings and re-scan.`,
+    );
   }
-  return pill("bg-rose-500/10 text-rose-400 border-rose-500/30", `${rating}/10`);
+  return pill(
+    "bg-rose-500/10 text-rose-400 border-rose-500/30",
+    `${rating}/10`,
+    `${rating}/10 — well below the merge bar. Expect serious issues; fix and re-scan.`,
+  );
 }
 
-export function rgPill(ok: boolean, okLabel: string, failLabel: string, title?: string) {
+export function statusPill(status: ProtoPrStatus, queuePos?: number | null) {
+  const base = STATUS_TIP[status];
+  const tip =
+    status === "queued" && queuePos != null
+      ? `${base} Currently #${queuePos} in the queue.`
+      : base;
+  return pill("bg-slate-500/10 text-slate-300 border-slate-500/25", status, tip);
+}
+
+export function rgPill(ok: boolean, okLabel: string, failLabel: string, titleOk: string, titleFail: string) {
   return pill(
     ok
       ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/30"
       : "bg-rose-500/10 text-rose-400 border-rose-500/30",
     ok ? okLabel : failLabel,
-    title,
+    ok ? titleOk : titleFail,
   );
 }
 
+/**
+ * Two lines only — no repeated ticket/PR wording:
+ *   Title
+ *   GitHub  PR #31 · branch
+ *   Issue   #25   (only if ticket known)
+ */
 export function PrIdentity({ pr }: { pr: ProtoPr }) {
   return (
-    <div className="space-y-1 min-w-0">
+    <div className="space-y-1.5 min-w-0">
       <h3 className="text-base sm:text-lg font-bold text-white tracking-tight leading-snug">
         {pr.title}
-        {pr.ticketNumber != null && (
-          <span className="text-cyan-400/90 font-mono font-semibold">
-            {" "}
-            — issue #{pr.ticketNumber}
-          </span>
-        )}
       </h3>
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] font-mono text-slate-500">
-        <span className="text-cyan-400/90 font-semibold">GitHub PR #{pr.githubPrNumber}</span>
-        {pr.ticketNumber != null && pr.ticketNumber !== pr.githubPrNumber && (
-          <span title="Issue tracker # ≠ GitHub PR #">
-            Ticket #{pr.ticketNumber} ≠ PR #{pr.githubPrNumber}
+      <div className="font-mono text-[11px] space-y-0.5">
+        <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+          <span className="text-slate-500 uppercase text-[9px] font-bold tracking-wider w-14 shrink-0">
+            GitHub
           </span>
+          <span className="text-cyan-400 font-semibold">PR #{pr.githubPrNumber}</span>
+          <span className="text-slate-600">·</span>
+          <span className="text-slate-500 truncate max-w-[240px]" title={pr.branch}>
+            {pr.branch}
+          </span>
+        </div>
+        {pr.ticketNumber != null && (
+          <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+            <span className="text-slate-500 uppercase text-[9px] font-bold tracking-wider w-14 shrink-0">
+              Issue
+            </span>
+            <span className="text-cyan-300/90 font-semibold">#{pr.ticketNumber}</span>
+            {pr.ticketNumber !== pr.githubPrNumber && (
+              <span
+                className="text-slate-600 text-[10px]"
+                title="Tracker issue number is not the same as the GitHub pull request number"
+              >
+                (not the same as PR #{pr.githubPrNumber})
+              </span>
+            )}
+          </div>
         )}
-        <span className="truncate text-slate-600 max-w-[180px]">{pr.branch}</span>
       </div>
     </div>
   );
 }
 
-/** Main-content chip row: size · webhook · cloned · indexed · rating (+ merge outcome) */
-export function MainStatusRow({ repo, pr }: { repo: ProtoRepo; pr: ProtoPr }) {
+/** Main chips: status · size · webhook · cloned · indexed · rating · merge */
+export function MainStatusRow({
+  repo,
+  pr,
+  queuePos,
+}: {
+  repo: ProtoRepo;
+  pr: ProtoPr;
+  queuePos?: number | null;
+}) {
   return (
     <div className="flex flex-wrap items-center gap-1.5">
+      {statusPill(pr.status, queuePos)}
       {sizePill(pr.size)}
       {rgPill(
         repo.webhookConnected,
         "webhook on",
         "webhook off",
-        repo.webhookConnected
-          ? "GitHub ↔ Dragnet ON"
-          : "GitHub ↔ Dragnet OFF — no auto events",
+        "Webhook on — GitHub notifies Dragnet on push and PR events (installed + processing).",
+        "Webhook off — no automatic GitHub → Dragnet events. Scans only run when you trigger them.",
       )}
-      {rgPill(repo.cloneOk, "cloned", "clone failed")}
-      {rgPill(repo.indexOk, "indexed", "index missing")}
+      {rgPill(
+        repo.cloneOk,
+        "cloned",
+        "clone failed",
+        "Clone OK — local checkout is ready for scans.",
+        "Clone failed — repo checkout is missing or broken. Fix clone before scans can run.",
+      )}
+      {rgPill(
+        repo.indexOk,
+        "indexed",
+        "index missing",
+        "Indexed — AST/symbol index is present for smarter review context.",
+        "Index missing — run Index now so reviews have codebase context.",
+      )}
       {ratingPill(pr.rating)}
       {pr.mergeReady && pr.rating != null
-        ? pill("bg-emerald-500/10 text-emerald-400 border-emerald-500/30", "merge ready")
+        ? pill(
+            "bg-emerald-500/10 text-emerald-400 border-emerald-500/30",
+            "merge ready",
+            "Merge ready — rating ≥ 8 and gates passed. Safe to merge from Dragnet’s point of view.",
+          )
         : pill(
             "bg-amber-500/10 text-amber-300 border-amber-500/25",
             "not ready",
-            pr.mergeReason ?? undefined,
+            pr.mergeReason
+              ? `Not merge-ready — ${pr.mergeReason}`
+              : "Not merge-ready — need rating ≥ 8 with gates complete. Completed ≠ merge-ready.",
           )}
     </div>
   );
@@ -110,6 +198,11 @@ export function Actions({ disabled }: { disabled?: boolean }) {
       <button
         type="button"
         disabled={disabled}
+        title={
+          disabled
+            ? "Disabled while clone is failed — fix the repo checkout first."
+            : "Queue a full PR review scan now."
+        }
         className={`min-h-10 px-4 py-2 text-xs font-bold rounded-lg flex items-center gap-1.5 shadow-md ${
           disabled
             ? "bg-slate-700 text-slate-500 cursor-not-allowed"
@@ -122,6 +215,11 @@ export function Actions({ disabled }: { disabled?: boolean }) {
       <button
         type="button"
         disabled={disabled}
+        title={
+          disabled
+            ? "Disabled while clone is failed."
+            : "Force a fresh scan, ignoring cache / freshness shortcuts."
+        }
         className={`min-h-10 px-3 py-2 text-xs font-mono font-bold rounded-lg flex items-center gap-1.5 border ${
           disabled
             ? "bg-slate-800/50 border-slate-700 text-slate-600 cursor-not-allowed"
@@ -135,7 +233,6 @@ export function Actions({ disabled }: { disabled?: boolean }) {
   );
 }
 
-/** @deprecated health strip replaced by MainStatusRow chips */
 export function RepoHealthStrip({ repo }: { repo: ProtoRepo }) {
   return (
     <div className="rounded-xl border border-white/10 bg-[#0F1219] px-4 py-3 flex flex-wrap items-center gap-x-4 gap-y-2">
@@ -143,22 +240,13 @@ export function RepoHealthStrip({ repo }: { repo: ProtoRepo }) {
         <p className="text-[9px] font-mono uppercase tracking-wider text-slate-500">Active project</p>
         <p className="text-sm font-bold font-mono text-white truncate">{repo.name}</p>
       </div>
-      {rgPill(repo.cloneOk, "cloned", "cloned")}
-      {rgPill(repo.indexOk, "indexed", "indexed")}
-      {rgPill(repo.webhookConnected, "webhook", "webhook")}
+      {rgPill(repo.cloneOk, "cloned", "clone failed", "Clone OK", "Clone failed")}
+      {rgPill(repo.indexOk, "indexed", "index missing", "Indexed", "Index missing")}
+      {rgPill(repo.webhookConnected, "webhook on", "webhook off", "Webhook on", "Webhook off")}
     </div>
   );
 }
 
 export function MergeChip({ pr }: { pr: ProtoPr }) {
-  if (pr.mergeReady && pr.rating != null) {
-    return pill(
-      "bg-emerald-500/10 text-emerald-400 border-emerald-500/25",
-      `${pr.rating}/10 · Merge ready`,
-    );
-  }
-  if (pr.rating != null) {
-    return ratingPill(pr.rating);
-  }
-  return pill("bg-amber-500/10 text-amber-300 border-amber-500/25", "Not ready · no score");
+  return ratingPill(pr.rating);
 }
