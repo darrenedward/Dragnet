@@ -113,4 +113,34 @@ describe("buildSeamChips", () => {
       detail: "blocked",
     });
   });
+
+  it("does not treat bare rating without a run as merge-ready", () => {
+    const chips = buildSeamChips({
+      ...healthy,
+      runStatus: undefined,
+      runOutcome: undefined,
+      rating: 10,
+      reliability: undefined,
+    });
+    expect(chips.find((c) => c.id === "rating")).toMatchObject({
+      tone: "pending",
+      detail: "—",
+    });
+  });
+
+  it("marks checks running and rating pending while a rescan is in flight", () => {
+    const chips = buildSeamChips({
+      ...healthy,
+      runStatus: "in_progress",
+      rating: 9,
+    });
+    expect(chips.find((c) => c.id === "checks")).toMatchObject({
+      tone: "pending",
+      detail: "running",
+    });
+    expect(chips.find((c) => c.id === "rating")).toMatchObject({
+      tone: "pending",
+      detail: "—",
+    });
+  });
 });

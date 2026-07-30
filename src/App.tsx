@@ -309,7 +309,7 @@ export default function App() {
                           runStatus: workspace.reviewRun?.status,
                           runOutcome: workspace.reviewRun?.outcome,
                           reliability: workspace.reviewRun?.reliability,
-                          rating: workspace.reviewRun?.rating ?? activeAPR?.rating,
+                          rating: workspace.reviewRun?.rating,
                           refused: workspace.reviewRun?.refused,
                           stale: workspace.stale,
                         }

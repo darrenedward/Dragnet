@@ -484,12 +484,14 @@ function PrHeader({
               input={{
                 ...(seamInput ?? {}),
                 indexedAt: seamInput?.indexedAt ?? repoIndexedAt,
-                runStatus:
-                  seamInput?.runStatus ??
-                  (queued ? "queued" : scanning ? "in_progress" : reviewRun?.status),
+                runStatus: queued
+                  ? "queued"
+                  : scanning
+                    ? "in_progress"
+                    : (seamInput?.runStatus ?? reviewRun?.status),
                 runOutcome: seamInput?.runOutcome ?? reviewRun?.outcome,
                 reliability: seamInput?.reliability ?? reviewRun?.reliability,
-                rating: seamInput?.rating ?? reviewRun?.rating ?? activePR.rating,
+                rating: seamInput?.rating ?? reviewRun?.rating,
                 refused: seamInput?.refused ?? reviewRun?.refused,
               }}
             />
