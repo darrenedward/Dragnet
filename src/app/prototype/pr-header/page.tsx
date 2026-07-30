@@ -37,21 +37,12 @@ function PrototypeBody() {
           <h1 className="text-xl font-bold tracking-tight">Main content declutter</h1>
           <div className="text-xs text-slate-400 font-mono max-w-3xl space-y-1">
             <p>
-              <strong className="text-slate-300">Sidebar</strong> = project + PR list only (full
-              names, no overview).
+              <strong className="text-slate-300">Sidebar</strong> = minimal nav (full names, PR # ·
+              ticket #, rating, status). No health/logs.
             </p>
             <p>
-              <strong className="text-slate-300">Main center</strong> (this big pane) = repo health
-              strip (Cloned / Indexed / Webhook) + PR header + logs — same place as your Diff
-              Scanner screenshot.
-            </p>
-            <p>
-              <strong className="text-slate-300">Webhook</strong> = GitHub ↔ Dragnet link (ON =
-              installed + processing; OFF = no auto events).
-            </p>
-            <p>
-              PR shows <strong className="text-slate-300">issue #25</strong> and{" "}
-              <strong className="text-slate-300">GitHub PR #31</strong> when they differ.
+              <strong className="text-slate-300">Main</strong> = Cloned / Indexed / Webhook (OK/FAIL
+              only — detail stays in real scan logs) + PR card.
             </p>
           </div>
         </header>

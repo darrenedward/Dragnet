@@ -71,6 +71,7 @@ export function RepoHealthStrip({ repo }: { repo: ProtoRepo }) {
   );
 }
 
+/** Status only — error text lives in real scan logs, not here. */
 function HealthLine({
   ok,
   label,
@@ -86,23 +87,19 @@ function HealthLine({
 }) {
   const failColor = mutedFail ? "text-slate-500" : "text-rose-400";
   return (
-    <div className="font-mono text-[11px]" title={ok ? okTitle : failDetail ?? undefined}>
-      <div className="flex items-center gap-1.5">
-        {ok ? (
-          <Check size={14} className="text-emerald-400 shrink-0" />
-        ) : (
-          <X size={14} className={`${failColor} shrink-0`} strokeWidth={2.5} />
-        )}
-        <span className="text-slate-400">{label}</span>
-        <span className={`font-bold ${ok ? "text-emerald-400" : failColor}`}>
-          {ok ? "OK" : mutedFail ? "OFF" : "FAIL"}
-        </span>
-      </div>
-      {!ok && failDetail && !mutedFail && (
-        <p className="text-[9px] text-rose-400/80 mt-0.5 max-w-[220px] leading-snug pl-5">
-          {failDetail}
-        </p>
+    <div
+      className="font-mono text-[11px] flex items-center gap-1.5"
+      title={ok ? okTitle : failDetail ?? undefined}
+    >
+      {ok ? (
+        <Check size={14} className="text-emerald-400 shrink-0" />
+      ) : (
+        <X size={14} className={`${failColor} shrink-0`} strokeWidth={2.5} />
       )}
+      <span className="text-slate-400">{label}</span>
+      <span className={`font-bold ${ok ? "text-emerald-400" : failColor}`}>
+        {ok ? "OK" : mutedFail ? "OFF" : "FAIL"}
+      </span>
     </div>
   );
 }
@@ -160,19 +157,3 @@ export function Actions({ disabled }: { disabled?: boolean }) {
   );
 }
 
-export function LogPanel({ lines }: { lines: string[] }) {
-  return (
-    <div className="rounded-xl border border-white/10 bg-[#0B0E14] overflow-hidden">
-      <div className="px-3 py-2 border-b border-white/5 text-[10px] font-mono font-bold text-slate-500 uppercase tracking-wider">
-        Scan logs
-      </div>
-      <div className="p-3 font-mono text-[11px] space-y-1 max-h-36 overflow-y-auto">
-        {lines.map((l, i) => (
-          <div key={i} className="text-cyan-500/80">
-            {l}
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
