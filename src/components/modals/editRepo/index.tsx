@@ -86,12 +86,14 @@ export default function EditRepoModal(props: Props) {
                 className="w-3.5 h-3.5 accent-cyan-500 rounded"
               />
               <span className="text-slate-300 text-xs font-mono">
-                Skip Tier 2 (containerized build/test)
+                Skip Tier 2 (containerized quality gates)
               </span>
             </label>
             <p className="text-[10px] text-slate-500 ml-5 leading-snug">
-              When enabled, the containerized build and test pipeline is skipped for this repo.
-              Typecheck/lint (Tier 1) and LLM review (Tier 3) still run normally.
+              When enabled, containerized install + typecheck/lint is skipped for this repo.
+              Local path-only repos still run host typecheck/lint (Tier 1). Remote/volume
+              repos use Tier 2 only by default — set the test command to typecheck + lint
+              (build optional); full e2e is not the default gate. LLM review still runs.
             </p>
           </div>
 
