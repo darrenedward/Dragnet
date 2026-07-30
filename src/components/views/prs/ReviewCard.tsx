@@ -4,6 +4,7 @@ import { useCallback, useState } from "react";
 import { AlertTriangle, CheckCircle2, Copy, Loader2, ShieldAlert } from "lucide-react";
 import type { PullRequest, ReviewChunk, ReviewFinding } from "../../../lib/types";
 import type { StabilityProp } from "../../../lib/stabilityScore";
+import { isMergeReady } from "../../../lib/isMergeReady";
 import PrSizeProfileChip from "../../PrSizeProfileChip";
 import FindingsList from "./FindingsList";
 import LargePrModePanel from "./LargePrModePanel";
@@ -20,6 +21,8 @@ export interface ReviewRunMeta {
   reliability?: string | null;
   refused?: boolean;
   refusalNote?: string | null;
+  status?: string;
+  outcome?: string | null;
   chunksTotal?: number;
   chunksCompleted?: number;
   chunksFailed?: number;
@@ -163,6 +166,16 @@ export default function ReviewCard({
 }: Props) {
   const [copiedAll, setCopiedAll] = useState(false);
   const [showRejected, setShowRejected] = useState(false);
+  const mergeGate = reviewRun
+    ? isMergeReady({
+        rating: reviewRun.rating,
+        outcome: reviewRun.outcome,
+        reliability: reviewRun.reliability,
+        refused: reviewRun.refused,
+        stale: stale ?? false,
+        status: reviewRun.status,
+      })
+    : null;
   const handleCopyAll = useCallback(() => {
     const text = formatFindings(activePR, findings);
     try {
@@ -237,6 +250,18 @@ export default function ReviewCard({
               }`}
             >
               {activePR.rating}/10
+            </span>
+          )}
+          {mergeGate && !isScanning && (
+            <span
+              title={mergeGate.mergeReady ? "Merge ready" : mergeGate.mergeBlockReason ?? "Not merge-ready"}
+              className={`px-2 py-0.5 rounded uppercase font-mono text-[9px] font-bold border ${
+                mergeGate.mergeReady
+                  ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/25"
+                  : "bg-amber-500/10 text-amber-300 border-amber-500/25"
+              }`}
+            >
+              {mergeGate.mergeReady ? "Merge ready" : "Not ready"}
             </span>
           )}
           {stability && !isScanning && (

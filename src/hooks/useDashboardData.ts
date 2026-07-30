@@ -168,6 +168,8 @@ export function useDashboardData() {
     source: string | null;
   }>>([]);
   const [stale, setStale] = useState(false);
+  const [mergeReady, setMergeReady] = useState(false);
+  const [mergeBlockReason, setMergeBlockReason] = useState<string | null>(null);
   const [stability, setStability] = useState<import("@/src/lib/stabilityScore").StabilityProp | null>(null);
   const [logs, setLogs] = useState<ActivityLog[]>([]);
 
@@ -390,6 +392,10 @@ export function useDashboardData() {
         setRejectedCount(findingsData.rejectedCount ?? 0);
         setRejectedFindings(findingsData.rejectedFindings ?? []);
         setStale(Boolean(findingsData.stale));
+        setMergeReady(Boolean(findingsData.mergeReady));
+        setMergeBlockReason(
+          typeof findingsData.mergeBlockReason === "string" ? findingsData.mergeBlockReason : null,
+        );
         setStability(findingsData.stability ? { ...findingsData.stability, weightedStability: findingsData.weightedStability ?? undefined } : null);
         if (findingsData.sizeProfile) {
           setPrs((prev) =>
@@ -409,9 +415,13 @@ export function useDashboardData() {
         setRejectedCount(0);
         setRejectedFindings([]);
         setStale(false);
+        setMergeReady(false);
+        setMergeBlockReason(null);
       }
     } catch (e) {
       setStale(true);
+      setMergeReady(false);
+      setMergeBlockReason(null);
       console.error("Failed retrieving PR files/findings detailed block", e);
     }
   };
@@ -1137,6 +1147,8 @@ export function useDashboardData() {
       rejectedCount,
       rejectedFindings,
       stale,
+      mergeReady,
+      mergeBlockReason,
       stability,
       repoIndexedAt: repos.find((repo) => repo.id === selectedRepoId)?.indexedAt ?? null,
       interruptedScan,

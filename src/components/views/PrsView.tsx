@@ -118,6 +118,9 @@ interface Props {
     source: string | null;
   }>;
   stale?: boolean;
+  /** Shared merge gate from findings payload — not the same as status Completed. */
+  mergeReady?: boolean;
+  mergeBlockReason?: string | null;
   onCopySuggestion: (text: string, id: string) => void;
   copyFeedback: string | null;
   prFiles: PRFile[];
@@ -157,6 +160,8 @@ export default function PrsView({
   rejectedCount,
   rejectedFindings,
   stale,
+  mergeReady,
+  mergeBlockReason,
   onCopySuggestion,
   copyFeedback,
   prFiles,
@@ -202,6 +207,8 @@ export default function PrsView({
           onContinueScan={onContinueScan}
           onStartFreshScan={onStartFreshScan}
           queueJob={queueJob}
+          mergeReady={mergeReady}
+          mergeBlockReason={mergeBlockReason}
         />
 
         <div className="space-y-4 min-w-0 mt-4 flex-1 overflow-y-auto overflow-x-hidden min-h-0 pr-1">
@@ -311,6 +318,8 @@ function PrHeader({
   onContinueScan,
   onStartFreshScan,
   queueJob,
+  mergeReady,
+  mergeBlockReason,
 }: {
   activePR: PullRequest | undefined;
   isScanning: boolean;
@@ -336,6 +345,8 @@ function PrHeader({
   onContinueScan?: (prId: string) => void;
   onStartFreshScan?: (prId: string) => void;
   queueJob?: { jobId: string; state: string; queuePosition: number | null } | null;
+  mergeReady?: boolean;
+  mergeBlockReason?: string | null;
 }) {
   const scanning = isScanning || activePR?.status === "In Progress";
   const queued = queueJob?.state === "queued";
@@ -398,7 +409,26 @@ function PrHeader({
                     : "bg-rose-500/10 text-rose-400 border-rose-500/20"
                 }`}
               >
-                PROD GRADE: {activePR.rating}/10 ({activePR.rating >= 8 ? "APPROVED" : "REJECTED"})
+                {activePR.rating}/10
+              </span>
+            )}
+            {/* Scan finished (status badge above) ≠ merge ready — show gate explicitly. */}
+            {reviewRun && !scanning && !queued && (
+              <span
+                title={
+                  mergeReady
+                    ? "Shared merge gate passed — rating, outcome, reliability, and freshness"
+                    : mergeBlockReason ?? "Not merge-ready"
+                }
+                className={`px-2 py-0.5 rounded uppercase font-mono text-[9px] font-bold border ${
+                  mergeReady
+                    ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/25"
+                    : "bg-amber-500/10 text-amber-300 border-amber-500/25"
+                }`}
+              >
+                {mergeReady
+                  ? "Merge ready"
+                  : `Not ready${mergeBlockReason ? ` (${mergeBlockReason})` : ""}`}
               </span>
             )}
           </div>

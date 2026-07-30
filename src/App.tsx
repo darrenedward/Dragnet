@@ -279,6 +279,8 @@ export default function App() {
                   rejectedCount={workspace.rejectedCount}
                   rejectedFindings={workspace.rejectedFindings}
                   stale={workspace.stale}
+                  mergeReady={workspace.mergeReady}
+                  mergeBlockReason={workspace.mergeBlockReason}
                   onCopySuggestion={workspaceCommands.copySuggestion}
                   copyFeedback={workspace.feedback.copyFeedback}
                   prFiles={workspace.files}
