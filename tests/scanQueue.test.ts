@@ -6,6 +6,7 @@ const scanJob = {
   findFirst: vi.fn(),
   findUnique: vi.fn(),
   findMany: vi.fn(),
+  update: vi.fn(),
   updateMany: vi.fn(),
 };
 const reviewRun = { findFirst: vi.fn(), update: vi.fn() };
@@ -191,6 +192,98 @@ describe("scan queue", () => {
     expect(scanJob.updateMany).toHaveBeenCalledWith(expect.objectContaining({
       where: { id: "job-2", state: "failed" },
       data: expect.objectContaining({ state: "queued", errorMessage: null }),
+    }));
+  });
+
+  it("force requeues a completed job with forced=true (cache-bypass on worker)", async () => {
+    const createdAt = new Date("2026-07-18T00:00:00Z");
+    scanJob.upsert.mockResolvedValue({
+      id: "job-done", prId: "pr-1", commitHash: "abc", state: "completed",
+      claimedAt: null, leaseExpiresAt: null, createdAt,
+      forced: false, resumeRequested: false, freshRequested: false, triggerReason: "manual",
+      priority: 10, completedAt: new Date(), errorMessage: null,
+    });
+    scanJob.update.mockResolvedValue({
+      id: "job-done", prId: "pr-1", commitHash: "abc", state: "queued",
+      claimedAt: null, leaseExpiresAt: null, createdAt,
+      forced: true, resumeRequested: false, freshRequested: false, triggerReason: "manual",
+      priority: 10, completedAt: null, errorMessage: null,
+    });
+    scanJob.count.mockResolvedValue(0);
+    const { admitScanJob } = await import("@/src/services/scanQueue");
+
+    await expect(admitScanJob({
+      prId: "pr-1", repoId: "repo-1", commitHash: "abc", forced: true, triggerReason: "manual",
+    })).resolves.toMatchObject({ jobId: "job-done", state: "queued", forced: true });
+    expect(scanJob.update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "job-done" },
+      data: expect.objectContaining({ state: "queued", forced: true }),
+    }));
+  });
+
+  it("force clears in-flight lock and requeues a running job", async () => {
+    const createdAt = new Date("2026-07-18T00:00:00Z");
+    scanJob.upsert.mockResolvedValue({
+      id: "job-run", prId: "pr-stuck", commitHash: "abc", state: "running",
+      claimedAt: new Date(), leaseExpiresAt: new Date(), createdAt,
+      forced: false, resumeRequested: false, freshRequested: false, triggerReason: "manual",
+      priority: 10, workerId: "w1", completedAt: null, errorMessage: null,
+    });
+    reviewRun.findFirst.mockResolvedValue({ id: "run-stuck" });
+    reviewRun.update.mockResolvedValue({});
+    pullRequest.updateMany.mockResolvedValue({});
+    scanJob.update.mockResolvedValue({
+      id: "job-run", prId: "pr-stuck", commitHash: "abc", state: "queued",
+      claimedAt: null, leaseExpiresAt: null, createdAt,
+      forced: true, resumeRequested: false, freshRequested: false, triggerReason: "manual",
+      priority: 10, workerId: null, completedAt: null, errorMessage: null,
+    });
+    scanJob.count.mockResolvedValue(0);
+    const { admitScanJob } = await import("@/src/services/scanQueue");
+
+    await expect(admitScanJob({
+      prId: "pr-stuck", repoId: "repo-1", commitHash: "abc", forced: true,
+    })).resolves.toMatchObject({ jobId: "job-run", state: "queued", forced: true });
+    expect(abortScan).toHaveBeenCalledWith("pr-stuck");
+    expect(reviewRun.update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "run-stuck" },
+      data: expect.objectContaining({ status: "failed" }),
+    }));
+    expect(scanJob.update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "job-run" },
+      data: expect.objectContaining({
+        state: "queued",
+        forced: true,
+        workerId: null,
+        claimedAt: null,
+        leaseExpiresAt: null,
+      }),
+    }));
+  });
+
+  it("force marks a queued job forced so the worker bypasses cache", async () => {
+    const createdAt = new Date("2026-07-18T00:00:00Z");
+    scanJob.upsert.mockResolvedValue({
+      id: "job-q", prId: "pr-1", commitHash: "abc", state: "queued",
+      claimedAt: null, leaseExpiresAt: null, createdAt,
+      forced: false, resumeRequested: false, freshRequested: false, triggerReason: "auto",
+      priority: 0, completedAt: null, errorMessage: null,
+    });
+    scanJob.update.mockResolvedValue({
+      id: "job-q", prId: "pr-1", commitHash: "abc", state: "queued",
+      claimedAt: null, leaseExpiresAt: null, createdAt,
+      forced: true, resumeRequested: false, freshRequested: false, triggerReason: "manual",
+      priority: 10, completedAt: null, errorMessage: null,
+    });
+    scanJob.count.mockResolvedValue(0);
+    const { admitScanJob } = await import("@/src/services/scanQueue");
+
+    await expect(admitScanJob({
+      prId: "pr-1", repoId: "repo-1", commitHash: "abc", forced: true, triggerReason: "manual",
+    })).resolves.toMatchObject({ state: "queued", forced: true, priority: 10 });
+    expect(abortScan).not.toHaveBeenCalled();
+    expect(scanJob.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ forced: true, priority: 10 }),
     }));
   });
 });

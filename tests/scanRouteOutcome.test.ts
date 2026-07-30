@@ -30,6 +30,7 @@ const mocks = vi.hoisted(() => ({
   mockAcquireReviewLock: vi.fn(),
   mockEndReview: vi.fn(),
   mockCheckPendingAbort: vi.fn(),
+  mockClearPendingAbort: vi.fn(),
   mockAssertTier: vi.fn(),
   mockBuildDiffManifest: vi.fn(),
   mockReadCheckpoint: vi.fn(),
@@ -88,6 +89,7 @@ vi.mock("@/src/lib/reviewLocks", () => ({
   acquireReviewLock: mocks.mockAcquireReviewLock,
   endReview: mocks.mockEndReview,
   checkPendingAbort: mocks.mockCheckPendingAbort,
+  clearPendingAbort: mocks.mockClearPendingAbort,
 }));
 
 vi.mock("@/src/lib/prSizeProfile", () => ({
@@ -153,8 +155,8 @@ vi.mock("@/src/lib/prisma", () => ({
 
 import { POST } from "../src/app/api/prs/[prId]/scan/route";
 
-function makeScanRequest(prId: string, body: unknown): Request {
-  return new Request(`http://localhost/api/prs/${prId}/scan`, {
+function makeScanRequest(prId: string, body: unknown, query = ""): Request {
+  return new Request(`http://localhost/api/prs/${prId}/scan${query}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -346,5 +348,48 @@ describe("POST /api/prs/[prId]/scan — priorReviewRun field (#19)", () => {
     expect(body.merged).toBe(true);
     expect(body.rating).toBeNull();
     expect(mocks.mockRunPrScan).not.toHaveBeenCalled();
+  });
+
+  it("force=true bypasses review cache and acquires lock with force", async () => {
+    mocks.mockRunPrScan.mockResolvedValue({
+      success: true,
+      rating: 9,
+      findings: [],
+      usedModel: "test",
+    });
+    mocks.mockReviewRunFindFirst.mockResolvedValue(null);
+    mocks.mockAssertReviewFreshness.mockResolvedValue({
+      ok: true,
+      runId: "cached-run",
+      rating: 8,
+    });
+
+    const res = await POST(makeScanRequest("pr-1", { repoId: "repo-1" }, "?force=true"), {
+      params: Promise.resolve({ prId: "pr-1" }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(mocks.mockAssertReviewFreshness).not.toHaveBeenCalled();
+    expect(mocks.mockAcquireReviewLock).toHaveBeenCalledWith("pr-1", true, expect.anything());
+    expect(mocks.mockRunPrScan).toHaveBeenCalled();
+    // Stuck-job force re-admit may leave a deferred abortScan flag; drain it
+    // so the replacement is not cancelled after file collection.
+    expect(mocks.mockClearPendingAbort).toHaveBeenCalledWith("pr-1");
+  });
+
+  it("non-force scan does not drain pending aborts (Stop still works)", async () => {
+    mocks.mockRunPrScan.mockResolvedValue({
+      success: true,
+      rating: 9,
+      findings: [],
+      usedModel: "test",
+    });
+    mocks.mockReviewRunFindFirst.mockResolvedValue(null);
+
+    await POST(makeScanRequest("pr-1", { repoId: "repo-1" }), {
+      params: Promise.resolve({ prId: "pr-1" }),
+    });
+
+    expect(mocks.mockClearPendingAbort).not.toHaveBeenCalled();
   });
 });
