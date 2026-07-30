@@ -12,7 +12,7 @@ export function pill(
   return (
     <span
       title={title}
-      className={`${compact ? "px-1.5 py-0 text-[8px]" : "px-2 py-0.5 text-[9px]"} rounded-full uppercase font-mono font-bold border inline-flex items-center gap-1 cursor-help ${className}`}
+      className={`${compact ? "px-1.5 py-0 text-[8px]" : "px-2 py-0.5 text-[9px]"} rounded-full uppercase font-mono font-bold border inline-flex items-center gap-1 ${className}`}
     >
       {children}
     </span>
