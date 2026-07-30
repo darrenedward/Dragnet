@@ -565,6 +565,18 @@ const started = await startTrackedReview(pr, repo, userId);
       const ratingTrend = await getRecentRuns(pr.id, 5);
       const stability = computeStability(ratingTrend);
       const weighted = computeWeightedStability(ratingTrend, lookupTrustWeight);
+      const merge = isMergeReady(
+        latest.reviewRun
+          ? {
+              status: latest.reviewRun.status,
+              outcome: latest.reviewRun.outcome,
+              rating: latest.reviewRun.rating,
+              reliability: latest.reviewRun.reliability,
+              refused: latest.reviewRun.refused,
+              stale: latest.stale,
+            }
+          : null,
+      );
       return NextResponse.json({
         status: latest.reviewRun ? "Success" : (freshPr?.rating != null ? "Success" : "Pending"),
         type: "status",
@@ -574,6 +586,10 @@ const started = await startTrackedReview(pr, repo, userId);
         stability,
         weightedStability: weighted.weightedStability,
         weightedReadyToMerge: weighted.readyToMerge,
+        /** Shared merge gate — same rule as prepush / findings / UI. Not rating-only. */
+        mergeReady: merge.mergeReady,
+        mergeBlockReason: merge.mergeBlockReason,
+        mergeReadyMessage: merge.message,
         stale: latest.stale,
         rejectedCount: latest.rejectedCount,
         regressionsCount: latest.regressions.length,

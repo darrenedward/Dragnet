@@ -23,6 +23,7 @@ import ReviewCard from "./prs/ReviewCard";
 import BugFixFeed from "./prs/BugFixFeed";
 import ScanHistory from "./prs/ScanHistory";
 import PrSizeProfileChip from "../PrSizeProfileChip";
+import SeamChips, { type SeamChipInput } from "./prs/SeamChips";
 import type { ReviewLimits } from "../../lib/prSizeConfig";
 import type { StabilityProp } from "../../lib/stabilityScore";
 
@@ -58,6 +59,7 @@ interface Props {
     model: string | null;
     triggerReason: string | null;
     reliability?: string | null;
+    refused?: boolean | null;
     status?: string; // lifecycle: "in_progress" | "completed" | "failed"
     outcome?: string | null; // "reviewed" | "skipped" | null (legacy / failed)
     chunksTotal?: number;
@@ -134,6 +136,8 @@ interface Props {
   onStartFreshScan?: (prId: string) => void;
   mergeReady?: boolean | null;
   mergeReadyMessage?: string | null;
+  /** Optional repo/pipeline fields for glanceable seam chips. */
+  seamInput?: SeamChipInput | null;
 }
 
 export default function PrsView({
@@ -173,6 +177,7 @@ export default function PrsView({
   onStartFreshScan,
   mergeReady,
   mergeReadyMessage,
+  seamInput,
 }: Props) {
   const scanSettings = useScanSettingsSummary();
 
@@ -208,6 +213,7 @@ export default function PrsView({
           queueJob={queueJob}
           mergeReady={mergeReady}
           mergeReadyMessage={mergeReadyMessage}
+          seamInput={seamInput}
         />
 
         <div className="space-y-4 min-w-0 mt-4 flex-1 overflow-y-auto overflow-x-hidden min-h-0 pr-1">
@@ -319,6 +325,7 @@ function PrHeader({
   queueJob,
   mergeReady,
   mergeReadyMessage,
+  seamInput,
 }: {
   activePR: PullRequest | undefined;
   isScanning: boolean;
@@ -335,6 +342,8 @@ function PrHeader({
     outcome?: string | null;
     rating?: number | null;
     completedAt?: string | null;
+    reliability?: string | null;
+    refused?: boolean | null;
   } | null;
   scanSettings: ScanSettingsSummary | null;
   repoId?: string;
@@ -346,6 +355,7 @@ function PrHeader({
   queueJob?: { jobId: string; state: string; queuePosition: number | null } | null;
   mergeReady?: boolean | null;
   mergeReadyMessage?: string | null;
+  seamInput?: SeamChipInput | null;
 }) {
   const scanning = isScanning || activePR?.status === "In Progress";
   const queued = queueJob?.state === "queued";
@@ -429,6 +439,21 @@ function PrHeader({
                 GRADE: {activePR.rating}/10
               </span>
             )}
+          </div>
+          <div className="pt-1.5">
+            <SeamChips
+              input={{
+                ...(seamInput ?? {}),
+                indexedAt: seamInput?.indexedAt ?? repoIndexedAt,
+                runStatus:
+                  seamInput?.runStatus ??
+                  (queued ? "queued" : scanning ? "in_progress" : reviewRun?.status),
+                runOutcome: seamInput?.runOutcome ?? reviewRun?.outcome,
+                reliability: seamInput?.reliability ?? reviewRun?.reliability,
+                rating: seamInput?.rating ?? reviewRun?.rating ?? activePR.rating,
+                refused: seamInput?.refused ?? reviewRun?.refused,
+              }}
+            />
           </div>
           <h3 className="text-base sm:text-lg font-bold text-white tracking-tight mt-1">{activePR.title}</h3>
           <PrDescription

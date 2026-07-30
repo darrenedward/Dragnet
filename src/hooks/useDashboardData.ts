@@ -87,6 +87,7 @@ export function useDashboardData() {
     model: string | null;
     triggerReason: string | null;
     reliability?: string | null;
+    refused?: boolean | null;
     status?: string; // lifecycle: "in_progress" | "completed" | "failed"
     outcome?: string | null; // "reviewed" | "skipped" | null (legacy / failed)
     chunksTotal?: number;

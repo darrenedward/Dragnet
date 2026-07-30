@@ -20,6 +20,9 @@ export interface Repository {
    * /api/prs/[id]/scan route rejects with 409 INDEX_REQUIRED.
    */
   indexedAt?: string | null;
+  /** Last clone/fetch failure message; null after a successful fetch. */
+  lastFetchError?: string | null;
+  lastFetchAt?: string | null;
   provider?: string | null;
   cloneUrl?: string | null;
   cloneUrlHttps?: string | null;

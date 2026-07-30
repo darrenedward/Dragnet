@@ -293,6 +293,26 @@ export default function App() {
                   onStartFreshScan={workspaceCommands.startFreshScan}
                   mergeReady={workspace.mergeReady}
                   mergeReadyMessage={workspace.mergeReadyMessage}
+                  seamInput={
+                    activeRepo
+                      ? {
+                          hasCheckout: Boolean(activeRepo.path || activeRepo.localPath),
+                          lastFetchError: activeRepo.lastFetchError ?? null,
+                          repoStatus: activeRepo.status,
+                          cloneUrl: activeRepo.cloneUrl ?? null,
+                          provider: activeRepo.provider ?? null,
+                          webhookEnabled: activeRepo.webhookEnabled ?? false,
+                          webhookId: activeRepo.webhookId ?? null,
+                          indexedAt: activeRepo.indexedAt ?? null,
+                          runStatus: workspace.reviewRun?.status,
+                          runOutcome: workspace.reviewRun?.outcome,
+                          reliability: workspace.reviewRun?.reliability,
+                          rating: workspace.reviewRun?.rating ?? activeAPR?.rating,
+                          refused: workspace.reviewRun?.refused,
+                          stale: workspace.stale,
+                        }
+                      : null
+                  }
                 />
               )}
             </AnimatePresence>
