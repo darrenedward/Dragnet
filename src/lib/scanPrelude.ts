@@ -134,7 +134,20 @@ export async function runScanPrelude(
       return { ok: true, reindexed: true };
     }
     if (repo.cloneUrl) {
-      await d.reindexRemote(repo.id);
+      // remoteFetchWorker.enqueue returns null when a fetch is already in
+      // flight — never treat that as a successful reindex or scans proceed
+      // against a still-stale index.
+      const remoteResult = await d.reindexRemote(repo.id);
+      if (remoteResult === null) {
+        return {
+          ok: false,
+          gate: "INDEXING_IN_PROGRESS",
+          message:
+            "A remote fetch/reindex is already running for this repo. Please wait for it to complete before running a PR review.",
+          httpStatus: 409,
+          repoId: repo.id,
+        };
+      }
       return { ok: true, reindexed: true };
     }
     return {

@@ -117,6 +117,21 @@ describe("runScanPrelude", () => {
     expect(r.ok).toBe(false);
     if (r.ok === false) expect(r.gate).toBe("REINDEX_FAILED");
   });
+
+  it("STALE remote reindex already in flight fails closed (null enqueue)", async () => {
+    deps.assertIndexFresh = vi.fn().mockResolvedValue({
+      ok: false,
+      kind: "STALE_INDEX",
+      message: "stale",
+    });
+    deps.reindexRemote = vi.fn().mockResolvedValue(null);
+    const r = await runScanPrelude(repo, deps);
+    expect(r.ok).toBe(false);
+    if (r.ok === false) {
+      expect(r.gate).toBe("INDEXING_IN_PROGRESS");
+      expect(r.httpStatus).toBe(409);
+    }
+  });
 });
 
 describe("diffUnavailableResult", () => {

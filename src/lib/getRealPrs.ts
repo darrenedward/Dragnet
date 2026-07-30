@@ -509,7 +509,9 @@ export async function refreshPrFiles(
       }
     }
 
-    const files = await collectBranchFiles(repo, baseBranch, branchName);
+    const files = await collectBranchFiles(repo, baseBranch, branchName, {
+      failOnUnavailable: failOnSyncError,
+    });
     await prisma.prFile.deleteMany({ where: { prId } });
     if (files.length > 0) {
       await prisma.prFile.createMany({
@@ -551,13 +553,16 @@ async function collectBranchFiles(
   repo: RepoLike,
   baseBranch: string,
   branchName: string,
+  opts?: { failOnUnavailable?: boolean },
 ): Promise<RepoFile[]> {
   const files: RepoFile[] = [];
+  const failOnUnavailable = opts?.failOnUnavailable === true;
 
   // Verify both branches actually exist in the clone before running diff.
   // Silently returning an empty list on missing refs is what caused the
   // "No code changes detected" false-positive — the diff technically
   // succeeded (exit 0) but with no commits in common so emitted nothing.
+  // Scan path (failOnUnavailable) throws so empty-diff skip is never used.
   if (!repo.path && repo.cloneUrl) {
     const branchCheck = await runGitInRepo(repo, [
       "rev-parse",
@@ -566,9 +571,9 @@ async function collectBranchFiles(
       `refs/heads/${branchName}`,
     ]);
     if (branchCheck.exitCode !== 0) {
-      console.warn(
-        `[scan] collectBranchFiles: branch ${branchName} not found in clone for ${repo.id} — returning empty diff`,
-      );
+      const msg = `branch ${branchName} not found in clone for ${repo.id}`;
+      console.warn(`[scan] collectBranchFiles: ${msg}`);
+      if (failOnUnavailable) throw new Error(msg);
       return files;
     }
     const baseCheck = await runGitInRepo(repo, [
@@ -578,9 +583,9 @@ async function collectBranchFiles(
       `refs/heads/${baseBranch}`,
     ]);
     if (baseCheck.exitCode !== 0) {
-      console.warn(
-        `[scan] collectBranchFiles: base ${baseBranch} not found in clone for ${repo.id} — returning empty diff`,
-      );
+      const msg = `base ${baseBranch} not found in clone for ${repo.id}`;
+      console.warn(`[scan] collectBranchFiles: ${msg}`);
+      if (failOnUnavailable) throw new Error(msg);
       return files;
     }
   }
@@ -594,6 +599,11 @@ async function collectBranchFiles(
       `[scan] collectBranchFiles: diff failed for ${repo.id} (${baseBranch}...${branchName}):`,
       err.message,
     );
+    if (failOnUnavailable) {
+      throw new Error(
+        `diff unavailable for ${repo.id} (${baseBranch}...${branchName}): ${err.message}`,
+      );
+    }
     return files;
   }
 
