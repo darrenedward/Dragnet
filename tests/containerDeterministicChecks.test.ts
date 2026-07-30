@@ -143,24 +143,22 @@ describe("runContainerizedChecks", () => {
     expect(mockRunRunner).not.toHaveBeenCalled();
   });
 
-  it("returns no findings and continues when install fails but is not fatal", async () => {
+  it("throws fail-closed when install exits non-zero (no LLM path)", async () => {
     mockRunRunner.mockResolvedValueOnce({
       exitCode: 1, stdout: "npm ERR!", stderr: "install failed", timedOut: false,
     });
 
-    const findings = await runContainerizedChecks(baseOpts);
+    await expect(runContainerizedChecks(baseOpts)).rejects.toThrow(/install failed \(exit 1\)/i);
     expect(mockRunRunner).toHaveBeenCalledTimes(1);
-    expect(mockRunRunner).not.toHaveBeenCalledTimes(2);
   });
 
-  it("skips test execution when install times out", async () => {
+  it("throws fail-closed when install times out", async () => {
     mockRunRunner.mockResolvedValueOnce({
       exitCode: -1, stdout: "", stderr: "", timedOut: true,
     });
 
-    const findings = await runContainerizedChecks(baseOpts);
+    await expect(runContainerizedChecks(baseOpts)).rejects.toThrow(/install timed out/i);
     expect(mockRunRunner).toHaveBeenCalledTimes(1);
-    expect(findings).toHaveLength(0);
   });
 
   it("parses tsc diagnostics from test stdout", async () => {

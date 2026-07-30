@@ -10,6 +10,10 @@ vi.mock("../../src/services/deterministicChecks", () => ({
   runDeterministicChecks: runDeterministicChecksMock,
   runContainerizedChecks: runContainerizedChecksMock,
   logReview: vi.fn().mockResolvedValue(undefined),
+  shouldRunHostTier1: (repo?: { path?: string | null; cloneUrl?: string | null; localPath?: string | null } | null) =>
+    Boolean(repo?.path) && !repo?.cloneUrl && repo?.localPath !== "/workspace",
+  DEFAULT_INSTALL_COMMAND: "npm install",
+  DEFAULT_TEST_COMMAND: "npm run typecheck && npm run lint",
 }));
 
 vi.mock("../../src/lib/buildsystemDetect", () => ({
@@ -152,9 +156,31 @@ describe("runPrScan with precomputedFindings", () => {
 // ---------------------------------------------------------------------------
 // runGlobalDeterministicChecks
 // ---------------------------------------------------------------------------
+function localRepo(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "repo-1",
+    path: "/fake/repo",
+    localPath: null,
+    cloneUrl: null,
+    skipTier2: false,
+    runnerImage: "node:20-alpine",
+    installCommand: "npm install",
+    testCommand: "npm run typecheck && npm run lint",
+    deployKeyCipher: null,
+    deployKeyIv: null,
+    deployKeyTag: null,
+    patCipher: null,
+    patIv: null,
+    patTag: null,
+    ...overrides,
+  };
+}
+
 describe("runGlobalDeterministicChecks", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
+    const prismaMod = await import("../../src/lib/prisma");
+    (prismaMod.prisma.repository.findUnique as any).mockResolvedValue(localRepo());
   });
 
   it("runs Tier 1 and Tier 2 and returns combined findings", async () => {
@@ -195,22 +221,7 @@ describe("runGlobalDeterministicChecks", () => {
 
   it("skips Tier 2 when skipTier2 is true", async () => {
     const prismaMod = await import("../../src/lib/prisma");
-    (prismaMod.prisma.repository.findUnique as any).mockResolvedValue({
-      id: "repo-1",
-      path: "/fake/repo",
-      localPath: null,
-      cloneUrl: null,
-      skipTier2: true,
-      runnerImage: "node:20-alpine",
-      installCommand: "npm install",
-      testCommand: "npm test",
-      deployKeyCipher: null,
-      deployKeyIv: null,
-      deployKeyTag: null,
-      patCipher: null,
-      patIv: null,
-      patTag: null,
-    });
+    (prismaMod.prisma.repository.findUnique as any).mockResolvedValue(localRepo({ skipTier2: true }));
 
     runDeterministicChecksMock.mockResolvedValue([]);
 
@@ -231,5 +242,46 @@ describe("runGlobalDeterministicChecks", () => {
     expect(runContainerizedChecksMock).not.toHaveBeenCalled();
     expect(result.findings).toHaveLength(1);
     expect(result.findings[0].source).toBe("tsc");
+  });
+
+  it("skips host Tier 1 for remote/volume-backed repo and still runs Tier 2", async () => {
+    const prismaMod = await import("../../src/lib/prisma");
+    (prismaMod.prisma.repository.findUnique as any).mockResolvedValue(
+      localRepo({
+        path: "/stale/host/mirror",
+        localPath: "/workspace",
+        cloneUrl: "https://github.com/acme/app.git",
+      }),
+    );
+    runContainerizedChecksMock.mockResolvedValue([mockFinding("container lint")]);
+
+    const result = await runGlobalDeterministicChecks("run-1", "pr-1");
+
+    expect(runDeterministicChecksMock).not.toHaveBeenCalled();
+    expect(runContainerizedChecksMock).toHaveBeenCalled();
+    expect(result.abort).toBe(false);
+    expect(result.findings).toHaveLength(1);
+    expect(result.findings[0].explanation).toBe("container lint");
+  });
+
+  it("aborts fail-closed when Tier 2 install throws (no LLM path)", async () => {
+    const prismaMod = await import("../../src/lib/prisma");
+    (prismaMod.prisma.repository.findUnique as any).mockResolvedValue(
+      localRepo({
+        path: null,
+        localPath: "/workspace",
+        cloneUrl: "https://github.com/acme/app.git",
+      }),
+    );
+    runContainerizedChecksMock.mockRejectedValue(
+      new Error("Containerized checks: install failed (exit 1) — aborting before quality gates and LLM"),
+    );
+
+    const result = await runGlobalDeterministicChecks("run-1", "pr-1");
+
+    expect(runDeterministicChecksMock).not.toHaveBeenCalled();
+    expect(result.abort).toBe(true);
+    expect(result.infrastructureFailure).toBe(true);
+    expect(result.errorMessage).toMatch(/install failed/i);
   });
 });
