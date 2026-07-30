@@ -170,6 +170,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
     const prelude = await runScanPrelude(repo);
     if (prelude.ok === false) {
       console.log(`[scan] route: prelude blocked gate=${prelude.gate} message=${prelude.message}`);
+      // Clear optimistic/stuck In Progress so a blocked worker run never
+      // looks like an active or empty-finished review.
+      await prisma.pullRequest
+        .updateMany({ where: { id: prId, status: "In Progress" }, data: { status: "Pending" } })
+        .catch(() => undefined);
       return NextResponse.json(preludeFailToJson(prelude), { status: prelude.httpStatus });
     }
     if (prelude.reindexed) {
@@ -193,6 +198,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
         const fail = diffUnavailableResult(syncErr, pr.repoId);
         console.log(`[scan] route: diff gate blocked gate=${fail.gate} message=${fail.message}`);
         void logReview(prId, `> Blocked at ${fail.gate}: ${fail.message}`, "error");
+        await prisma.pullRequest
+          .updateMany({ where: { id: prId, status: "In Progress" }, data: { status: "Pending" } })
+          .catch(() => undefined);
         return NextResponse.json(preludeFailToJson(fail), { status: fail.httpStatus });
       }
       console.log(`[scan] route: got ${files.length} files`);

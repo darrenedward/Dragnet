@@ -50,14 +50,18 @@ export async function register(): Promise<void> {
           });
           const body = await res.json().catch(() => ({} as Record<string, unknown>));
           if (!res.ok) {
-            const gate = typeof body.gate === "string" ? body.gate : null;
+            const { parseScanGate } = await import("./lib/scanPrelude");
             const rawError = typeof body.error === "string" ? body.error : null;
             const message =
               typeof body.message === "string"
                 ? body.message
                 : rawError || `scan route returned ${res.status}`;
-            const gateCode = gate || (rawError === "SCAN_CONFIGURATION_REQUIRED" ? "CONFIG_REQUIRED" : rawError);
-            // Prelude/gate blocks: durable failed job with Blocked at {gate}.
+            // Only durable "Blocked at {gate}" for real prelude gates — never
+            // prefix arbitrary 4xx/5xx errors (SCAN_IN_PROGRESS, 500s, etc.).
+            const gateCode =
+              (typeof body.gate === "string" ? parseScanGate(body.gate) : null) ||
+              parseScanGate(rawError) ||
+              parseScanGate(message);
             const errorMessage =
               gateCode && !message.startsWith("Blocked at ")
                 ? `Blocked at ${gateCode}. ${message}`

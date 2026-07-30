@@ -291,6 +291,7 @@ export function useDashboardData() {
       setStale(false);
       setMergeReady(null);
       setMergeReadyMessage(null);
+      setBlockedGate(null);
     }
 
     try {
@@ -365,6 +366,7 @@ export function useDashboardData() {
       setStale(false);
       setMergeReady(null);
       setMergeReadyMessage(null);
+      setBlockedGate(null);
     }
     try {
       const filesRes = await fetchJson(`/api/prs/${prId}/files`);
@@ -503,6 +505,10 @@ export function useDashboardData() {
     setExportStatus(null);
     setInterruptedScan(null);
     setTrivialSkipNotice(null);
+    setMergeReady(null);
+    setMergeReadyMessage(null);
+    setBlockedGate(null);
+    setQueueJob(null);
   }, [selectedRepoId, selectedPrId]);
 
   // Fetch PRs + details immediately when selection changes (no polling reset).
@@ -667,6 +673,7 @@ export function useDashboardData() {
     setRejectedFindings([]);
     setMergeReady(null);
     setMergeReadyMessage(null);
+    setBlockedGate(null);
 
     setPrs((prev) =>
       prev.map((p) => (p.id === targetPrId ? { ...p, status: "In Progress" } : p)),
@@ -784,6 +791,9 @@ export function useDashboardData() {
         console.log(`[scan] handleTriggerPrScan: refetch complete`);
       } else if (res.status === 400 && (result.error === "SCAN_CONFIGURATION_REQUIRED" || result.gate === "CONFIG_REQUIRED")) {
         setBlockedGate(typeof result.gate === "string" ? result.gate : "CONFIG_REQUIRED");
+        setPrs((prev) =>
+          prev.map((p) => (p.id === targetPrId ? { ...p, status: "Pending" } : p)),
+        );
         setScanConfigurationIssue({
           message: result.message || "Configure the required LLM providers before starting a review.",
           issues: Array.isArray(result.issues) ? result.issues : [],
