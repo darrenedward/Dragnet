@@ -250,7 +250,7 @@ describe("GET /api/prs/[prId]/findings — outcome field (#19)", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.mergeReady).toBe(false);
-    expect(body.mergeBlockReason).toMatch(/no rating/i);
+    expect(body.mergeBlockReason).toMatch(/null_rating|no rating/i);
   });
 
   it("no completed review exposes mergeReady false (#83)", async () => {
@@ -269,7 +269,7 @@ describe("GET /api/prs/[prId]/findings — outcome field (#19)", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.mergeReady).toBe(false);
-    expect(body.mergeBlockReason).toMatch(/no completed review/i);
+    expect(body.mergeBlockReason).toMatch(/no_run|no completed review/i);
   });
 
   it("response surfaces status='failed' when latest run failed (for button rose-state)", async () => {

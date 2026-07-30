@@ -183,12 +183,50 @@ export async function admitScanJob(input: {
     },
     update: {},
   });
-  // Explicit review (and force/resume/fresh) may reuse the durable identity
+  // Force recovery: clear locks, mark forced (worker passes ?force=true →
+  // cache bypass), and re-admit. Covers terminal, running, and queued jobs
+  // so null/stuck/completed runs are always recoverable.
+  if (input.forced) {
+    if (job.state === "running") {
+      await clearInFlightForForce(input.prId);
+    }
+    if (
+      job.state === "running" ||
+      TERMINAL_STATES.has(job.state) ||
+      job.state === "queued"
+    ) {
+      const requeued = await prisma.scanJob.update({
+        where: { id: job.id },
+        data: {
+          state: "queued",
+          forced: true,
+          resumeRequested: input.resumeRequested ?? false,
+          freshRequested: input.freshRequested ?? false,
+          triggerReason: input.triggerReason ?? job.triggerReason,
+          priority: 10,
+          completedAt: null,
+          errorMessage: null,
+          workerId: null,
+          claimedAt: null,
+          leaseExpiresAt: null,
+        },
+      });
+      return view(
+        requeued,
+        await positionFor(requeued),
+        requeued.forced,
+        requeued.resumeRequested,
+        requeued.freshRequested,
+      );
+    }
+  }
+
+  // Explicit review (and resume/fresh) may reuse the durable identity
   // while moving a terminal job back onto the queue. AFK duplicates stay
   // idempotent and never restart completed work for the same revision.
   // In-flight (queued/running) re-requests always return the active job.
   const mayRequeueTerminal =
-    explicit || input.forced || input.resumeRequested || input.freshRequested;
+    explicit || input.resumeRequested || input.freshRequested;
   if (mayRequeueTerminal && TERMINAL_STATES.has(job.state)) {
     const requeued = await prisma.scanJob.update({
       where: { id: job.id },

@@ -66,22 +66,18 @@ export async function runScanPrelude(
   repo: ScanPreludeRepo,
   deps: ScanPreludeDeps = {},
 ): Promise<ScanPreludeResult> {
-  const getConfigurationIssues =
-    deps.getConfigurationIssues ??
-    (() => {
-      // Lazy: scanPreflight → llmPresets → prisma; keep unit tests free of DB.
-      const { getScanConfigurationIssues } = require("./scanPreflight") as typeof import("./scanPreflight");
-      return getScanConfigurationIssues();
-    });
+  // Lazy ESM imports — avoid CJS require() (breaks Vitest resolution).
+  let getConfigurationIssues = deps.getConfigurationIssues;
+  if (!getConfigurationIssues) {
+    const { getScanConfigurationIssues } = await import("./scanPreflight");
+    getConfigurationIssues = () => getScanConfigurationIssues();
+  }
   const checkFresh = deps.assertIndexFresh ?? assertIndexFresh;
-  const isIndexing =
-    deps.isIndexing ??
-    ((repoId: string) => {
-      // Lazy: avoid pulling Prisma into unit tests that inject all deps.
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const { IndexingService } = require("@/src/services/indexingService") as typeof import("@/src/services/indexingService");
-      return IndexingService.isIndexing(repoId);
-    });
+  let isIndexing = deps.isIndexing;
+  if (!isIndexing) {
+    const { IndexingService } = await import("@/src/services/indexingService");
+    isIndexing = (repoId: string) => IndexingService.isIndexing(repoId);
+  }
   const indexFolder =
     deps.indexFolder ??
     (async (repoId: string, path: string) => {

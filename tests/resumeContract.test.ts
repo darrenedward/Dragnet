@@ -189,7 +189,7 @@ vi.mock("../src/lib/indexFreshness", () => ({
   assertIndexFresh: vi.fn().mockResolvedValue({ ok: true }),
 }));
 
-vi.mock("../src/lib/getRealLocalPrs", () => ({
+vi.mock("../src/lib/getRealPrs", () => ({
   refreshPrFiles: vi.fn().mockResolvedValue([
     {
       filename: "src/test.ts",
@@ -202,6 +202,24 @@ vi.mock("../src/lib/getRealLocalPrs", () => ({
     },
   ]),
   isBranchMerged: vi.fn().mockResolvedValue(false),
+}));
+
+vi.mock("../src/lib/scanPrelude", () => ({
+  runScanPrelude: vi.fn().mockResolvedValue({ ok: true, reindexed: false }),
+  diffUnavailableResult: (err: Error, repoId?: string) => ({
+    ok: false,
+    gate: "DIFF_UNAVAILABLE",
+    message: err.message,
+    httpStatus: 503,
+    repoId,
+  }),
+  preludeFailToJson: (fail: { gate: string; message: string; repoId?: string }) => ({
+    error: fail.gate,
+    message: fail.message,
+    gate: fail.gate,
+    ...(fail.repoId ? { repoId: fail.repoId } : {}),
+  }),
+  parseScanGate: () => null,
 }));
 
 vi.mock("../src/services/indexingService", () => ({
