@@ -141,35 +141,28 @@ export function rgPill(ok: boolean, okLabel: string, failLabel: string, titleOk:
 
 /**
  * Two lines:
- *   GITHUB
- *   PR #31 - feat(admin): Add PM User page…
- *   ISSUE #25 - ticket-25-admin-pm-user
- * (no ticket → ISSUE line omitted; branch still on ISSUE when present)
+ *   GitHub PR: #30 — Promote endpoint: ambassadors
+ *   GitHub Issue: #24 — ticket-24-promote
  */
 export function PrIdentity({ pr }: { pr: ProtoPr }) {
   return (
-    <div className="space-y-2 min-w-0 font-mono">
-      <div className="space-y-0.5">
-        <div className="text-[9px] uppercase tracking-widest text-slate-500 font-bold">GitHub</div>
-        <div className="text-sm sm:text-base font-bold text-white leading-snug">
-          <span className="text-cyan-400">PR #{pr.githubPrNumber}</span>
-          <span className="text-slate-500 font-semibold"> — </span>
-          <span>{pr.title}</span>
-        </div>
+    <div className="space-y-1 min-w-0 font-mono text-sm leading-snug">
+      <div className="text-white font-bold">
+        <span className="text-slate-500 font-semibold">GitHub PR:</span>{" "}
+        <span className="text-cyan-400">#{pr.githubPrNumber}</span>
+        <span className="text-slate-500"> — </span>
+        <span>{pr.title}</span>
       </div>
-      {pr.ticketNumber != null && (
-        <div className="space-y-0.5">
-          <div className="text-[9px] uppercase tracking-widest text-slate-500 font-bold">Issue</div>
-          <div className="text-sm font-semibold text-slate-200 leading-snug">
-            <span className="text-cyan-300/90">#{pr.ticketNumber}</span>
-            <span className="text-slate-500"> — </span>
-            <span className="text-slate-400" title={pr.branch}>
-              {pr.branch}
-            </span>
-          </div>
+      {pr.ticketNumber != null ? (
+        <div className="text-slate-300 font-semibold">
+          <span className="text-slate-500">GitHub Issue:</span>{" "}
+          <span className="text-cyan-300/90">#{pr.ticketNumber}</span>
+          <span className="text-slate-500"> — </span>
+          <span className="text-slate-400" title={pr.branch}>
+            {pr.branch}
+          </span>
         </div>
-      )}
-      {pr.ticketNumber == null && (
+      ) : (
         <div className="text-[11px] text-slate-500 truncate" title={pr.branch}>
           {pr.branch}
         </div>
