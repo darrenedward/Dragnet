@@ -48,8 +48,26 @@ export async function register(): Promise<void> {
             headers: { "Content-Type": "application/json", "x-dragnet-queue-worker": workerKey },
             body: "{}",
           });
-          const body = await res.json().catch(() => ({}));
-          if (!res.ok) throw new Error(body.error || `scan route returned ${res.status}`);
+          const body = await res.json().catch(() => ({} as Record<string, unknown>));
+          if (!res.ok) {
+            const gate = typeof body.gate === "string" ? body.gate : null;
+            const rawError = typeof body.error === "string" ? body.error : null;
+            const message =
+              typeof body.message === "string"
+                ? body.message
+                : rawError || `scan route returned ${res.status}`;
+            const gateCode = gate || (rawError === "SCAN_CONFIGURATION_REQUIRED" ? "CONFIG_REQUIRED" : rawError);
+            // Prelude/gate blocks: durable failed job with Blocked at {gate}.
+            const errorMessage =
+              gateCode && !message.startsWith("Blocked at ")
+                ? `Blocked at ${gateCode}. ${message}`
+                : message;
+            return {
+              state: "failed" as const,
+              errorMessage,
+              reviewRunId: typeof body.runId === "string" ? body.runId : null,
+            };
+          }
           return {
             state: body.interrupted ? "interrupted" : "completed",
             reviewRunId: typeof body.runId === "string" ? body.runId : null,

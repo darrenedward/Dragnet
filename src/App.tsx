@@ -293,6 +293,7 @@ export default function App() {
                   onStartFreshScan={workspaceCommands.startFreshScan}
                   mergeReady={workspace.mergeReady}
                   mergeReadyMessage={workspace.mergeReadyMessage}
+                  blockedGate={workspace.blockedGate}
                 />
               )}
             </AnimatePresence>

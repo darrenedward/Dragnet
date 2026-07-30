@@ -65,6 +65,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
         error: "SCAN_CONFIGURATION_REQUIRED",
         message: "Configure the chat and embedding providers before starting a PR review.",
         issues: configurationIssues,
+        gate: "CONFIG_REQUIRED",
       },
       { status: 400 },
     );

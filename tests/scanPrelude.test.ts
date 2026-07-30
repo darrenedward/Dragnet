@@ -4,6 +4,8 @@ import {
   diffUnavailableResult,
   preludeFailToJson,
   blocksExplicitAdmit,
+  parseScanGate,
+  blockedAtLabel,
   type ScanPreludeDeps,
 } from "../src/lib/scanPrelude";
 
@@ -165,5 +167,13 @@ describe("diffUnavailableResult", () => {
     // STALE is healed inside prelude; DIFF is checked after admit/sync
     expect(blocksExplicitAdmit("STALE_INDEX")).toBe(false);
     expect(blocksExplicitAdmit("DIFF_UNAVAILABLE")).toBe(false);
+  });
+
+  it("parseScanGate extracts codes from worker error messages", () => {
+    expect(parseScanGate("INDEX_REQUIRED")).toBe("INDEX_REQUIRED");
+    expect(parseScanGate("Blocked at DIFF_UNAVAILABLE. sync failed")).toBe("DIFF_UNAVAILABLE");
+    expect(parseScanGate("SCAN_CONFIGURATION_REQUIRED")).toBe("CONFIG_REQUIRED");
+    expect(parseScanGate("random failure")).toBeNull();
+    expect(blockedAtLabel("CLONE_FAILED")).toBe("Blocked at CLONE_FAILED");
   });
 });
