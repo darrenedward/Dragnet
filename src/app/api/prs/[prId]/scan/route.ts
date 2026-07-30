@@ -8,7 +8,7 @@ import {
   diffUnavailableResult,
   preludeFailToJson,
 } from "@/src/lib/scanPrelude";
-import { acquireReviewLock, endReview, checkPendingAbort } from "@/src/lib/reviewLocks";
+import { acquireReviewLock, endReview, checkPendingAbort, clearPendingAbort } from "@/src/lib/reviewLocks";
 import { computePrSizeProfile } from "@/src/lib/prSizeProfile";
 import { readPrCommitCount } from "@/src/lib/prSizeProfile.server";
 import { assertTier, buildDiffManifest, runLargePrReview } from "@/src/services/largePrReview";
@@ -106,6 +106,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
     return NextResponse.json({ accepted: true, ...job }, { status: 202 });
   }
   void logReview(prId, `> Scan requested via /api/prs/.../scan (force=${force})`, "info");
+  // Force re-admit of a stuck/orphaned running job calls abortScan, which
+  // defers via pendingAborts when no live controller exists. Drain that
+  // flag here so checkPendingAbort after file collection cannot cancel
+  // this replacement. Stop clicked during THIS request still sets a
+  // fresh pending abort after this drain.
+  if (force) clearPendingAbort(prId);
   // Phase 7 resume parameters. `resume=true` loads the prior run's
   // checkpoint and continues at the saved iteration. `fresh=true` marks
   // the prior run failed/interrupted, deletes its checkpoints, and

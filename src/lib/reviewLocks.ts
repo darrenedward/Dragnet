@@ -159,6 +159,17 @@ export function checkPendingAbort(prId: string): boolean {
 }
 
 /**
+ * Drop a deferred pre-lock abort without treating it as cancellation.
+ * Used by force re-scan so a stuck/orphaned running job's abortScan
+ * deferred flag cannot cancel the replacement request.
+ */
+export function clearPendingAbort(prId: string): void {
+  if (pendingAborts.delete(prId)) {
+    console.log(`[review] clearPendingAbort — drained deferred abort for ${prId}`);
+  }
+}
+
+/**
  * Atomic-feel acquisition of the review lock: in-memory check + DB-backed
  * active-scan check + beginReview, all from one call. All four scan entry
  * points (scan/route.ts, prcheck/route.ts, prepush/route.ts, command/route.ts)

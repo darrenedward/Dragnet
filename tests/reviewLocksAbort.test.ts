@@ -28,18 +28,28 @@ vi.mock("../src/lib/reviewFreshness", () => ({
 }));
 
 // Re-import AFTER mock setup so the module picks up the mock.
-const { acquireReviewLock, beginReview, endReview, getActiveReviewSignal, isReviewActive } =
-  await import("../src/lib/reviewLocks");
+const {
+  acquireReviewLock,
+  abortScan,
+  beginReview,
+  checkPendingAbort,
+  clearPendingAbort,
+  endReview,
+  getActiveReviewSignal,
+  isReviewActive,
+} = await import("../src/lib/reviewLocks");
 
 const PR_ID = "pr-test-1";
 
 beforeEach(() => {
   // Clear any leaked in-memory entries between tests.
   endReview(PR_ID);
+  clearPendingAbort(PR_ID);
 });
 
 afterEach(() => {
   endReview(PR_ID);
+  clearPendingAbort(PR_ID);
 });
 
 describe("Phase 4 force-restart abort", () => {
@@ -119,6 +129,20 @@ describe("Phase 4 force-restart abort", () => {
     const live = getActiveReviewSignal(PR_ID);
     expect(live).toBe(c2.signal);
     endReview(PR_ID);
+  });
+
+  it("clearPendingAbort drains deferred abort so force replacement is not cancelled", () => {
+    // Stuck running job: abortScan finds no controller and defers.
+    expect(abortScan(PR_ID)).toBe(false);
+    expect(checkPendingAbort(PR_ID)).toBe(true);
+    // Second check is empty after consume.
+    expect(checkPendingAbort(PR_ID)).toBe(false);
+
+    // Force re-admit path: deferred abort must be drainable without
+    // treating it as cancellation of the replacement scan.
+    expect(abortScan(PR_ID)).toBe(false);
+    clearPendingAbort(PR_ID);
+    expect(checkPendingAbort(PR_ID)).toBe(false);
   });
 });
 
