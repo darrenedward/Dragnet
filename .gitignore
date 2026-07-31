@@ -78,3 +78,7 @@ prd.md
 opus.md
 roadmap.md
 namechange.md
+.sandcastle/.env
+.sandcastle/logs/
+.sandcastle/worktrees/
+.sandcastle/build-context/
