@@ -64,6 +64,11 @@ export interface PullRequest {
   description: string | null;
   rating?: number | null;
   sizeProfile?: PrSizeProfile;
+  /**
+   * GitHub pull request number when the API already returns it (hosted/poller).
+   * Null/undefined for local-only PRs — identity presenters render without inventing.
+   */
+  githubPrNumber?: number | null;
 }
 
 export interface PRFile {
