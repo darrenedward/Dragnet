@@ -80,7 +80,28 @@ export function presentStatusPill(input: PresentStatusPillInput): LayoutCStatusP
   const queuePosition = normalizeQueuePosition(input.queuePosition);
   const inActiveQueue = ACTIVE_QUEUE.has(queueState);
 
-  // Failed never looks completed-green, even if a stale queue row exists.
+  // Active queue / In Progress wins over a leftover Failed PR badge so a
+  // re-admitted scan is glanceable as processing (admit does not always flip
+  // PR.status off Failed until the worker claims the job).
+  if (inActiveQueue || status === "In Progress") {
+    const label =
+      queuePosition != null ? `processing #${queuePosition}` : "processing";
+    const tipBase =
+      "Processing — scan is admitted or running. Completed ≠ merge-ready; wait for the rating chip.";
+    const tooltip =
+      queuePosition != null
+        ? `${tipBase} Currently #${queuePosition} in the queue.`
+        : tipBase;
+    return {
+      kind: "processing",
+      label,
+      tone: "blue",
+      tooltip,
+      queuePosition,
+    };
+  }
+
+  // Failed never looks completed-green, even if a stale terminal queue row exists.
   if (status === "Failed" || queueState === "failed") {
     return {
       kind: "failed",
@@ -99,24 +120,6 @@ export function presentStatusPill(input: PresentStatusPillInput): LayoutCStatusP
       tone: "amber",
       tooltip: "Merged — branch is merged on the remote. Not an active review target.",
       queuePosition: null,
-    };
-  }
-
-  if (inActiveQueue || status === "In Progress") {
-    const label =
-      queuePosition != null ? `processing #${queuePosition}` : "processing";
-    const tipBase =
-      "Processing — scan is admitted or running. Completed ≠ merge-ready; wait for the rating chip.";
-    const tooltip =
-      queuePosition != null
-        ? `${tipBase} Currently #${queuePosition} in the queue.`
-        : tipBase;
-    return {
-      kind: "processing",
-      label,
-      tone: "blue",
-      tooltip,
-      queuePosition,
     };
   }
 
@@ -146,6 +149,11 @@ export function presentStatusPill(input: PresentStatusPillInput): LayoutCStatusP
  * Rating color bands: 1–4 red · 5–7 amber · 8–10 green · null → no score amber.
  * Tooltips explain the merge bar (need 8+).
  */
+function formatRatingLabel(score: number): string {
+  const n = Number.isInteger(score) ? score : Math.round(score * 10) / 10;
+  return `${n}/10`;
+}
+
 export function presentRatingPill(rating: number | null | undefined): LayoutCRatingPill {
   if (rating == null || !Number.isFinite(rating)) {
     return {
@@ -157,31 +165,32 @@ export function presentRatingPill(rating: number | null | undefined): LayoutCRat
     };
   }
 
-  const score = Math.round(rating);
+  const score = rating;
+  const label = formatRatingLabel(score);
 
   if (score >= 8) {
     return {
       score,
-      label: `${score}/10`,
+      label,
       tone: "green",
-      tooltip: `${score}/10 — at or above the merge bar (need 8+). Merge-ready if other gates pass.`,
+      tooltip: `${label} — at or above the merge bar (need 8+). Merge-ready if other gates pass.`,
     };
   }
 
   if (score >= 5) {
     return {
       score,
-      label: `${score}/10`,
+      label,
       tone: "amber",
-      tooltip: `${score}/10 — below the merge bar (need 8+). Fix findings and re-scan.`,
+      tooltip: `${label} — below the merge bar (need 8+). Fix findings and re-scan.`,
     };
   }
 
   return {
     score,
-    label: `${score}/10`,
+    label,
     tone: "red",
-    tooltip: `${score}/10 — well below the merge bar (need 8+). Expect serious issues; fix and re-scan.`,
+    tooltip: `${label} — well below the merge bar (need 8+). Expect serious issues; fix and re-scan.`,
   };
 }
 

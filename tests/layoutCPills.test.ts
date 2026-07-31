@@ -105,6 +105,25 @@ describe("presentStatusPill", () => {
     expect(pill.kind).toBe("failed");
     expect(pill.tone).toBe("red");
   });
+
+  it("re-admitted Failed PR with active queue shows processing (not stuck failed)", () => {
+    const queued = presentStatusPill({
+      status: "Failed",
+      queueState: "queued",
+      queuePosition: 2,
+    });
+    expect(queued.kind).toBe("processing");
+    expect(queued.label).toBe("processing #2");
+    expect(queued.tone).toBe("blue");
+
+    const running = presentStatusPill({
+      status: "Failed",
+      queueState: "running",
+      queuePosition: 1,
+    });
+    expect(running.kind).toBe("processing");
+    expect(running.tone).toBe("blue");
+  });
 });
 
 describe("presentRatingPill", () => {
@@ -147,6 +166,19 @@ describe("presentRatingPill", () => {
       expect(pill.label).toBe(`${n}/10`);
       expect(pill.tooltip.toLowerCase()).toMatch(/merge/);
     }
+  });
+
+  it("bands use raw score like isMergeReady (no round-up into green)", () => {
+    // 7.6 < 8 ⇒ not merge-ready; must not display as green 8/10
+    const below = presentRatingPill(7.6);
+    expect(below.tone).toBe("amber");
+    expect(below.tone).not.toBe("green");
+    expect(below.label).toBe("7.6/10");
+    expect(below.score).toBe(7.6);
+
+    const atBar = presentRatingPill(8);
+    expect(atBar.tone).toBe("green");
+    expect(atBar.label).toBe("8/10");
   });
 });
 
