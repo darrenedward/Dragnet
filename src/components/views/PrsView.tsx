@@ -1,44 +1,22 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { type ReactNode } from "react";
 import { motion } from "motion/react";
-import {
-  AlertTriangle,
-  Calendar,
-  Download,
-  FileCode2,
-  GitBranch,
-  Hash,
-  Save,
-  User,
-  X,
-  Zap,
-} from "lucide-react";
+import { FileCode2 } from "lucide-react";
 import type { PRFile, PullRequest, ReviewChunk, ReviewFinding } from "../../lib/types";
-import { getStatusBadgeStyle } from "../../lib/types";
-import { canForceRescan } from "../../lib/forceRescan";
-import IndexNowBanner from "./prs/IndexNowBanner";
-import InterruptedScanBanner, { type InterruptedScan } from "./prs/InterruptedScanBanner";
+import type { SeamChipInput } from "../../lib/seamChips";
+import type { StabilityProp } from "../../lib/stabilityScore";
 import ReviewProgress from "./prs/ReviewProgress";
 import ReviewCard from "./prs/ReviewCard";
 import BugFixFeed from "./prs/BugFixFeed";
 import ScanHistory from "./prs/ScanHistory";
-import PrSizeProfileChip from "../PrSizeProfileChip";
-import SeamChips, { type SeamChipInput } from "./prs/SeamChips";
-import type { ReviewLimits } from "../../lib/prSizeConfig";
-import type { StabilityProp } from "../../lib/stabilityScore";
+import PrHeader from "./prs/PrHeader";
+import type { InterruptedScan } from "./prs/InterruptedScanBanner";
 
 interface ScanResult {
   count: number;
   model: string;
   notice?: string | null;
-}
-
-interface ScanSettingsSummary {
-  maxIterations: number;
-  primaryModel: string | null;
-  fallbackModel: string | null;
-  limits: ReviewLimits;
 }
 
 interface Props {
@@ -61,8 +39,8 @@ interface Props {
     triggerReason: string | null;
     reliability?: string | null;
     refused?: boolean | null;
-    status?: string; // lifecycle: "in_progress" | "completed" | "failed"
-    outcome?: string | null; // "reviewed" | "skipped" | null (legacy / failed)
+    status?: string;
+    outcome?: string | null;
     chunksTotal?: number;
     chunksCompleted?: number;
     chunksFailed?: number;
@@ -85,9 +63,6 @@ interface Props {
   } | null;
   stability?: StabilityProp | null;
   chunks?: ReviewChunk[];
-  // Currently in-progress scan (null when no scan is active). Drives the
-  // live "Large PR Mode" chunk grid and the ReviewProgress log target
-  // while the agentic loop is still running.
   activeScan?: {
     id: string;
     commitHash: string;
@@ -133,8 +108,6 @@ interface Props {
   repoIndexedAt?: string | null;
   repoId?: string;
   onIndexComplete?: () => void;
-  // Phase 7 — interrupted-scan resume banner. Present only when the scan
-  // endpoint returned `status: "interrupted"` for the active PR.
   interruptedScan?: InterruptedScan | null;
   onContinueScan?: (prId: string) => void;
   onStartFreshScan?: (prId: string) => void;
@@ -168,7 +141,6 @@ export default function PrsView({
   rejectedFindings,
   stale,
   mergeReady,
-  mergeBlockReason,
   mergeReadyMessage,
   blockedGate,
   onCopySuggestion,
@@ -185,9 +157,6 @@ export default function PrsView({
   onStartFreshScan,
   seamInput,
 }: Props) {
-  const notReadyReason = mergeBlockReason ?? mergeReadyMessage ?? null;
-  const scanSettings = useScanSettingsSummary();
-
   return (
     <motion.div
       key="pr-scanner-viewport"
@@ -210,7 +179,6 @@ export default function PrsView({
           scanResult={scanResult}
           onDismissScanResult={onDismissScanResult}
           reviewRun={reviewRun}
-          scanSettings={scanSettings}
           repoId={repoId}
           repoIndexedAt={repoIndexedAt}
           onIndexComplete={onIndexComplete}
@@ -222,6 +190,7 @@ export default function PrsView({
           mergeReadyMessage={mergeReadyMessage}
           blockedGate={blockedGate}
           seamInput={seamInput}
+          stale={stale}
         />
 
         <div className="space-y-4 min-w-0 mt-4 flex-1 overflow-y-auto overflow-x-hidden min-h-0 pr-1">
@@ -273,475 +242,6 @@ export default function PrsView({
         activeFile={activeFile}
       />
     </motion.div>
-  );
-}
-
-/** Collapsed by default so long GitHub bodies don't push Scan Results off-screen. */
-function PrDescription({
-  text,
-  expanded,
-  onToggle,
-}: {
-  text: string;
-  expanded: boolean;
-  onToggle: () => void;
-}) {
-  const long = text.length > 220 || text.split("\n").length > 3;
-  return (
-    <div className="mt-1 max-w-3xl">
-      <p
-        className={
-          expanded || !long
-            ? "text-xs text-slate-400 italic font-mono whitespace-pre-wrap break-words"
-            : // max-height (not line-clamp+pre-wrap — those fight and leak full text)
-              "text-xs text-slate-400 italic font-mono break-words overflow-hidden max-h-14"
-        }
-      >
-        {text}
-      </p>
-      {long && (
-        <button
-          type="button"
-          onClick={onToggle}
-          className="mt-1 text-[10px] font-mono font-bold uppercase tracking-wider text-cyan-400/90 hover:text-cyan-300"
-        >
-          {expanded ? "Show less" : "Show full description"}
-        </button>
-      )}
-    </div>
-  );
-}
-
-function PrHeader({
-  activePR,
-  isScanning,
-  onTriggerScan,
-  onStopScan,
-  onExportMarkdown,
-  exportStatus,
-  hasFindings,
-  scanResult,
-  onDismissScanResult,
-  reviewRun,
-  scanSettings,
-  repoId,
-  repoIndexedAt,
-  onIndexComplete,
-  interruptedScan,
-  onContinueScan,
-  onStartFreshScan,
-  queueJob,
-  mergeReady,
-  mergeReadyMessage,
-  blockedGate,
-  seamInput,
-}: {
-  activePR: PullRequest | undefined;
-  isScanning: boolean;
-  onTriggerScan: (opts?: { force?: boolean }) => void;
-  onStopScan?: () => void;
-  onExportMarkdown: (format: "file" | "download") => void;
-  exportStatus: { kind: "file" | "download"; success: boolean; message: string } | null;
-  hasFindings: boolean;
-  scanResult: ScanResult | null;
-  onDismissScanResult: () => void;
-  reviewRun?: {
-    id: string;
-    status?: string;
-    outcome?: string | null;
-    rating?: number | null;
-    completedAt?: string | null;
-    reliability?: string | null;
-    refused?: boolean | null;
-  } | null;
-  scanSettings: ScanSettingsSummary | null;
-  repoId?: string;
-  repoIndexedAt?: string | null;
-  onIndexComplete?: () => void;
-  interruptedScan?: InterruptedScan | null;
-  onContinueScan?: (prId: string) => void;
-  onStartFreshScan?: (prId: string) => void;
-  queueJob?: { jobId: string; state: string; queuePosition: number | null } | null;
-  mergeReady?: boolean | null;
-  mergeReadyMessage?: string | null;
-  blockedGate?: string | null;
-  seamInput?: SeamChipInput | null;
-}) {
-  const notReadyReason = mergeReadyMessage ?? null;
-
-  const scanning = isScanning || activePR?.status === "In Progress";
-  const queued = queueJob?.state === "queued";
-  const runningQueued = queueJob?.state === "running";
-  // Label/color/tooltip decision tree for the "Run PR Review" button.
-  // Pure function of the selected PR's persisted scan state — no
-  // dashboard-level sticky memory, so switching PRs can never leak a
-  // foreign PR's outcome onto this button. Priority order:
-  //   1. scanning        → "Review Running..." (pulse + opacity)
-  //   2. !repoIndexedAt  → "Index Required" (disabled, greyscale)
-  //   3. status=failed   → "Re-run review" (rose)
-  //   4. outcome=skipped → "Skipped — re-scan after changes" (amber)
-  //   5. else            → "Run PR Review" (default cyan→indigo)
-  const failed = reviewRun?.status === "failed";
-  const skipped = reviewRun?.outcome === "skipped";
-  const [descExpanded, setDescExpanded] = useState(false);
-
-  if (!activePR) {
-    return (
-      <div className="h-64 flex flex-col items-center justify-center border border-white/10 border-dashed rounded-xl bg-slate-900/10 p-6 text-slate-500">
-        <GitBranch size={32} className="text-slate-700 animate-pulse mb-2" />
-        <p className="text-sm font-semibold font-mono">No Active Branch / PR selected</p>
-        <p className="text-xs text-slate-500 font-mono max-w-sm text-center mt-1">
-          Select a workspace target from the sidebar menu to populate git branches and start AI security code audits.
-        </p>
-      </div>
-    );
-  }
-
-  return (
-    <div className="p-4 bg-[#0F1219] border border-white/10 rounded-xl relative overflow-hidden group shrink-0">
-      <div className="absolute top-0 right-0 w-32 h-32 bg-cyan-500/[0.02] rounded-full blur-3xl pointer-events-none" />
-
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div className="space-y-1">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-[10px] font-mono uppercase bg-slate-800 text-slate-400 px-2 py-0.5 rounded font-bold border border-slate-750">
-              Active Pull Request View
-            </span>
-            {activePR.sizeProfile && (
-              <PrSizeProfileChip profile={activePR.sizeProfile} />
-            )}
-            {queued && (
-              <span className="px-2 py-0.5 rounded uppercase font-extrabold text-[9px] font-mono bg-amber-500/10 text-amber-300 border border-amber-500/25">
-                QUEUED{queueJob?.queuePosition ? ` #${queueJob.queuePosition}` : ""}
-              </span>
-            )}
-            {runningQueued && (
-              <span className="px-2 py-0.5 rounded uppercase font-extrabold text-[9px] font-mono bg-blue-500/10 text-blue-300 border border-blue-500/25">
-                RUNNING
-              </span>
-            )}
-            <span
-              className={`px-2 py-0.5 rounded uppercase font-extrabold text-[9px] font-mono flex items-center gap-1.5 shrink-0 select-none ${getStatusBadgeStyle(activePR.status)}`}
-            >
-              {(activePR.status === "In Progress" || queued || runningQueued) && (
-                <span className="inline-block w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
-              )}
-              <span>{queued || runningQueued ? "In Progress" : activePR.status}</span>
-            </span>
-            {blockedGate && !queued && !runningQueued && (
-              <span
-                title={mergeReadyMessage ?? `Blocked at ${blockedGate}`}
-                className="px-2 py-0.5 rounded uppercase font-mono text-[9px] font-bold border bg-amber-500/10 text-amber-300 border-amber-500/30 max-w-[260px] truncate"
-              >
-                Blocked at {blockedGate}
-              </span>
-            )}
-            {activePR.status === "Completed" && !blockedGate && !queued && !runningQueued && (
-              <span className="px-2 py-0.5 rounded uppercase font-mono text-[9px] font-bold border bg-slate-500/10 text-slate-300 border-slate-500/25">
-                Scan finished
-              </span>
-            )}
-            {mergeReady === true && !blockedGate && !queued && !runningQueued && (
-              <span className="px-2 py-0.5 rounded uppercase font-mono text-[9px] font-bold border bg-emerald-500/10 text-emerald-400 border-emerald-500/25">
-                Merge ready
-              </span>
-            )}
-            {mergeReady === false && mergeReadyMessage && !scanning && !queued && !runningQueued && !blockedGate && (
-              <span
-                title={mergeReadyMessage}
-                className="px-2 py-0.5 rounded uppercase font-mono text-[9px] font-bold border bg-rose-500/10 text-rose-400 border-rose-500/20 max-w-[220px] truncate"
-              >
-                Not ready
-              </span>
-            )}
-            {activePR.rating !== undefined && activePR.rating !== null && (
-              <span
-                className={`px-2 py-0.5 rounded uppercase font-mono text-[9px] font-bold border ${
-                  activePR.rating >= 8
-                    ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/25"
-                    : "bg-rose-500/10 text-rose-400 border-rose-500/20"
-                }`}
-              >
-                {activePR.rating}/10
-              </span>
-            )}
-            {/* Scan finished (status badge above) ≠ merge ready — show gate explicitly. */}
-            {reviewRun && !scanning && !queued && (
-              <span
-                title={
-                  mergeReady
-                    ? "Shared merge gate passed — rating, outcome, reliability, and freshness"
-                    : notReadyReason ?? "Not merge-ready"
-                }
-                className={`px-2 py-0.5 rounded uppercase font-mono text-[9px] font-bold border ${
-                  mergeReady
-                    ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/25"
-                    : "bg-amber-500/10 text-amber-300 border-amber-500/25"
-                }`}
-              >
-                {mergeReady
-                  ? "Merge ready"
-                  : `Not ready${notReadyReason ? ` (${notReadyReason})` : ""}`}
-              </span>
-            )}
-          </div>
-          <div className="pt-1.5">
-            <SeamChips
-              input={{
-                ...(seamInput ?? {}),
-                indexedAt: seamInput?.indexedAt ?? repoIndexedAt,
-                runStatus: queued
-                  ? "queued"
-                  : scanning
-                    ? "in_progress"
-                    : (seamInput?.runStatus ?? reviewRun?.status),
-                runOutcome: seamInput?.runOutcome ?? reviewRun?.outcome,
-                reliability: seamInput?.reliability ?? reviewRun?.reliability,
-                rating: seamInput?.rating ?? reviewRun?.rating,
-                refused: seamInput?.refused ?? reviewRun?.refused,
-              }}
-            />
-          </div>
-          <h3 className="text-base sm:text-lg font-bold text-white tracking-tight mt-1">{activePR.title}</h3>
-          <PrDescription
-            text={activePR.description || "No description provided."}
-            expanded={descExpanded}
-            onToggle={() => setDescExpanded((v) => !v)}
-          />
-        </div>
-
-        <div className="flex gap-2">
-          <button
-            disabled={scanning || !repoIndexedAt}
-            onClick={() => onTriggerScan()}
-            title={
-              !repoIndexedAt
-                ? "Index the codebase first — reviews without an index produce only diff-only guesses."
-                : scanning
-                  ? "Review already in progress."
-                  : failed
-                    ? "Last scan failed — re-run when ready."
-                    : skipped
-                      ? "Last scan skipped — no code changes were detected. Make a code change and re-run."
-                      : "Run the agentic review loop on this PR"
-            }
-            className={`min-h-11 px-4 py-2 text-xs font-bold rounded-lg flex items-center gap-1.5 transition-all shadow-md select-none ${
-              failed && !scanning
-                ? "bg-rose-500 hover:bg-rose-400 text-black"
-                : skipped && !scanning
-                  ? "bg-amber-500 hover:bg-amber-400 text-black"
-                  : "bg-gradient-to-r from-cyan-500 to-indigo-500 hover:from-cyan-400 hover:to-indigo-400 text-black"
-            } ${
-              scanning ? "animate-pulse opacity-50" : ""
-            } ${!repoIndexedAt ? "opacity-40 cursor-not-allowed grayscale" : "cursor-pointer"}`}
-          >
-            <Zap size={14} className="fill-black" />
-            <span>
-              {scanning
-                ? "Review Running..."
-                : !repoIndexedAt
-                  ? "Index Required"
-                  : failed
-                    ? "Re-run review"
-                    : skipped
-                      ? "Skipped — re-scan after changes"
-                      : "Run PR Review"}
-            </span>
-          </button>
-          {scanning && (
-            <button
-              onClick={() => onStopScan?.()}
-              title="Stop the currently running scan without starting a replacement."
-              className="min-h-11 px-3 py-2 bg-amber-500/15 border border-amber-500/30 text-amber-300 hover:bg-amber-500/25 text-xs font-mono font-bold rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer"
-            >
-              <X size={13} />
-              <span>Stop</span>
-            </button>
-          )}
-          {canForceRescan({
-            hasSelectedPr: !!activePR,
-            repoReviewable: !!repoIndexedAt,
-          }) && (
-            <button
-              type="button"
-              onClick={() => onTriggerScan({ force: true })}
-              title="Force re-scan: clear locks, bypass cache, and admit a fresh queue job. Always available after complete, null-rating, failed, or stuck runs."
-              className="min-h-11 px-3 py-2 bg-rose-500/15 border border-rose-500/30 text-rose-300 hover:bg-rose-500/25 text-xs font-mono font-bold rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer"
-            >
-              <AlertTriangle size={13} />
-              <span>{scanning ? "Force Restart" : "Force re-scan"}</span>
-            </button>
-          )}
-          {hasFindings && (
-            <>
-              <button
-                onClick={() => onExportMarkdown("file")}
-                className="min-h-11 px-3 py-2 bg-white/5 border border-white/10 text-slate-300 hover:bg-white/10 text-xs font-mono font-bold rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer"
-                title="Save the markdown summary to .dragnet/reviews/<branch>/<runId>.md inside the project"
-              >
-                <Save size={13} />
-                <span>Save to Project</span>
-              </button>
-              <button
-                onClick={() => onExportMarkdown("download")}
-                className="min-h-11 px-3 py-2 bg-white/5 border border-white/10 text-slate-300 hover:bg-white/10 text-xs font-mono font-bold rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer"
-                title="Download the markdown summary as a .md file"
-              >
-                <Download size={13} />
-                <span>Download</span>
-              </button>
-              {exportStatus && (
-                <span
-                  className={`text-[10px] font-mono px-2 py-1 rounded border ${
-                    exportStatus.success
-                      ? "text-emerald-400 bg-emerald-500/10 border-emerald-500/20"
-                      : "text-rose-400 bg-rose-500/10 border-rose-500/20"
-                  }`}
-                >
-                  {exportStatus.message}
-                </span>
-              )}
-            </>
-          )}
-        </div>
-      </div>
-
-      <IndexNowBanner
-        repoId={repoId}
-        indexedAt={repoIndexedAt}
-        onIndexComplete={onIndexComplete}
-      />
-
-      {interruptedScan && activePR && onContinueScan && onStartFreshScan && (
-        <InterruptedScanBanner
-          scan={interruptedScan}
-          isScanning={isScanning}
-          onContinue={() => onContinueScan(activePR.id)}
-          onStartFresh={() => onStartFreshScan(activePR.id)}
-        />
-      )}
-
-      <ScanSettingsStrip settings={scanSettings} />
-
-      {scanResult && (
-        <div className="mt-3 p-2 bg-cyan-950/20 border border-cyan-800/30 rounded text-xs text-cyan-400 font-mono flex items-center justify-between">
-          <span>
-            ✓ Scan run completed: Discovered <strong className="text-emerald-400">{scanResult.count}</strong> alerts using{" "}
-            <strong>{scanResult.model}</strong>.
-          </span>
-          <button onClick={onDismissScanResult} className="hover:text-white p-0.5" aria-label="Dismiss scan result">
-            <X size={12} />
-          </button>
-        </div>
-      )}
-
-      {scanResult?.notice && (
-        <div className="mt-2 p-2 bg-amber-950/30 border border-amber-800/30 rounded text-xs text-amber-400 font-mono flex items-center gap-2">
-          <AlertTriangle size={14} className="shrink-0" />
-          <span>{scanResult.notice}</span>
-        </div>
-      )}
-
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-3.5 pt-3.5 border-t border-white/5 text-[11px] font-mono text-slate-500">
-        <div className="flex items-center gap-1.5">
-          <User size={12} className="text-slate-600" />
-          <span>
-            Author: <strong className="text-slate-300 font-semibold">{activePR.author}</strong>
-          </span>
-        </div>
-        <div className="flex items-center gap-1.5">
-          <Hash size={12} className="text-slate-600" />
-          <span>
-            Commit SHA: <strong className="text-slate-300 font-semibold">{activePR.commitHash}</strong>
-          </span>
-        </div>
-        <div className="flex items-center gap-1.5">
-          <Calendar size={12} className="text-slate-600" />
-          <span>
-            Detected: <strong className="text-slate-300 font-semibold">{new Date(activePR.createdAt).toLocaleDateString()}</strong>
-          </span>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function useScanSettingsSummary(): ScanSettingsSummary | null {
-  const [settings, setSettings] = useState<ScanSettingsSummary | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    const load = async () => {
-      try {
-        const [limitsRes, presetsRes] = await Promise.all([
-          fetch("/api/llm/review-limits"),
-          fetch("/api/llm/presets"),
-        ]);
-        if (!limitsRes.ok || !presetsRes.ok) return;
-        const [limitsData, presetsData] = await Promise.all([
-          limitsRes.json(),
-          presetsRes.json(),
-        ]);
-        const limits = limitsData.limits as ReviewLimits | undefined;
-        if (!limits) return;
-        const presets = Array.isArray(presetsData.presets) ? presetsData.presets : [];
-        const primaryId = presetsData.primaryChatPresetId ?? presetsData.activeChatPresetId;
-        const fallbackId = presetsData.fallbackChatPresetId;
-        const primary = presets.find((p: any) => p.id === primaryId);
-        const fallback = presets.find((p: any) => p.id === fallbackId);
-        if (!cancelled) {
-          setSettings({
-            maxIterations: typeof primary?.maxIterations === "number" ? primary.maxIterations : 16,
-            primaryModel: primary?.chatModel || null,
-            fallbackModel: fallback?.chatModel || null,
-            limits,
-          });
-        }
-      } catch (err) {
-        console.error("Failed loading scan settings summary:", err);
-      }
-    };
-    load();
-    window.addEventListener("dragnet:review-limits-changed", load);
-    window.addEventListener("dragnet:llm-presets-changed", load);
-    return () => {
-      cancelled = true;
-      window.removeEventListener("dragnet:review-limits-changed", load);
-      window.removeEventListener("dragnet:llm-presets-changed", load);
-    };
-  }, []);
-
-  return settings;
-}
-
-function ScanSettingsStrip({ settings }: { settings: ScanSettingsSummary | null }) {
-  if (!settings) return null;
-  const { limits } = settings;
-  const modelText = settings.primaryModel
-    ? settings.fallbackModel
-      ? `${settings.primaryModel} -> ${settings.fallbackModel}`
-      : settings.primaryModel
-    : "No chat model";
-
-  return (
-    <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-white/5 pt-3 text-[10px] font-mono text-slate-500">
-      <span className="uppercase tracking-wider text-slate-600">Next scan</span>
-      <ScanSettingPill label="Model" value={modelText} />
-      <ScanSettingPill label="Iterations" value={String(settings.maxIterations)} />
-      <ScanSettingPill label="Lines/chunk" value={`${Math.max(limits.chunkLineCap, limits.normalMaxLines).toLocaleString()} (raw: ${limits.chunkLineCap.toLocaleString()})`} />
-      <ScanSettingPill label="Normal" value={`${limits.normalMaxLines.toLocaleString()} lines / ${limits.normalMaxCodeFiles} files`} />
-      <ScanSettingPill label="Oversized" value={`${limits.oversizedLines.toLocaleString()} lines / ${limits.oversizedCodeFiles} files`} />
-      <ScanSettingPill label="File cap" value={limits.maxFilesPerReview > 0 ? String(limits.maxFilesPerReview) : "off"} />
-    </div>
-  );
-}
-
-function ScanSettingPill({ label, value }: { label: string; value: string }) {
-  return (
-    <span className="inline-flex min-h-7 max-w-full items-center gap-1.5 rounded-md border border-white/10 bg-slate-950/40 px-2 py-1">
-      <span className="uppercase text-slate-600">{label}</span>
-      <strong className="font-semibold text-slate-300 truncate">{value}</strong>
-    </span>
   );
 }
 
