@@ -19,4 +19,5 @@ The PR workspace is distinct from repository registration and database configura
 - **Explicit admit** — UI Run/Force, `/dragnet` prcheck, prepush always enqueue (or join in-flight). Independent of auto-rescan.
 - **AFK auto-rescan** — webhook/poller/hosted paths only; gated by auto-rescan policy.
 
-Glanceable seam chips on the PR view: clone · webhook · index · checks · rating.
+Glanceable header chips on the PR view: status · size · webhook · cloned · indexed · rating · merge.
+Internal pipeline seams (clone · webhook · index · checks · rating) still feed those chips; checks/reliability detail lives in the merge tooltip, not a second badge row.
