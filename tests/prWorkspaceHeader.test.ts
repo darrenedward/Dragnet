@@ -160,6 +160,42 @@ describe("buildPrWorkspaceHeaderModel", () => {
     expect(model.chips.filter((c) => c.id === "merge")).toHaveLength(1);
     expect(model.chips.map((c) => c.id)).toEqual([...LAYOUT_C_ORDER]);
   });
+
+  it("no run status → no_run merge (not false merge-ready from bare rating)", () => {
+    const model = buildPrWorkspaceHeaderModel({
+      title: "x",
+      sourceBranch: "main",
+      status: "Pending",
+      sizeTier: "small",
+      seam: healthySeam({
+        runStatus: undefined,
+        runOutcome: undefined,
+        rating: undefined,
+        reliability: undefined,
+      }),
+      // Stale PR-row score must not satisfy the gate without a finished run.
+      rating: 9,
+    });
+    expect(model.chips.find((c) => c.id === "merge")).toMatchObject({
+      label: "not ready",
+    });
+    expect(model.chips.find((c) => c.id === "merge")?.tone).not.toBe("green");
+    expect(model.chips.find((c) => c.id === "merge")?.tooltip.toLowerCase()).toMatch(
+      /no completed review|not merge-ready|no_run|not ready/,
+    );
+  });
+
+  it("explicit null run rating stays no score (does not inherit a prior score)", () => {
+    const model = buildPrWorkspaceHeaderModel({
+      title: "x",
+      sourceBranch: "main",
+      status: "Completed",
+      seam: healthySeam({ rating: null, runOutcome: "skipped" }),
+      rating: null,
+    });
+    expect(model.chips.find((c) => c.id === "rating")?.label).toBe("no score");
+    expect(model.chips.find((c) => c.id === "merge")?.label).toBe("not ready");
+  });
 });
 
 describe("isCloneFailedForActions", () => {

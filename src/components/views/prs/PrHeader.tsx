@@ -108,6 +108,9 @@ export default function PrHeader({
     );
   }
 
+  // Rating must come from the review run / seam only. Falling back to
+  // activePR.rating via ?? would revive a prior score when the current run
+  // has an explicit null rating (failed/skipped) and can false-green merge.
   const resolvedSeam: SeamChipInput = {
     ...(seamInput ?? {}),
     indexedAt: seamInput?.indexedAt ?? repoIndexedAt,
@@ -118,7 +121,7 @@ export default function PrHeader({
         : (seamInput?.runStatus ?? reviewRun?.status),
     runOutcome: seamInput?.runOutcome ?? reviewRun?.outcome,
     reliability: seamInput?.reliability ?? reviewRun?.reliability,
-    rating: seamInput?.rating ?? reviewRun?.rating ?? activePR.rating,
+    rating: seamInput?.rating ?? reviewRun?.rating ?? null,
     refused: seamInput?.refused ?? reviewRun?.refused,
     stale: seamInput?.stale ?? stale,
     blockedGate: seamInput?.blockedGate ?? blockedGate,

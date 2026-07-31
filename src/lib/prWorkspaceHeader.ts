@@ -65,14 +65,21 @@ export function buildPrWorkspaceHeaderModel(
   };
 
   const seams = buildSeamChips(seamInput);
-  const merge = isMergeReady({
-    status: seamInput.runStatus,
-    outcome: seamInput.runOutcome,
-    rating,
-    reliability: seamInput.reliability,
-    refused: seamInput.refused,
-    stale: seamInput.stale,
-  });
+  // isMergeReady treats omitted status as "finished" (legacy). Without a
+  // run lifecycle signal, pass null so the gate returns no_run instead of
+  // false-passing on a bare rating.
+  const hasRunStatus =
+    typeof seamInput.runStatus === "string" && seamInput.runStatus.length > 0;
+  const merge = hasRunStatus
+    ? isMergeReady({
+        status: seamInput.runStatus,
+        outcome: seamInput.runOutcome,
+        rating,
+        reliability: seamInput.reliability,
+        refused: seamInput.refused,
+        stale: seamInput.stale,
+      })
+    : isMergeReady(null);
 
   const chips = buildLayoutCHeaderChips({
     seams,
