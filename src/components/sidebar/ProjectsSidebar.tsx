@@ -2,12 +2,12 @@
 
 import { useMemo } from "react";
 import {
-  BarChart3,
   AlertCircle,
   CheckCircle2,
   Folder,
   KeyRound,
   Loader2,
+  Pencil,
   Plus,
   Settings,
   Users,
@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import type { PullRequest, Repository } from "../../lib/types";
 import { splitSidebarRepos, type SidebarUserRepo } from "../../lib/sidebarFilters";
+import { repoRowControls } from "../../lib/repoRowControls";
 import { PrList } from "./PrList";
 
 /**
@@ -334,22 +335,21 @@ function RepoRow({
   onRepoSettings?: () => void;
   onMintKey: () => void;
 }) {
+  const controls = repoRowControls(mode);
   const statusCfg = STATUS_CONFIG[reviewStatus] || STATUS_CONFIG.idle;
   const prCount = repo.prCount || 0;
   const isShared = mode === "shared";
-  const cloneBroken = repo.status === "error" || Boolean(repo.lastFetchError);
   const badgeTitle =
-    cloneBroken
-      ? repo.lastFetchError || "Clone or fetch failed — fix credentials / re-fetch"
-      : needsReviewCount > 0
-        ? `${needsReviewCount} of ${prCount} PRs need review (unscored or <8)`
-        : prCount > 0
-          ? `${prCount} PRs`
-          : "No PRs";
+    needsReviewCount > 0
+      ? `${needsReviewCount} of ${prCount} PRs need review (unscored or <8)`
+      : prCount > 0
+        ? `${prCount} PRs`
+        : "No PRs";
   // Prefer "N to review" when attention needed; otherwise plain PR count.
   const badgeCount = needsReviewCount > 0 ? needsReviewCount : prCount;
   const badgeLabel =
     needsReviewCount > 0 ? "to review" : statusCfg.label === "Complete" ? "ok" : "";
+  const settingsTestId = controls.settingsTestId(repo.id);
 
   return (
     <div
@@ -364,6 +364,7 @@ function RepoRow({
       }}
       data-testid={`sidebar-repo-${repo.id}`}
       data-repo-mode={mode}
+      title={repo.name}
       className={`relative w-full text-left px-3 py-2 rounded-lg transition-all border cursor-pointer ${
         isRepoSelected
           ? "bg-cyan-500/10 border-cyan-500/30 text-cyan-400 shadow-[inset_0_1px_5px_rgba(6,182,212,0.05)]"
@@ -376,17 +377,7 @@ function RepoRow({
           <span className="text-xs font-bold tracking-tight truncate font-mono" title={repo.name}>
             {repo.name}
           </span>
-          {cloneBroken && (
-            <span
-              className="shrink-0 text-red-400"
-              title={repo.lastFetchError || "Clone or fetch failed"}
-              data-testid={`sidebar-repo-clone-failed-${repo.id}`}
-              aria-label="Clone failed"
-            >
-              <XCircle size={12} />
-            </span>
-          )}
-          {repo.status === "cloning" && !cloneBroken && (
+          {repo.status === "cloning" && (
             <span
               className="shrink-0 text-amber-400"
               title="Clone in progress"
@@ -413,14 +404,10 @@ function RepoRow({
           )}
           {prCount > 0 ? (
             <span
-              className={`text-[9px] font-mono font-extrabold px-1.5 py-0.2 rounded-full leading-tight border flex items-center gap-1 ${
-                cloneBroken
-                  ? "bg-red-500/15 text-red-300 border-red-500/30"
-                  : statusCfg.badgeClass
-              }`}
+              className={`text-[9px] font-mono font-extrabold px-1.5 py-0.2 rounded-full leading-tight border flex items-center gap-1 ${statusCfg.badgeClass}`}
               title={badgeTitle}
             >
-              {cloneBroken ? <XCircle size={9} /> : statusCfg.icon}
+              {statusCfg.icon}
               <span>{badgeCount}</span>
               {badgeLabel && (
                 <span className="hidden 2xl:inline text-[7px] uppercase tracking-wider">{badgeLabel}</span>
@@ -431,48 +418,50 @@ function RepoRow({
               0
             </span>
           )}
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              onMintKey();
-            }}
-            aria-label={`Mint an API key for ${repo.name}`}
-            title="Mint an API key for this repo"
-            className="text-slate-500 hover:text-cyan-400 transition-all cursor-pointer"
-            data-testid={`sidebar-key-button-${repo.id}`}
-          >
-            <KeyRound size={12} />
-          </button>
-          {!isShared && (
-            <>
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onRepoSettings?.();
-                }}
-                aria-label={`Repo settings & index stats for ${repo.name}`}
-                title="Repo settings & index stats"
-                className="text-slate-500 hover:text-cyan-400 transition-all cursor-pointer"
-                data-testid={`sidebar-settings-button-${repo.id}`}
-              >
-                <BarChart3 size={12} />
-              </button>
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onEdit?.();
-                }}
-                aria-label={`Edit connection details for ${repo.name}`}
-                title="Edit connection details"
-                className="text-slate-500 hover:text-cyan-400 transition-all cursor-pointer"
-                data-testid={`sidebar-edit-button-${repo.id}`}
-              >
-                <Settings size={12} />
-              </button>
-            </>
+          {controls.showMintKey && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onMintKey();
+              }}
+              aria-label={`Mint an API key for ${repo.name}`}
+              title="Mint an API key for this repo"
+              className="text-slate-500 hover:text-cyan-400 transition-all cursor-pointer"
+              data-testid={`sidebar-key-button-${repo.id}`}
+            >
+              <KeyRound size={12} />
+            </button>
+          )}
+          {controls.showSettings && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onRepoSettings?.();
+              }}
+              aria-label={`Repo settings for ${repo.name}`}
+              title="Repo settings & index stats"
+              className="text-slate-500 hover:text-cyan-400 transition-all cursor-pointer"
+              data-testid={settingsTestId ?? undefined}
+            >
+              <Settings size={12} />
+            </button>
+          )}
+          {controls.showEdit && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onEdit?.();
+              }}
+              aria-label={`Edit connection details for ${repo.name}`}
+              title="Edit connection details"
+              className="text-slate-500 hover:text-cyan-400 transition-all cursor-pointer"
+              data-testid={`sidebar-edit-button-${repo.id}`}
+            >
+              <Pencil size={12} />
+            </button>
           )}
         </div>
       </div>
