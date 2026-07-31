@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { isMergeReady } from "../src/lib/mergeReady";
 import {
   buildPrWorkspaceHeaderModel,
   isCloneFailedForActions,
@@ -208,4 +209,79 @@ describe("isCloneFailedForActions", () => {
       isCloneFailedForActions(healthySeam({ repoStatus: "error" })),
     ).toBe(true);
   });
+});
+
+describe("header merge chip ↔ shared isMergeReady (findings parity)", () => {
+  const cases: Array<{
+    name: string;
+    seam: SeamChipInput;
+    rating: number | null;
+    expectReady: boolean;
+  }> = [
+    {
+      name: "rating 9 completed",
+      seam: healthySeam({ rating: 9 }),
+      rating: 9,
+      expectReady: true,
+    },
+    {
+      name: "rating 7 completed",
+      seam: healthySeam({ rating: 7 }),
+      rating: 7,
+      expectReady: false,
+    },
+    {
+      name: "null rating",
+      seam: healthySeam({ rating: null }),
+      rating: null,
+      expectReady: false,
+    },
+    {
+      name: "skipped outcome",
+      seam: healthySeam({ runOutcome: "skipped", rating: 10 }),
+      rating: 10,
+      expectReady: false,
+    },
+    {
+      name: "stale run",
+      seam: healthySeam({ rating: 9, stale: true }),
+      rating: 9,
+      expectReady: false,
+    },
+    {
+      name: "refused",
+      seam: healthySeam({ rating: 9, refused: true }),
+      rating: 9,
+      expectReady: false,
+    },
+  ];
+
+  for (const c of cases) {
+    it(`${c.name}: merge chip matches isMergeReady`, () => {
+      const gate = isMergeReady({
+        status: c.seam.runStatus,
+        outcome: c.seam.runOutcome,
+        rating: c.rating,
+        reliability: c.seam.reliability,
+        refused: c.seam.refused,
+        stale: c.seam.stale,
+      });
+      expect(gate.mergeReady).toBe(c.expectReady);
+
+      const model = buildPrWorkspaceHeaderModel({
+        title: "parity",
+        sourceBranch: "ticket-112-parity",
+        status: "Completed",
+        seam: c.seam,
+        rating: c.rating,
+      });
+      const merge = model.chips.find((ch) => ch.id === "merge");
+      expect(merge?.label).toBe(c.expectReady ? "merge ready" : "not ready");
+      if (c.expectReady) {
+        expect(merge?.tone).toBe("green");
+      } else {
+        expect(merge?.tone).not.toBe("green");
+      }
+    });
+  }
 });
