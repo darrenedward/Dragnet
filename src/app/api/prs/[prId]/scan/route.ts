@@ -40,6 +40,12 @@ import {
   prFileContentMap,
   type ReviewTree,
 } from "@/src/lib/reviewTree";
+import {
+  ensureTipOverlay,
+  formatTipOverlayLog,
+  isTipOverlayFresh,
+  type TipOverlay,
+} from "@/src/lib/tipOverlay";
 
 export async function POST(req: Request, { params }: { params: Promise<{ prId: string }> }) {
   const queueWorkerToken = process.env.DRAGNET_MASTER_KEY;
@@ -204,21 +210,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
     // Refresh PR files BEFORE cache check — diffHash needs the files
     // whether we hit cache or run the scan. Sync failure is fail-closed
     // (DIFF_UNAVAILABLE / CLONE_FAILED), never empty-diff success.
-    // refreshPrFiles diffs against the PR target branch tip (not always
-    // the repo default base) and pins the file list to head/base SHAs.
+    // Clone sync also happens here (remote-volume), so commit identity
+    // resolve runs after this when objects are available.
     const repoPath = repo.path;
     const baseBranch = pr.targetBranch || repo.baseBranch || "main";
     let files: any[] = [];
-    let refreshIdentity: { headSha: string; baseSha: string } | null = null;
     if ((repo.path || repo.cloneUrl) && pr.sourceBranch) {
       console.log(`[scan] route: refreshing PR files from git`);
       try {
-        files = await refreshPrFiles(repo, pr.sourceBranch, prId, {
-          failOnSyncError: true,
-          onIdentity: (id) => {
-            refreshIdentity = id;
-          },
-        });
+        files = await refreshPrFiles(repo, pr.sourceBranch, prId, { failOnSyncError: true });
       } catch (syncErr: unknown) {
         const fail = diffUnavailableResult(syncErr, pr.repoId);
         console.log(`[scan] route: diff gate blocked gate=${fail.gate} message=${fail.message}`);
@@ -250,22 +250,18 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
       console.log(`[scan] route: no repoPath or sourceBranch - skipping file refresh`);
     }
 
-    // Pin commit identity (head + base) consistent with the SHAs used for
-    // the file list / diffs. Prefer identity from refresh when present.
-    let tipIdentity = {
-      headSha: refreshIdentity?.headSha || pr.commitHash,
-      baseSha: refreshIdentity?.baseSha || "",
-    };
+    // Pin commit identity (head + base) after clone sync, before LLM / tip reads.
+    // Tip overlay is built next so graph tools match head (not volume-on-main).
+    let tipIdentity = { headSha: pr.commitHash, baseSha: "" };
     let reviewTree: ReviewTree | null = null;
+    let tipOverlay: TipOverlay | null = null;
     if (repo.path || repo.cloneUrl) {
       try {
-        if (!tipIdentity.baseSha || !tipIdentity.headSha) {
-          tipIdentity = await resolveCommitIdentity(repo, {
-            commitHash: pr.commitHash,
-            sourceBranch: pr.sourceBranch,
-            targetBranch: pr.targetBranch || repo.baseBranch || "main",
-          });
-        }
+        tipIdentity = await resolveCommitIdentity(repo, {
+          commitHash: pr.commitHash,
+          sourceBranch: pr.sourceBranch,
+          targetBranch: pr.targetBranch || repo.baseBranch || "main",
+        });
         if (tipIdentity.headSha && tipIdentity.headSha !== pr.commitHash) {
           await prisma.pullRequest.update({
             where: { id: prId },
@@ -283,6 +279,42 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
         const idLog = formatTipIdentityLog(tipIdentity, reviewTree.readSource);
         void logReview(prId, `> ${idLog}`, "info");
         console.log(`[scan] route: ${idLog}`);
+
+        // MVP A tip overlay: re-parse changed files (+ import neighbors) at head
+        // before searchCodebase / getCallers / findSimilar run.
+        const changedPaths = files
+          .map((f: { filename?: string }) => f.filename)
+          .filter((p: unknown): p is string => typeof p === "string" && p.length > 0);
+        try {
+          // Base-index symbols so tip CALLS edges resolve to existing callees
+          // outside the overlay neighborhood (non-relative imports, 2+ hops).
+          const baseSymbols = await prisma.symbol.findMany({
+            where: { repoId: pr.repoId },
+            select: { id: true, filePath: true, name: true },
+          });
+          tipOverlay = await ensureTipOverlay({
+            repoId: pr.repoId,
+            headSha: tipIdentity.headSha,
+            changedFiles: changedPaths,
+            readFile: (p) => reviewTree!.readFile(p),
+            baseSymbols,
+          });
+          if (!isTipOverlayFresh(tipOverlay, tipIdentity.headSha)) {
+            console.warn(
+              `[scan] route: tip overlay freshness mismatch head=${tipIdentity.headSha.slice(0, 7)}`,
+            );
+            tipOverlay = null;
+          } else {
+            const oLog = formatTipOverlayLog(tipOverlay);
+            void logReview(prId, `> ${oLog}`, "info");
+            console.log(`[scan] route: ${oLog}`);
+          }
+        } catch (overlayErr: unknown) {
+          const msg = overlayErr instanceof Error ? overlayErr.message : String(overlayErr);
+          console.warn(`[scan] route: tip overlay failed: ${msg}`);
+          void logReview(prId, `> Tip overlay unavailable: ${msg}`, "warn");
+          tipOverlay = null;
+        }
       } catch (idErr: unknown) {
         const msg = idErr instanceof Error ? idErr.message : String(idErr);
         console.warn(`[scan] route: tip identity failed: ${msg}`);
@@ -293,6 +325,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
           baseSha: tipIdentity.baseSha || "",
         };
         reviewTree = null;
+        tipOverlay = null;
       }
     }
     const sizeProfile = computePrSizeProfile(
@@ -556,6 +589,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
           signal: scanSignal,
           checkpointMetadata,
           ...(reviewTree ? { reviewTree } : {}),
+          ...(tipOverlay ? { tipOverlay } : {}),
           ...(resumeSeed ? { initialMessages: resumeSeed.messages, startLoopCount: resumeSeed.loopCount } : {}),
         })
       : await runLargePrReview({
@@ -567,6 +601,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
           signal: scanSignal,
           checkpointMetadata,
           ...(reviewTree ? { reviewTree } : {}),
+          ...(tipOverlay ? { tipOverlay } : {}),
         });
     console.log(`[scan] route: runPrScan complete - rating=${result.rating}, findings=${result.findings?.length}, model=${result.usedModel}, interrupted=${result.interrupted ?? false}`);
 

@@ -4,6 +4,7 @@ import { readLimits } from "@/src/lib/prSizeConfig";
 import { runPrScan, type ScanResult, type PrManifestEntry, type RunPrScanOptions } from "@/src/services/reviewService";
 import type { DeterministicFinding } from "@/src/services/deterministicChecks";
 import type { ReviewTree } from "@/src/lib/reviewTree";
+import type { TipOverlay } from "@/src/lib/tipOverlay";
 import { aggregateResults } from "./aggregator";
 import { chunkDiff } from "./chunker";
 import { assertTier, buildDiffManifest } from "./manifest";
@@ -83,6 +84,8 @@ export interface RunLargePrReviewOptions {
   };
   /** Tip-bound review tree shared across chunks for readFile. */
   reviewTree?: ReviewTree;
+  /** Tip overlay index shared across chunks for search/callers/similar. */
+  tipOverlay?: TipOverlay;
 }
 
 export async function runLargePrReview({
@@ -95,6 +98,7 @@ export async function runLargePrReview({
   signal,
   checkpointMetadata,
   reviewTree,
+  tipOverlay,
 }: RunLargePrReviewOptions): Promise<LargePrReviewResult> {
   const run = await prisma.reviewRun.findUnique({
     where: { id: reviewRunId },
@@ -311,6 +315,7 @@ export async function runLargePrReview({
       checkpointMetadata,
       precomputedFindings: globalChecks.findings,
       reviewTree,
+      tipOverlay,
     });
     if (result.ok === true) {
       // Phase 4: if a chunk returned the typed interrupted variant, stop
@@ -563,6 +568,7 @@ async function runChunkWithRetry({
   checkpointMetadata,
   precomputedFindings,
   reviewTree,
+  tipOverlay,
 }: {
   prId: string;
   reviewRunId: string;
@@ -575,6 +581,7 @@ async function runChunkWithRetry({
   checkpointMetadata?: { commitHash: string; diffHash: string; reviewConfigHash: string };
   precomputedFindings?: DeterministicFinding[];
   reviewTree?: ReviewTree;
+  tipOverlay?: TipOverlay;
 }): Promise<{ ok: true; scan: ScanResult } | { ok: false; error: Error }> {
   let lastError: Error | null = null;
   for (let attempt = 1; attempt <= 2; attempt++) {
@@ -584,6 +591,7 @@ async function runChunkWithRetry({
         checkpointMetadata,
         precomputedFindings,
         reviewTree,
+        tipOverlay,
       });
       return { ok: true, scan };
     } catch (err: any) {
