@@ -33,6 +33,13 @@ import { admitScanJob } from "@/src/services/scanQueue";
 import { completePrReviewIfCurrent } from "@/src/lib/prRevisionStatus";
 import { retryFailedChunks } from "@/src/services/largePrReview";
 import { getScanConfigurationIssues } from "@/src/lib/scanPreflight";
+import {
+  resolveCommitIdentity,
+  ensureReviewTree,
+  formatTipIdentityLog,
+  prFileContentMap,
+  type ReviewTree,
+} from "@/src/lib/reviewTree";
 
 export async function POST(req: Request, { params }: { params: Promise<{ prId: string }> }) {
   const queueWorkerToken = process.env.DRAGNET_MASTER_KEY;
@@ -137,7 +144,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
     if (embedChain.length === 0) {
       return NextResponse.json({ error: "No embedding model configured. Please go to LLM Settings and configure an embedding provider (e.g., mxbai-embed-large via local Ollama) to enable semantic codebase context." }, { status: 400 });
     }
-    const pr = await prisma.pullRequest.findUnique({
+    let pr = await prisma.pullRequest.findUnique({
       where: { id: prId },
       select: { repoId: true, sourceBranch: true, targetBranch: true, commitHash: true },
     });
@@ -194,6 +201,35 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
       console.log(`[scan] route: prelude OK (indexedAt=${repo.indexedAt})`);
     }
 
+    // Pin commit identity (head + base) before any LLM / tip reads.
+    let tipIdentity = { headSha: pr.commitHash, baseSha: "" };
+    let reviewTree: ReviewTree | null = null;
+    if (repo.path || repo.cloneUrl) {
+      try {
+        tipIdentity = await resolveCommitIdentity(repo, {
+          commitHash: pr.commitHash,
+          sourceBranch: pr.sourceBranch,
+          targetBranch: pr.targetBranch || repo.baseBranch || "main",
+        });
+        if (tipIdentity.headSha && tipIdentity.headSha !== pr.commitHash) {
+          await prisma.pullRequest.update({
+            where: { id: prId },
+            data: { commitHash: tipIdentity.headSha },
+          });
+          pr = { ...pr, commitHash: tipIdentity.headSha };
+          console.log(`[scan] route: persisted headSha=${tipIdentity.headSha.slice(0, 12)}`);
+        }
+      } catch (idErr: unknown) {
+        const msg = idErr instanceof Error ? idErr.message : String(idErr);
+        console.warn(`[scan] route: commit identity resolve failed: ${msg}`);
+        // Fall through with stored pr.commitHash; ensureReviewTree may still bind.
+        tipIdentity = {
+          headSha: pr.commitHash,
+          baseSha: tipIdentity.baseSha || "",
+        };
+      }
+    }
+
     // Refresh PR files BEFORE cache check — diffHash needs the files
     // whether we hit cache or run the scan. Sync failure is fail-closed
     // (DIFF_UNAVAILABLE / CLONE_FAILED), never empty-diff success.
@@ -233,6 +269,32 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
       }
     } else {
       console.log(`[scan] route: no repoPath or sourceBranch - skipping file refresh`);
+    }
+
+    // Ensure tip-bound review tree for agent tools (readFile).
+    if (tipIdentity.headSha && (repo.path || repo.cloneUrl)) {
+      try {
+        if (!tipIdentity.baseSha) {
+          tipIdentity = await resolveCommitIdentity(repo, {
+            commitHash: tipIdentity.headSha,
+            sourceBranch: pr.sourceBranch,
+            targetBranch: pr.targetBranch || repo.baseBranch || "main",
+          });
+        }
+        reviewTree = await ensureReviewTree({
+          repo,
+          headSha: tipIdentity.headSha,
+          baseSha: tipIdentity.baseSha,
+          prFileContents: prFileContentMap(files),
+        });
+        const idLog = formatTipIdentityLog(tipIdentity, reviewTree.readSource);
+        void logReview(prId, `> ${idLog}`, "info");
+        console.log(`[scan] route: ${idLog}`);
+      } catch (treeErr: unknown) {
+        const msg = treeErr instanceof Error ? treeErr.message : String(treeErr);
+        console.warn(`[scan] route: ensureReviewTree failed: ${msg}`);
+        void logReview(prId, `> Tip identity unavailable: ${msg}`, "warn");
+      }
     }
     const sizeProfile = computePrSizeProfile(
       files,
@@ -454,10 +516,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
     // Phase 7 resume — re-use the prior run id instead of creating a new
     // row when the user chose Continue. This keeps the run's telemetry,
     // checkpoints, and reviewLogs coherent across the interruption.
+    const runHeadSha = tipIdentity.headSha || pr.commitHash;
+    const runBaseSha = tipIdentity.baseSha ? tipIdentity.baseSha : null;
     reviewRunId = resumeRunId ?? await createReviewRun({
       prId,
       repoId: pr.repoId,
-      commitHash: pr.commitHash,
+      commitHash: runHeadSha,
+      baseCommitHash: runBaseSha,
       diffHash: currentDiffHash,
       reviewConfigHash: currentConfigHash,
       model: chatChain[0]?.model ?? null,
@@ -483,7 +548,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
     // Phase 5 resume — pass the hash trio so every iteration checkpoint
     // carries the gates resume will validate against.
     const checkpointMetadata = {
-      commitHash: pr.commitHash,
+      commitHash: runHeadSha,
       diffHash: currentDiffHash,
       reviewConfigHash: currentConfigHash,
     };
@@ -491,6 +556,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
       ? await runPrScan(prId, files, reviewRunId, undefined, undefined, {
           signal: scanSignal,
           checkpointMetadata,
+          ...(reviewTree ? { reviewTree } : {}),
           ...(resumeSeed ? { initialMessages: resumeSeed.messages, startLoopCount: resumeSeed.loopCount } : {}),
         })
       : await runLargePrReview({
@@ -501,6 +567,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
           warning: "message" in tier ? tier.message : null,
           signal: scanSignal,
           checkpointMetadata,
+          ...(reviewTree ? { reviewTree } : {}),
         });
     console.log(`[scan] route: runPrScan complete - rating=${result.rating}, findings=${result.findings?.length}, model=${result.usedModel}, interrupted=${result.interrupted ?? false}`);
 

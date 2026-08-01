@@ -13,6 +13,7 @@ import { rerateWithSurvivors } from "@/src/services/findingVerifier/skepticRerat
 import { reasoningOptions, supportsJsonResponseFormat } from "@/src/lib/llmResponseFormat";
 import { completeReviewRun, setReviewRunTokens, setReviewRunLastCheckpointAt, setReviewChunkLastCheckpointAt } from "@/src/lib/reviewFreshness";
 import { safeReadFileSync, resolveSafePath } from "@/src/lib/pathSafety";
+import type { ReviewTree } from "@/src/lib/reviewTree";
 import {
   runDeterministicChecks,
   runContainerizedChecks,
@@ -873,6 +874,12 @@ export interface RunPrScanOptions {
    * running tsc/eslint/container-tests once per chunk.
    */
   precomputedFindings?: DeterministicFinding[];
+  /**
+   * Tip-bound review tree from ensureReviewTree. When set, the agent
+   * readFile tool reads tip content via this seam instead of ambient
+   * repo.path / localPath / fake container host paths.
+   */
+  reviewTree?: ReviewTree;
 }
 
 /**
@@ -1532,35 +1539,56 @@ ${diffPayload}${deterministicPayload}`;
                       resultSummary = `${scored.length} results`;
                     }
                   } else if (fnName === "readFile") {
-                    if (repo) {
-                      const repoPath = repo.localPath || repo.path;
-                      if (repoPath) {
-                        if (typeof fnArgs.filePath !== "string" || fnArgs.filePath.trim() === "") {
-                          toolResult = "Error: readFile requires a non-empty 'filePath' string argument (repo-relative). Call readFile again with {\"filePath\": \"src/path/to/file.ts\"}.";
-                          resultSummary = "blocked: missing filePath";
+                    if (typeof fnArgs.filePath !== "string" || fnArgs.filePath.trim() === "") {
+                      toolResult = "Error: readFile requires a non-empty 'filePath' string argument (repo-relative). Call readFile again with {\"filePath\": \"src/path/to/file.ts\"}.";
+                      resultSummary = "blocked: missing filePath";
+                    } else {
+                      // Prefer tip-bound review tree (ensureReviewTree seam).
+                      // Ambient repo.path / localPath / /workspace must not
+                      // supply tip content without that seam.
+                      let content: string | null = null;
+                      let pathEscaped = false;
+                      let readBlocked: string | null = null;
+                      const tree = options?.reviewTree;
+                      if (tree) {
+                        content = await tree.readFile(fnArgs.filePath);
+                      } else if (repo) {
+                        // Legacy fallback only when scan did not pin a tree
+                        // (tests / older entry points). Still path-sandboxed.
+                        const repoPath = repo.localPath || repo.path;
+                        if (repoPath && repoPath !== "/workspace") {
+                          content = safeReadFileSync(repoPath, fnArgs.filePath);
+                          pathEscaped = content === null && resolveSafePath(repoPath, fnArgs.filePath) === null;
+                        } else if (repoPath === "/workspace") {
+                          readBlocked = "Error: Container path /workspace is not a host tip tree. Scan must pin ensureReviewTree before readFile.";
+                          resultSummary = "blocked: no review tree";
                         } else {
-                          const content = safeReadFileSync(repoPath, fnArgs.filePath);
-                          if (content === null) {
-                            const escaped = resolveSafePath(repoPath, fnArgs.filePath) === null;
-                            toolResult = escaped
-                              ? "Error: Path traversal detected. Access to paths outside the repository is strictly forbidden."
-                              : "Error: File not found.";
-                          } else {
-                            readfileCharsThisScan += content.length;
-                            if (readfileCharsThisScan > READFILE_BUDGET_CHARS) {
-                              toolResult = `Error: Cumulative readFile budget (${READFILE_BUDGET_CHARS} chars) exceeded for this review. Use searchCodebase or grep for further exploration.`;
-                              resultSummary = `blocked: budget exceeded`;
-                            } else {
-                              const addLineNumbers = (text: string) => text.split("\n").map((line, i) => `${i + 1}: ${line}`).join("\n");
-                              const lines = content.split("\n");
-                              const truncLines = lines.slice(0, 1000);
-                              toolResult = addLineNumbers(truncLines.join("\n")) + (lines.length > 1000 ? "\n...[TRUNCATED]" : "");
-                              resultSummary = `Read ${truncLines.length} lines from ${fnArgs.filePath}`;
-                            }
-                          }
+                          readBlocked = "Error: Repository path not configured.";
+                          resultSummary = "blocked: no path";
                         }
                       } else {
-                        toolResult = "Error: Repository path not configured.";
+                        readBlocked = "Error: Repository path not configured.";
+                        resultSummary = "blocked: no repo";
+                      }
+                      if (readBlocked) {
+                        toolResult = readBlocked;
+                      } else if (content === null) {
+                        toolResult = pathEscaped
+                          ? "Error: Path traversal detected. Access to paths outside the repository is strictly forbidden."
+                          : "Error: File not found.";
+                        resultSummary = pathEscaped ? "blocked: traversal" : "not found";
+                      } else {
+                        readfileCharsThisScan += content.length;
+                        if (readfileCharsThisScan > READFILE_BUDGET_CHARS) {
+                          toolResult = `Error: Cumulative readFile budget (${READFILE_BUDGET_CHARS} chars) exceeded for this review. Use searchCodebase or grep for further exploration.`;
+                          resultSummary = `blocked: budget exceeded`;
+                        } else {
+                          const addLineNumbers = (text: string) => text.split("\n").map((line, i) => `${i + 1}: ${line}`).join("\n");
+                          const lines = content.split("\n");
+                          const truncLines = lines.slice(0, 1000);
+                          toolResult = addLineNumbers(truncLines.join("\n")) + (lines.length > 1000 ? "\n...[TRUNCATED]" : "");
+                          resultSummary = `Read ${truncLines.length} lines from ${fnArgs.filePath}`;
+                        }
                       }
                     }
                   } else {
