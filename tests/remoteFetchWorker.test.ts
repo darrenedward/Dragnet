@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { ContainerOrchestrator } from "../src/lib/containerOrchestrator";
 
 const mockExecFileSync = vi.fn();
+const mockExistsSync = vi.fn((p: string) => p === "/tmp/legacy-repo");
 const mockFindUnique = vi.fn();
 const mockUpdate = vi.fn();
 const mockCreateVolume = vi.fn();
@@ -15,6 +16,14 @@ vi.mock("node:child_process", async () => {
   return {
     ...actual,
     execFileSync: (...args: Parameters<typeof actual.execFileSync>) => mockExecFileSync(...args),
+  };
+});
+
+vi.mock("node:fs", async () => {
+  const actual = await vi.importActual("node:fs") as typeof import("node:fs");
+  return {
+    ...actual,
+    existsSync: (p: Parameters<typeof actual.existsSync>[0]) => mockExistsSync(String(p)),
   };
 });
 
@@ -72,7 +81,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   if (!process.env.DRAGNET_MASTER_KEY) {
     process.env.DRAGNET_MASTER_KEY = "QQe7IAjrJKIUR/yBCcjdW91OJXQt2zVQsm9NvZqXjzc=";
-  }
+  
+    mockExistsSync.mockImplementation((p: string) => p === "/tmp/legacy-repo");}
   mockRunRunner.mockResolvedValue({ exitCode: 0, stdout: "", stderr: "", timedOut: false });
   mockCopyVolumeToHost.mockResolvedValue(undefined);
   mockUpdate.mockResolvedValue({});
@@ -269,6 +279,32 @@ describe("enqueue", () => {
             lastFetchError: null,
             status: "idle",
           }),
+        }),
+      );
+    });
+  });
+
+
+  describe("phantom host localPath", () => {
+    it("uses volume mode when localPath directory is missing", async () => {
+      mockExistsSync.mockReturnValue(false);
+      mockRunRunner.mockResolvedValue({ exitCode: 0, stdout: "", stderr: "", timedOut: false });
+      mockCopyVolumeToHost.mockResolvedValue(undefined);
+      mockIndexFolder.mockResolvedValue({ fileParsedCount: 0, symbolsExtractedCount: 0, edgesResolvedCount: 0 });
+      const { enqueue } = await import("../src/services/remoteFetchWorker");
+      mockFindUnique.mockResolvedValue(
+        makeRepo({ localPath: "/app/repos/thaimassage-missing" }),
+      );
+
+      const result = await enqueue("test-repo-1");
+
+      expect(result).toBe("/workspace");
+      expect(mockCreateVolume).toHaveBeenCalled();
+      expect(mockRunRunner).toHaveBeenCalled();
+      expect(mockExecFileSync).not.toHaveBeenCalled();
+      expect(mockUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ localPath: "/workspace" }),
         }),
       );
     });

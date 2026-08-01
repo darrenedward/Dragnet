@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { prisma } from "../lib/prisma";
@@ -16,6 +16,18 @@ const GIT_IMAGE = process.env.DRAGNET_GIT_IMAGE ?? "alpine/git";
 function volumeName(repoId: string): string {
   return `dragnet-repo-${repoId}`;
 }
+
+/** Host-path localPath only if the directory actually exists on this host. */
+function usableHostLocalPath(localPath: string | null | undefined): string | null {
+  if (!localPath || localPath === "/workspace") return null;
+  try {
+    if (existsSync(localPath)) return localPath;
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
 
 function interpolatePat(cloneUrl: string, pat?: string): string {
   if (!pat) return cloneUrl;
@@ -91,7 +103,10 @@ export async function enqueue(repoId: string): Promise<string | null> {
     }
 
     const effectivePat = installationToken || pat;
-    const isContainerMode = !repo.localPath || repo.localPath === "/workspace";
+    // Stale rows may point localPath at /app/repos/<id> from a prior host layout
+    // that no longer exists after redeploy. Fall back to Docker volume mode.
+    const hostLocalPath = usableHostLocalPath(repo.localPath);
+    const isContainerMode = hostLocalPath == null;
 
     let localPath: string;
 
@@ -145,7 +160,8 @@ export async function enqueue(repoId: string): Promise<string | null> {
 
       localPath = "/workspace";
 
-      if (!repo.localPath) {
+      // Normalize phantom host paths so the next fetch stays in volume mode.
+      if (repo.localPath !== localPath) {
         await prisma.repository.update({
           where: { id: repoId },
           data: { localPath },
@@ -166,13 +182,13 @@ export async function enqueue(repoId: string): Promise<string | null> {
         ? buildSshEnv(deployKey, `fetch-${repoId}`)
         : { env: {} as Record<string, string>, [Symbol.dispose]() {} };
 
-      execFileSync("git", ["-C", repo.localPath!, "fetch", "origin", "--prune", "+refs/heads/*:refs/heads/*"], {
+      execFileSync("git", ["-C", hostLocalPath!, "fetch", "origin", "--prune", "+refs/heads/*:refs/heads/*"], {
         env: { ...process.env, ...ssh.env },
         stdio: "pipe",
         timeout: 120_000,
       });
 
-      localPath = repo.localPath;
+      localPath = hostLocalPath!;
 
       await IndexingService.indexFolder(repoId, localPath);
     }

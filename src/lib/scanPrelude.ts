@@ -203,12 +203,21 @@ export async function runScanPrelude(
  * CLONE_FAILED so operators never treat clone-failed as an empty success.
  * Local-path repos and already-ready remotes return null (continue prelude).
  */
+/** Stale host localPath after container redeploy — recoverable via volume fetch. */
+export function isRecoverableMissingClonePathError(detail: string): boolean {
+  return /No such file or directory|cannot change to/i.test(detail);
+}
+
 export function cloneReadyResult(repo: ScanPreludeRepo): ScanPreludeFail | null {
   const isRemote = Boolean(repo.cloneUrl) && repo.provider !== "local";
   if (!isRemote) return null;
 
   if (repo.status === "error" || repo.lastFetchError) {
     const detail = repo.lastFetchError?.trim() || "clone or fetch failed";
+    // Do not hard-block forever on missing /app/repos/... paths; volume mode can heal.
+    if (repo.cloneUrl && isRecoverableMissingClonePathError(detail)) {
+      return null;
+    }
     return {
       ok: false,
       gate: "CLONE_FAILED",

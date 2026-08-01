@@ -3,6 +3,7 @@ import {
   runScanPrelude,
   diffUnavailableResult,
   cloneReadyResult,
+  isRecoverableMissingClonePathError,
   preludeFailToJson,
   blocksExplicitAdmit,
   parseScanGate,
@@ -230,6 +231,24 @@ describe("cloneReadyResult", () => {
         lastFetchError: "boom",
       })?.gate,
     ).toBe("CLONE_FAILED");
+  });
+
+
+  it("does not hard-block recoverable missing host clone path", () => {
+    const detail =
+      "Command failed: git -C /app/repos/thaimassage-1 fetch\nfatal: cannot change to '/app/repos/thaimassage-1': No such file or directory\n";
+    expect(isRecoverableMissingClonePathError(detail)).toBe(true);
+    expect(
+      cloneReadyResult({
+        id: "thaimassage-1",
+        name: "Thai",
+        indexedAt: "2026-07-01T00:00:00.000Z",
+        lastCommitHash: "abc",
+        cloneUrl: "https://github.com/o/r.git",
+        status: "error",
+        lastFetchError: detail,
+      }),
+    ).toBeNull();
   });
 
   it("returns null when remote clone is ready", () => {
