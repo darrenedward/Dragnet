@@ -3,6 +3,7 @@ import { prisma } from "@/src/lib/prisma";
 import { readLimits } from "@/src/lib/prSizeConfig";
 import { runPrScan, type ScanResult, type PrManifestEntry, type RunPrScanOptions } from "@/src/services/reviewService";
 import type { DeterministicFinding } from "@/src/services/deterministicChecks";
+import type { ReviewTree } from "@/src/lib/reviewTree";
 import { aggregateResults } from "./aggregator";
 import { chunkDiff } from "./chunker";
 import { assertTier, buildDiffManifest } from "./manifest";
@@ -80,6 +81,8 @@ export interface RunLargePrReviewOptions {
     diffHash: string;
     reviewConfigHash: string;
   };
+  /** Tip-bound review tree shared across chunks for readFile. */
+  reviewTree?: ReviewTree;
 }
 
 export async function runLargePrReview({
@@ -91,6 +94,7 @@ export async function runLargePrReview({
   runner = runPrScan,
   signal,
   checkpointMetadata,
+  reviewTree,
 }: RunLargePrReviewOptions): Promise<LargePrReviewResult> {
   const run = await prisma.reviewRun.findUnique({
     where: { id: reviewRunId },
@@ -306,6 +310,7 @@ export async function runLargePrReview({
       signal,
       checkpointMetadata,
       precomputedFindings: globalChecks.findings,
+      reviewTree,
     });
     if (result.ok === true) {
       // Phase 4: if a chunk returned the typed interrupted variant, stop
@@ -557,6 +562,7 @@ async function runChunkWithRetry({
   signal,
   checkpointMetadata,
   precomputedFindings,
+  reviewTree,
 }: {
   prId: string;
   reviewRunId: string;
@@ -568,6 +574,7 @@ async function runChunkWithRetry({
   signal?: AbortSignal;
   checkpointMetadata?: { commitHash: string; diffHash: string; reviewConfigHash: string };
   precomputedFindings?: DeterministicFinding[];
+  reviewTree?: ReviewTree;
 }): Promise<{ ok: true; scan: ScanResult } | { ok: false; error: Error }> {
   let lastError: Error | null = null;
   for (let attempt = 1; attempt <= 2; attempt++) {
@@ -576,6 +583,7 @@ async function runChunkWithRetry({
         signal,
         checkpointMetadata,
         precomputedFindings,
+        reviewTree,
       });
       return { ok: true, scan };
     } catch (err: any) {
