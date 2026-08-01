@@ -105,6 +105,41 @@ describe("resolveCommitIdentity", () => {
     expect(id.baseSha).toBe(baseSha);
   });
 
+  it("trusts provider SHA when it does not verify — does not substitute branch tip", async () => {
+    const missingProvider = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const calls: string[][] = [];
+    const id = await resolveCommitIdentity(
+      { id: "r1", path: root, baseBranch: "main" },
+      {
+        commitHash: missingProvider,
+        sourceBranch: "feature/tip",
+        targetBranch: "main",
+      },
+      {
+        runGit: async (_repo, args) => {
+          calls.push(args);
+          // Provider head never verifies; branch tips would resolve if asked.
+          if (args[0] === "rev-parse" && String(args[2] ?? args[1] ?? "").includes(missingProvider)) {
+            return { stdout: "", stderr: "unknown revision", exitCode: 128 };
+          }
+          if (args[0] === "rev-parse" && String(args[2] ?? "").includes("feature/tip")) {
+            return { stdout: `${tipSha}\n`, stderr: "", exitCode: 0 };
+          }
+          if (args[0] === "rev-parse" && String(args[2] ?? "").includes("main")) {
+            return { stdout: `${baseSha}\n`, stderr: "", exitCode: 0 };
+          }
+          return { stdout: "", stderr: "unknown", exitCode: 128 };
+        },
+      },
+    );
+    expect(id.headSha).toBe(missingProvider);
+    expect(id.headSha).not.toBe(tipSha);
+    // Must not have asked for source-branch tip as a substitute head.
+    const joined = calls.map((a) => a.join(" ")).join("\n");
+    expect(joined).not.toMatch(/feature\/tip/);
+    expect(id.baseSha).toBe(baseSha);
+  });
+
   it("falls back to repo default base when target branch missing", async () => {
     const id = await resolveCommitIdentity(
       { id: "r1", path: root, baseBranch: "main" },

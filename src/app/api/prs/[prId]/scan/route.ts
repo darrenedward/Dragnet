@@ -201,38 +201,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
       console.log(`[scan] route: prelude OK (indexedAt=${repo.indexedAt})`);
     }
 
-    // Pin commit identity (head + base) before any LLM / tip reads.
-    let tipIdentity = { headSha: pr.commitHash, baseSha: "" };
-    let reviewTree: ReviewTree | null = null;
-    if (repo.path || repo.cloneUrl) {
-      try {
-        tipIdentity = await resolveCommitIdentity(repo, {
-          commitHash: pr.commitHash,
-          sourceBranch: pr.sourceBranch,
-          targetBranch: pr.targetBranch || repo.baseBranch || "main",
-        });
-        if (tipIdentity.headSha && tipIdentity.headSha !== pr.commitHash) {
-          await prisma.pullRequest.update({
-            where: { id: prId },
-            data: { commitHash: tipIdentity.headSha },
-          });
-          pr = { ...pr, commitHash: tipIdentity.headSha };
-          console.log(`[scan] route: persisted headSha=${tipIdentity.headSha.slice(0, 12)}`);
-        }
-      } catch (idErr: unknown) {
-        const msg = idErr instanceof Error ? idErr.message : String(idErr);
-        console.warn(`[scan] route: commit identity resolve failed: ${msg}`);
-        // Fall through with stored pr.commitHash; ensureReviewTree may still bind.
-        tipIdentity = {
-          headSha: pr.commitHash,
-          baseSha: tipIdentity.baseSha || "",
-        };
-      }
-    }
-
     // Refresh PR files BEFORE cache check — diffHash needs the files
     // whether we hit cache or run the scan. Sync failure is fail-closed
     // (DIFF_UNAVAILABLE / CLONE_FAILED), never empty-diff success.
+    // Clone sync also happens here (remote-volume), so commit identity
+    // resolve runs after this when objects are available.
     const repoPath = repo.path;
     const baseBranch = pr.targetBranch || repo.baseBranch || "main";
     let files: any[] = [];
@@ -271,15 +244,23 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
       console.log(`[scan] route: no repoPath or sourceBranch - skipping file refresh`);
     }
 
-    // Ensure tip-bound review tree for agent tools (readFile).
-    if (tipIdentity.headSha && (repo.path || repo.cloneUrl)) {
+    // Pin commit identity (head + base) after clone sync, before LLM / tip reads.
+    let tipIdentity = { headSha: pr.commitHash, baseSha: "" };
+    let reviewTree: ReviewTree | null = null;
+    if (repo.path || repo.cloneUrl) {
       try {
-        if (!tipIdentity.baseSha) {
-          tipIdentity = await resolveCommitIdentity(repo, {
-            commitHash: tipIdentity.headSha,
-            sourceBranch: pr.sourceBranch,
-            targetBranch: pr.targetBranch || repo.baseBranch || "main",
+        tipIdentity = await resolveCommitIdentity(repo, {
+          commitHash: pr.commitHash,
+          sourceBranch: pr.sourceBranch,
+          targetBranch: pr.targetBranch || repo.baseBranch || "main",
+        });
+        if (tipIdentity.headSha && tipIdentity.headSha !== pr.commitHash) {
+          await prisma.pullRequest.update({
+            where: { id: prId },
+            data: { commitHash: tipIdentity.headSha },
           });
+          pr = { ...pr, commitHash: tipIdentity.headSha };
+          console.log(`[scan] route: persisted headSha=${tipIdentity.headSha.slice(0, 12)}`);
         }
         reviewTree = await ensureReviewTree({
           repo,
@@ -290,10 +271,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
         const idLog = formatTipIdentityLog(tipIdentity, reviewTree.readSource);
         void logReview(prId, `> ${idLog}`, "info");
         console.log(`[scan] route: ${idLog}`);
-      } catch (treeErr: unknown) {
-        const msg = treeErr instanceof Error ? treeErr.message : String(treeErr);
-        console.warn(`[scan] route: ensureReviewTree failed: ${msg}`);
+      } catch (idErr: unknown) {
+        const msg = idErr instanceof Error ? idErr.message : String(idErr);
+        console.warn(`[scan] route: tip identity failed: ${msg}`);
         void logReview(prId, `> Tip identity unavailable: ${msg}`, "warn");
+        // Fall through with stored pr.commitHash; tools use legacy path if no tree.
+        tipIdentity = {
+          headSha: pr.commitHash,
+          baseSha: tipIdentity.baseSha || "",
+        };
+        reviewTree = null;
       }
     }
     const sizeProfile = computePrSizeProfile(

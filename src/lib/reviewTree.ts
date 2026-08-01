@@ -88,8 +88,10 @@ async function revParse(
 /**
  * Resolve the head (PR tip) and base SHAs used for this scan.
  *
- * headSha = provider head when it verifies in the clone, else rev-parse of
- * source branch.
+ * headSha = provider head when it is a SHA (verified in clone when possible,
+ * otherwise trusted as-is so a missing object never substitutes a different
+ * source-branch tip). When provider head is empty/non-SHA, rev-parse source
+ * branch.
  * baseSha = tip of PR target branch, else repo default base branch tip.
  */
 export async function resolveCommitIdentity(
@@ -103,14 +105,16 @@ export async function resolveCommitIdentity(
   const providerHead = (pr.commitHash || "").trim();
   if (providerHead && SHA_RE.test(providerHead)) {
     headSha = await revParse(repo, providerHead, runGit);
+    if (!headSha) {
+      // Trust provider SHA when it does not verify yet (shallow / not
+      // fetched). Do NOT fall through to source-branch tip — that can be a
+      // different commit and would pin the wrong head (and overwrite the
+      // provider SHA on the PR row).
+      headSha = providerHead;
+    }
   }
   if (!headSha && pr.sourceBranch) {
     headSha = await revParse(repo, pr.sourceBranch, runGit);
-  }
-  if (!headSha && providerHead && SHA_RE.test(providerHead)) {
-    // Trust provider SHA even if local clone cannot verify yet (shallow /
-    // not fetched). Downstream ensure/sync may deepen.
-    headSha = providerHead;
   }
   if (!headSha) {
     throw new Error(
