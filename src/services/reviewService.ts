@@ -1390,13 +1390,13 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
           ).join("\n")
         : "";
 
-      // 6. Run agentic review loop, trying fallback providers only when the
-      //    active provider fails at the API/transport layer. If the primary
-      //    model uses its full iteration budget without submitReview, that is
-      //    a model-behavior result, not a provider outage; do not spend a second
-      //    provider's budget as a continuation reviewer. Never fabricate
-      //    templated findings — three months of solarplanner "reviews" were
-      //    that template silently masking LLM failures.
+      // 6. Run agentic review loop across the chat provider chain.
+      //    Transport failures fall through to the next provider when retryable
+      //    (unchanged). Quality failures (no usable submitReview after the
+      //    agentic contract) also try the secondary/fallback when configured
+      //    (#139). Secondary success is authoritative and logged as
+      //    fallback-after-quality-failure. If every provider fails, hard-fail
+      //    the scan — never fabricate templated findings.
       // Phase 3 circuit breaker — health state lives under the scanned
       // repo's `.dragnet/` dir, never the server's cwd. `localPath` is the
       // server-managed clone; `path` is the user-configured repo root.
@@ -1406,6 +1406,8 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
       let finalReview: any = null;
       let finalReviewClient: any = null;
       let finalReviewEndpoint: string | null = null;
+      /** Provider name that produced `finalReview` (for per-attempt success). */
+      let finalReviewProvider: string | null = null;
 
       if (chain.length === 0) {
         // Distinguish "no chat provider configured" from "all configured
@@ -1552,6 +1554,7 @@ ${diffPayload}${deterministicPayload}`;
                   finalReview = normalized;
                   finalReviewClient = client;
                   finalReviewEndpoint = endpoint;
+                  finalReviewProvider = name;
                   break;
                 }
 
@@ -1693,6 +1696,7 @@ ${diffPayload}${deterministicPayload}`;
                 finalReview = parsed;
                 finalReviewClient = client;
                 finalReviewEndpoint = endpoint;
+                finalReviewProvider = name;
               }
               await persistCheckpoint(
                 breakerRepoPath,
@@ -1787,6 +1791,7 @@ ${diffPayload}${deterministicPayload}`;
               finalReview = parsed;
               finalReviewClient = client;
               finalReviewEndpoint = endpoint;
+              finalReviewProvider = name;
             }
           }
 
@@ -1797,10 +1802,11 @@ ${diffPayload}${deterministicPayload}`;
             void logReview(prId, `Loop exhausted — no submitReview after ${loopCount} iterations (last had tool_calls: ${lastHadToolCalls})`, "warn", reviewRunId, reviewChunkId);
           }
 
+          // Success stops the chain. Quality failure (no finalReview, no throw)
+          // continues to the next configured provider (#139).
           if (finalReview) {
             break;
           }
-          break;
         } catch (err: any) {
           attemptError = err;
           console.warn(`[review] chat provider ${name} failed: ${err.message}`);
@@ -1814,8 +1820,10 @@ ${diffPayload}${deterministicPayload}`;
             void logReview(prId, `Fallback skipped after non-retryable ${name} failure`, "warn", reviewRunId, reviewChunkId);
             break;
           }
+          // Retryable transport failure: fall through to next provider.
         } finally {
-          const successThisAttempt = finalReview !== null;
+          // Attribute success only to the provider that produced finalReview.
+          const successThisAttempt = finalReview !== null && finalReviewProvider === name;
           const ratingThisAttempt: number | null = successThisAttempt
             ? (finalReview as any)?.rating ?? null
             : null;
@@ -1831,6 +1839,7 @@ ${diffPayload}${deterministicPayload}`;
             emptyFindings: false,
           });
           const { costUsd } = computeCost(model, attemptPromptTokens, attemptCompletionTokens);
+          const priorQualityFailure = providerAttempts.some((a) => a.outcome === "quality_failure");
           providerAttempts.push({
             provider: name,
             model,
@@ -1851,8 +1860,30 @@ ${diffPayload}${deterministicPayload}`;
           );
           if (outcome === "quality_failure") {
             recordProviderQualityFailure(breakerRepoPath, endpoint, model, name, pr.repoId);
+            console.warn(
+              `[review] quality_failure on ${name} — will try next chat provider if configured`,
+            );
+            void logReview(
+              prId,
+              `quality_failure on ${name} — trying secondary/fallback if configured`,
+              "warn",
+              reviewRunId,
+              reviewChunkId,
+            );
           } else if (outcome === "success" && ratingThisAttempt !== null && ratingThisAttempt >= 5) {
             recordProviderSuccess(breakerRepoPath, endpoint, model, name, pr.repoId);
+          }
+          if (outcome === "success" && priorQualityFailure) {
+            console.log(
+              `[review] fallback-after-quality-failure provider=${name} model=${model} rating=${ratingThisAttempt}`,
+            );
+            void logReview(
+              prId,
+              `fallback-after-quality-failure: ${name} produced the authoritative review (rating=${ratingThisAttempt})`,
+              "info",
+              reviewRunId,
+              reviewChunkId,
+            );
           }
         }
       }
@@ -1944,12 +1975,18 @@ ${diffPayload}${deterministicPayload}`;
         return { ok: false, error: new StepError(msg, false) };
       }
 
+      // hard_fail: every provider in the chain ended without a usable review
+      // (quality_failure and/or missing secondary). No fabricated findings.
+      const qualityChain = providerAttempts
+        .filter((a) => a.outcome === "quality_failure")
+        .map((a) => a.provider)
+        .join(" → ");
+      const hardFailMsg = qualityChain
+        ? `hard_fail: chat provider chain exhausted without a usable submitReview (${qualityChain}). Re-scan or fix model/tool-calling support in LLM Settings. Models known to work: GPT-4, Claude, Qwen-Plus, DeepSeek-V3 via OpenRouter.`
+        : `Model ${usedModel} ended the agentic loop without calling submitReview. The model MUST support tool/function calling — verify this in the provider's docs, or pick a different model in LLM Settings. Models known to work: GPT-4, Claude, Qwen-Plus, DeepSeek-V3 via OpenRouter.`;
       return {
         ok: false,
-        error: new StepError(
-          `Model ${usedModel} ended the agentic loop without calling submitReview. The model MUST support tool/function calling — verify this in the provider's docs, or pick a different model in LLM Settings. Models known to work: GPT-4, Claude, Qwen-Plus, DeepSeek-V3 via OpenRouter.`,
-          false,
-        ),
+        error: new StepError(hardFailMsg, false),
       };
     },
   });

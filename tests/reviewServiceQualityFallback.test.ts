@@ -1,19 +1,18 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
 /**
- * Provider-chain fallthrough semantics (updated for issue #139).
+ * Issue #139 — primary quality_failure tries secondary, then hard-fail.
  *
- * Historically (phase 1): quality_failure on primary did NOT invoke
- * secondary — only transport failures fell through. #139 changes that:
- * primary quality_failure now tries the secondary/fallback chat provider
- * with the same agentic contract when configured.
- *
- * This file keeps a transport-only regression and documents the new
- * quality path; full coverage lives in reviewServiceQualityFallback.test.ts.
+ * Policy change from transport-only fallback:
+ *   - Primary quality_failure (loop exhausted / no usable submitReview)
+ *     → run secondary with the same agentic contract when configured
+ *   - Secondary success is the published review; chain logged
+ *   - Both fail → hard_fail (success=false, rating null, no fabricated AI findings)
+ *   - Transport failures still fall through as before
  */
 
-const nvidiaCreate = vi.fn();
-const minimaxCreate = vi.fn();
+const primaryCreate = vi.fn();
+const secondaryCreate = vi.fn();
 
 function fakeClient(createFn: ReturnType<typeof vi.fn>) {
   return {
@@ -25,20 +24,24 @@ function fakeClient(createFn: ReturnType<typeof vi.fn>) {
   } as any;
 }
 
+const hoisted = vi.hoisted(() => ({
+  logReview: vi.fn().mockResolvedValue(undefined),
+}));
+
 vi.mock("../src/lib/llmClient", () => ({
   getChatChain: () => [
     {
-      client: fakeClient(nvidiaCreate),
-      model: "nvidia/llama-3.1-nemotron-70b-instruct",
-      name: "NVIDIA",
-      endpoint: "https://nvidia.example.com/v1",
+      client: fakeClient(primaryCreate),
+      model: "primary-model",
+      name: "Primary",
+      endpoint: "https://primary.example.com/v1",
       maxIterations: 4,
     },
     {
-      client: fakeClient(minimaxCreate),
-      model: "minimax/MiniMAX-M1",
-      name: "Minimax",
-      endpoint: "https://minimax.example.com/v1",
+      client: fakeClient(secondaryCreate),
+      model: "secondary-model",
+      name: "Secondary",
+      endpoint: "https://secondary.example.com/v1",
       maxIterations: 4,
     },
   ],
@@ -83,15 +86,14 @@ vi.mock("../src/lib/prisma", () => ({
 vi.mock("../src/services/deterministicChecks", () => ({
   runDeterministicChecks: vi.fn().mockResolvedValue([]),
   runContainerizedChecks: vi.fn().mockResolvedValue([]),
-  logReview: vi.fn().mockResolvedValue(undefined),
-  shouldRunHostTier1: (repo?: { path?: string | null; cloneUrl?: string | null; localPath?: string | null } | null) =>
-    Boolean(repo?.path) && !repo?.cloneUrl && repo?.localPath !== "/workspace",
+  logReview: hoisted.logReview,
+  shouldRunHostTier1: () => false,
   DEFAULT_INSTALL_COMMAND: "npm install",
   DEFAULT_TEST_COMMAND: "npm run typecheck && npm run lint",
 }));
 
 vi.mock("../src/services/findingVerifier", () => ({
-  verifyFindings: vi.fn().mockResolvedValue([]),
+  verifyFindings: vi.fn().mockImplementation(async (_prId: string, findings: any[]) => findings),
   isDocumentationFile: vi.fn().mockReturnValue(false),
 }));
 
@@ -111,6 +113,7 @@ vi.mock("../src/services/largePrReview/reconcile", () => ({
   dedupFindingsWithinRun: vi.fn().mockResolvedValue(0),
 }));
 
+/** Tool-loop burn: searchCodebase forever; finalizer returns unparseable text. */
 function qualityFailResponse(body: any) {
   if (body?.tools) {
     return {
@@ -141,7 +144,7 @@ function qualityFailResponse(body: any) {
   };
 }
 
-function submitReviewResponse(rating: number) {
+function submitReviewResponse(rating: number, findings: any[] = []) {
   return {
     choices: [
       {
@@ -156,8 +159,8 @@ function submitReviewResponse(rating: number) {
                 name: "submitReview",
                 arguments: JSON.stringify({
                   rating,
-                  summary: "ok",
-                  findings: [],
+                  summary: `Secondary review rating ${rating}`,
+                  findings,
                 }),
               },
             },
@@ -165,7 +168,7 @@ function submitReviewResponse(rating: number) {
         },
       },
     ],
-    usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+    usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
   };
 }
 
@@ -181,16 +184,20 @@ const sampleFiles = [
   },
 ];
 
-describe("runPrScan provider chain fallthrough", () => {
+describe("runPrScan quality_failure provider chain (#139)", () => {
   beforeEach(() => {
-    nvidiaCreate.mockClear();
-    minimaxCreate.mockClear();
+    primaryCreate.mockClear();
+    secondaryCreate.mockClear();
+    hoisted.logReview.mockClear();
   });
 
-  it("primary quality_failure DOES fall through to secondary (#139)", async () => {
-    nvidiaCreate.mockImplementation((body: any) => Promise.resolve(qualityFailResponse(body)));
-    minimaxCreate.mockImplementation((body: any) => {
-      if (body?.tools) return Promise.resolve(submitReviewResponse(9));
+  it("primary quality_failure → secondary submitReview is the published review", async () => {
+    primaryCreate.mockImplementation((body: any) => Promise.resolve(qualityFailResponse(body)));
+    secondaryCreate.mockImplementation((body: any) => {
+      if (body?.tools) {
+        return Promise.resolve(submitReviewResponse(8));
+      }
+      // Refusal-check / other no-tools calls
       return Promise.resolve({
         choices: [{ message: { role: "assistant", content: '{"refused": false, "topics": []}' } }],
         usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
@@ -200,19 +207,41 @@ describe("runPrScan provider chain fallthrough", () => {
     const { runPrScan } = await import("../src/services/reviewService");
     const result = await runPrScan("pr-1", sampleFiles);
 
-    expect(minimaxCreate).toHaveBeenCalled();
+    expect(secondaryCreate).toHaveBeenCalled();
     expect(result.success).toBe(true);
-    expect(result.rating).toBe(9);
-    expect(result.usedModel).toMatch(/minimax/i);
-    expect(nvidiaCreate.mock.calls.length).toBeGreaterThanOrEqual(4);
+    expect(result.rating).toBe(8);
+    expect(result.usedModel).toBe("secondary-model");
+    // No fabricated AI findings on the success path either — empty findings is honest
+    expect(result.findings.filter((f: any) => f.source === "llm" && !f.explanation)).toEqual([]);
+
+    const logMsgs = hoisted.logReview.mock.calls.map((c: any[]) => String(c[1] ?? ""));
+    expect(logMsgs.some((m) => /fallback-after-quality-failure/i.test(m))).toBe(true);
+  });
+
+  it("both providers quality_failure → hard_fail, null rating, no fabricated AI findings", async () => {
+    primaryCreate.mockImplementation((body: any) => Promise.resolve(qualityFailResponse(body)));
+    secondaryCreate.mockImplementation((body: any) => Promise.resolve(qualityFailResponse(body)));
+
+    const { runPrScan } = await import("../src/services/reviewService");
+    const result = await runPrScan("pr-1", sampleFiles);
+
+    expect(primaryCreate).toHaveBeenCalled();
+    expect(secondaryCreate).toHaveBeenCalled();
+    expect(result.success).toBe(false);
+    expect(result.rating).toBeNull();
+    // No invented LLM findings — only deterministic (none in this mock)
+    expect(result.findings.filter((f: any) => f.source === "llm")).toEqual([]);
+    expect(result.systemWarn ?? "").toMatch(/hard_fail|without calling submitReview|quality/i);
   });
 
   it("transport failure on primary still falls through to secondary", async () => {
-    const err: any = new Error("429 rate limit");
-    err.status = 429;
-    nvidiaCreate.mockRejectedValue(err);
-    minimaxCreate.mockImplementation((body: any) => {
-      if (body?.tools) return Promise.resolve(submitReviewResponse(8));
+    const rateLimitErr: any = new Error("429 rate limit exceeded");
+    rateLimitErr.status = 429;
+    primaryCreate.mockRejectedValue(rateLimitErr);
+    secondaryCreate.mockImplementation((body: any) => {
+      if (body?.tools) {
+        return Promise.resolve(submitReviewResponse(7));
+      }
       return Promise.resolve({
         choices: [{ message: { role: "assistant", content: '{"refused": false, "topics": []}' } }],
         usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
@@ -222,8 +251,8 @@ describe("runPrScan provider chain fallthrough", () => {
     const { runPrScan } = await import("../src/services/reviewService");
     const result = await runPrScan("pr-1", sampleFiles);
 
-    expect(minimaxCreate).toHaveBeenCalled();
+    expect(secondaryCreate).toHaveBeenCalled();
     expect(result.success).toBe(true);
-    expect(result.rating).toBe(8);
+    expect(result.rating).toBe(7);
   });
 });
