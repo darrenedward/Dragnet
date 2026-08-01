@@ -107,12 +107,13 @@ export default function ProviderConfig({
           className="w-full bg-slate-900 border border-white/10 rounded-lg px-3 py-2 text-xs text-slate-100 font-mono focus:border-cyan-500 outline-none"
         />
         <p className="text-[10px] text-slate-500 mt-1 font-mono leading-snug">
-          {MAX_ITERATIONS_BOUNDS.min}–{MAX_ITERATIONS_BOUNDS.max} main-loop turns per AI review
-          (default {DEFAULT_MAX_ITERATIONS}). Values below {MAX_ITERATIONS_BOUNDS.min} are raised
-          to {MAX_ITERATIONS_BOUNDS.min} at runtime. The last turn is reserved for{" "}
-          <code className="text-slate-400">submitReview</code> if needed. Skeptic is a separate
-          pass after the main loop — not counted here. Scan log lines like{" "}
-          <code className="text-slate-400">2/4</code> mean iteration 2 of this cap.
+          {MAX_ITERATIONS_BOUNDS.min}–{MAX_ITERATIONS_BOUNDS.max} main-loop turns (default{" "}
+          {DEFAULT_MAX_ITERATIONS}). Use <strong className="text-slate-400">1–2</strong> for strong
+          models that can submit quickly; raise for weaker/local models that need more tool
+          rounds. If no review yet, the <strong className="text-slate-400">last</strong> turn is
+          forced toward <code className="text-slate-400">submitReview</code>. Skeptic is a separate
+          pass after the main loop — not counted here. Log <code className="text-slate-400">2/8</code>{" "}
+          = iteration 2 of this cap.
         </p>
       </FieldLabel>
 

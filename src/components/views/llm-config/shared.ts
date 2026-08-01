@@ -18,7 +18,7 @@ export const DEFAULT_ENDPOINT = "https://openrouter.ai/api/v1";
  * pull `llmPresets.ts` (which imports `node:fs/promises`) into a
  * "use client" component. Keep in sync with the server constants.
  */
-export const MAX_ITERATIONS_BOUNDS = { min: 4, max: 32 } as const;
+export const MAX_ITERATIONS_BOUNDS = { min: 1, max: 32 } as const;
 export const DEFAULT_MAX_ITERATIONS = 16;
 
 /**

@@ -90,21 +90,28 @@ describe("attempt end log formatting", () => {
   });
 });
 
-describe("maxIterations floor for chat presets", () => {
-  it("floor is high enough that tool-then-submit is realistic (min >= 4)", () => {
-    expect(MAX_ITERATIONS_BOUNDS.min).toBeGreaterThanOrEqual(4);
-    expect(MAX_ITERATIONS_BOUNDS.max).toBe(32);
+describe("maxIterations bounds for chat presets", () => {
+  it("allows 1–2 for strong models and up to 32 for weak ones", () => {
+    expect(MAX_ITERATIONS_BOUNDS).toEqual({ min: 1, max: 32 });
   });
 
-  it("resolveMaxIterations clamps absurdly low values up to the floor", () => {
-    expect(resolveMaxIterations({ maxIterations: 1 })).toBe(MAX_ITERATIONS_BOUNDS.min);
-    expect(resolveMaxIterations({ maxIterations: 2 })).toBe(MAX_ITERATIONS_BOUNDS.min);
-    expect(resolveMaxIterations({ maxIterations: 3 })).toBe(MAX_ITERATIONS_BOUNDS.min);
+  it("resolveMaxIterations allows 1 and 2; clamps 0 up; above max → default", () => {
+    expect(resolveMaxIterations({ maxIterations: 0 })).toBe(1);
+    expect(resolveMaxIterations({ maxIterations: 1 })).toBe(1);
+    expect(resolveMaxIterations({ maxIterations: 2 })).toBe(2);
+    expect(resolveMaxIterations({ maxIterations: 3 })).toBe(3);
+    expect(resolveMaxIterations({ maxIterations: 100 })).toBe(DEFAULT_MAX_ITERATIONS);
   });
 
   it("resolveMaxIterations keeps in-bounds values", () => {
     expect(resolveMaxIterations({ maxIterations: 4 })).toBe(4);
     expect(resolveMaxIterations({ maxIterations: 8 })).toBe(8);
     expect(resolveMaxIterations({})).toBe(DEFAULT_MAX_ITERATIONS);
+  });
+
+  it("budget 1 or 2 still force-submit on the last turn", () => {
+    expect(shouldForceSubmitPath(1, 1, false)).toBe(true);
+    expect(shouldForceSubmitPath(1, 2, false)).toBe(false);
+    expect(shouldForceSubmitPath(2, 2, false)).toBe(true);
   });
 });
