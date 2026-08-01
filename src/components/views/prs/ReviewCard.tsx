@@ -381,16 +381,25 @@ export default function ReviewCard({
       ) : findings.length === 0 ? (
         <div className="p-8 text-center text-slate-500 flex flex-col items-center justify-center">
           {reviewRun &&
+          reviewRun.terminalClass !== "skipped" &&
+          reviewRun.outcome !== "skipped" &&
           (reviewRun.status === "failed" ||
             reviewRun.terminalClass === "quality_failure" ||
             reviewRun.terminalClass === "hard_fail" ||
             reviewRun.terminalClass === "transport_failure" ||
             reviewRun.terminalClass === "infrastructure_failure" ||
-            (reviewRun.rating === null && reviewRun.outcome !== "skipped")) ? (
+            reviewRun.terminalClass === "unknown_failure" ||
+            reviewRun.terminalClass === "gate_blocked" ||
+            (reviewRun.rating === null &&
+              reviewRun.status === "completed" &&
+              reviewRun.terminalClass !== "success")) ? (
             <>
               <ShieldAlert size={24} className="text-rose-400 mb-1.5" />
               <p className="text-xs font-bold text-rose-300 font-mono">
-                {reviewRun.status === "failed" || reviewRun.terminalClass
+                {reviewRun.status === "failed" ||
+                (reviewRun.terminalClass &&
+                  reviewRun.terminalClass !== "success" &&
+                  reviewRun.terminalClass !== "skipped")
                   ? "Scan failed — not an earned AI pass"
                   : "Rating unreliable — verifier rejected all findings"}
               </p>

@@ -280,4 +280,39 @@ describe("buildLayoutCHeaderChips", () => {
       tone: "amber",
     });
   });
+
+  it("terminalClass hard_fail overrides Completed PR status (#140)", () => {
+    const chips = buildLayoutCHeaderChips(
+      baseInput({
+        status: "Completed",
+        terminalClass: "hard_fail",
+        terminalReason: "hard_fail: dual quality_failure",
+        rating: null,
+        merge: readyMerge({ rating: null }),
+      }),
+    );
+    expect(chips.find((c) => c.id === "status")).toMatchObject({
+      label: "failed",
+      tone: "red",
+    });
+    expect(chips.find((c) => c.id === "status")?.tooltip).toMatch(/hard_fail|quality/i);
+  });
+
+  it("queued status surfaces concurrent slot wait reason (#140)", () => {
+    const chips = buildLayoutCHeaderChips(
+      baseInput({
+        status: "Pending",
+        queueState: "queued",
+        queuePosition: 2,
+        queueGlobalLimit: 1,
+        queueRepoLimit: 1,
+        terminalClass: "queued",
+        terminalReason: "queue position #2 — waiting for a global concurrent slot (limit 1)",
+      }),
+    );
+    const status = chips.find((c) => c.id === "status");
+    expect(status?.label).toMatch(/processing/i);
+    expect(status?.tone).toBe("blue");
+    expect(status?.tooltip.toLowerCase()).toMatch(/concurrent|queue/);
+  });
 });

@@ -330,7 +330,7 @@ describe("ReviewRun.outcome persistence — issue #19", () => {
       status: "completed",
       rating: null,
       refused: false,
-      outcome: "reviewed",
+      outcome: "skipped",
       terminalClass: "skipped",
       systemWarn: expect.any(String),
     });

@@ -51,7 +51,6 @@ import { recordProviderQualityFailure, recordProviderSuccess } from "@/src/lib/p
 import { completePrReviewIfCurrent } from "@/src/lib/prRevisionStatus";
 import {
   outcomeFromScanResult,
-  prStatusForTerminal,
   runPersistForTerminal,
   type ScanTerminalClass,
 } from "@/src/lib/scanTerminalOutcome";
@@ -983,7 +982,7 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
         status: "completed",
         rating,
         refused: false,
-        outcome: "reviewed",
+        outcome: "skipped",
         terminalClass: "skipped",
         systemWarn,
       });
@@ -2589,6 +2588,4 @@ async function finalizeScanFailure(
   } catch (err) {
     console.warn(`[scan] finalizeScanFailure: PR Failed write failed:`, err);
   }
-  // silence unused helper import when tree-shaken differently
-  void prStatusForTerminal;
 }

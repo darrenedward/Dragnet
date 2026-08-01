@@ -107,15 +107,23 @@ export default function PrHeader({
   const scanning = isScanning || activePR?.status === "In Progress";
   const queued = queueJob?.state === "queued";
   const liveFail = scanResult?.failed || scanResult?.terminalOutcome?.isFailed;
+  // Prefer shared terminalOutcome when present so empty-diff/skipped
+  // (null rating, outcome may still be "reviewed") does not flash Failed.
+  const skipped =
+    terminalOutcome?.class === "skipped" ||
+    reviewRun?.outcome === "skipped" ||
+    reviewRun?.terminalClass === "skipped";
   const failed =
-    liveFail ||
-    reviewRun?.status === "failed" ||
-    terminalOutcome?.isFailed === true ||
-    (!!reviewRun &&
-      reviewRun.status === "completed" &&
-      reviewRun.rating == null &&
-      reviewRun.outcome !== "skipped");
-  const skipped = reviewRun?.outcome === "skipped";
+    !skipped &&
+    (liveFail ||
+      (terminalOutcome
+        ? terminalOutcome.isFailed === true
+        : reviewRun?.status === "failed" ||
+          (!!reviewRun &&
+            reviewRun.status === "completed" &&
+            reviewRun.rating == null &&
+            reviewRun.outcome !== "skipped" &&
+            reviewRun.terminalClass !== "skipped")));
   const [descExpanded, setDescExpanded] = useState(false);
 
   if (!activePR) {
@@ -163,6 +171,8 @@ export default function PrHeader({
     blockedGate: resolvedSeam.blockedGate,
     stale: resolvedSeam.stale,
     staleReason: resolvedSeam.staleReason,
+    terminalClass: terminalOutcome?.class ?? reviewRun?.terminalClass ?? null,
+    terminalReason: terminalOutcome?.reason ?? reviewRun?.systemWarn ?? null,
   });
 
   const { chips, identity, cloneFailed } = model;

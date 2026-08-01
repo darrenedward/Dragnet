@@ -35,6 +35,11 @@ export type PrWorkspaceHeaderInput = PrIdentityInput & {
   blockedGate?: string | null;
   stale?: boolean | null;
   staleReason?: ReviewStaleReason | null;
+  /** Shared scan terminal class (issue #140). */
+  terminalClass?: string | null;
+  terminalReason?: string | null;
+  queueGlobalLimit?: number | null;
+  queueRepoLimit?: number | null;
 };
 
 export type PrWorkspaceHeaderModel = {
@@ -99,6 +104,10 @@ export function buildPrWorkspaceHeaderModel(
     rating,
     stale,
     staleReason,
+    terminalClass: input.terminalClass,
+    terminalReason: input.terminalReason,
+    queueGlobalLimit: input.queueGlobalLimit,
+    queueRepoLimit: input.queueRepoLimit,
   });
 
   const identity = formatPrIdentity({

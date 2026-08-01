@@ -156,7 +156,7 @@ describe("Empty-diff PR handling — issue #61", () => {
       terminalClass: "skipped",
       systemWarn: expect.any(String),
       refused: false,
-      outcome: "reviewed",
+      outcome: "skipped",
     });
   });
 

@@ -643,6 +643,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
         console.warn(`[scan] route: failed to clear PR In Progress status:`, statusErr);
       }
     } else if (!result.success && !result.interrupted) {
+      // runPrScan/finalizeScanFailure already stamps ReviewRun terminalClass.
+      // Do not re-stamp here as hard_fail — that clobbered quality/transport.
       try {
         await prisma.pullRequest.updateMany({
           where: { id: prId, status: { notIn: ["Merged"] } },
@@ -650,20 +652,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
         });
       } catch (statusErr) {
         console.warn(`[scan] route: failed to set PR Failed on soft-fail:`, statusErr);
-      }
-      const infraFail =
-        "infrastructureFailure" in result && !!(result as { infrastructureFailure?: boolean }).infrastructureFailure;
-      if (reviewRunId && result.systemWarn) {
-        try {
-          await completeReviewRun(reviewRunId, {
-            status: "failed",
-            systemWarn: result.systemWarn,
-            terminalClass: infraFail ? "infrastructure_failure" : "hard_fail",
-            rating: null,
-          });
-        } catch (runErr) {
-          console.warn(`[scan] route: failed to stamp failed run:`, runErr);
-        }
       }
     }
     // Popup data-source: most recent prior NON-SKIPPED completed run for
