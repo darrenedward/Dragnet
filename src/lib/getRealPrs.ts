@@ -6,10 +6,7 @@ import { runGitInRepo, syncCloneForPr, type RepoLike } from "./repoAccess";
 import { getInstallationToken } from "@/src/lib/githubApp";
 import { decryptSecret, hasMasterKey } from "@/src/lib/crypto";
 import { statusForRevision } from "./prRevisionStatus";
-import {
-  resolveCommitIdentity,
-  type CommitIdentity,
-} from "./reviewTree";
+import { ensureMergeBase } from "./tipAlignedChecks";
 
 /**
  * Postgres TEXT columns reject NUL bytes (0x00) — git can produce them
@@ -487,35 +484,11 @@ async function listBranches(repo: RepoLike): Promise<BranchInfo[]> {
 // scans, byte-identical ReviewRun.diffHash — that's what triggered #13.
 const inFlightRefreshes = new Map<string, Promise<Awaited<ReturnType<typeof collectBranchFiles>>>>();
 
-/**
- * Diff base branch for a PR: prefer the PR's real target branch tip, fall
- * back to the repo default base only when target is missing.
- */
-export function resolveDiffBaseBranch(
-  prTargetBranch: string | null | undefined,
-  repoDefaultBase: string | null | undefined,
-): string {
-  const target = (prTargetBranch ?? "").trim();
-  if (target) return target;
-  const fallback = (repoDefaultBase ?? "").trim();
-  if (fallback) return fallback;
-  return "main";
-}
-
-export type RefreshPrFilesOpts = {
-  failOnSyncError?: boolean;
-  /** Pre-resolved tip identity; when both set, diffs use these SHAs. */
-  headSha?: string;
-  baseSha?: string;
-  /** Optional sink so callers can assert identity matches tip-tree work. */
-  onIdentity?: (identity: CommitIdentity) => void;
-};
-
 export async function refreshPrFiles(
   repo: RepoLike,
   branchName: string,
   prId: string,
-  opts?: RefreshPrFilesOpts,
+  opts?: { failOnSyncError?: boolean },
 ) {
   // Chain: if a refresh is already running for this prId, return the same
   // promise. Callers see the result of the in-flight work — no stale rows.
@@ -528,70 +501,26 @@ export async function refreshPrFiles(
   const failOnSyncError = opts?.failOnSyncError === true;
 
   const refreshPromise = (async () => {
-    const [repoRow, prRow] = await Promise.all([
-      prisma.repository.findUnique({
-        where: { id: repo.id },
-        select: { baseBranch: true },
-      }),
-      prisma.pullRequest.findUnique({
-        where: { id: prId },
-        select: {
-          targetBranch: true,
-          commitHash: true,
-          sourceBranch: true,
-        },
-      }),
-    ]);
+    const repoRow = await prisma.repository.findUnique({
+      where: { id: repo.id },
+      select: { baseBranch: true },
+    });
+    const baseBranch = repoRow?.baseBranch || "main";
 
-    // Prefer PR target branch (stacked PRs); only fall back to repo default.
-    const diffBaseBranch = resolveDiffBaseBranch(
-      prRow?.targetBranch,
-      repoRow?.baseBranch,
-    );
-    const sourceBranch = (prRow?.sourceBranch || branchName || "").trim() || branchName;
-
-    // Ensure clone has source + target branches before running the diff.
-    // When failOnSyncError is set (scan prelude path), sync failure aborts so
+    // Ensure clone has both branches before running the diff. When
+    // failOnSyncError is set (scan prelude path), sync failure aborts so
     // empty diffs are never treated as "no code changes." Other callers
     // keep best-effort behavior.
     if (!repo.path && repo.cloneUrl) {
       try {
-        await syncCloneForPr(repo, sourceBranch, diffBaseBranch);
+        await syncCloneForPr(repo, branchName, baseBranch);
       } catch (err: any) {
         console.warn(`[refreshPrFiles] clone sync failed for ${repo.id}:`, err.message);
         if (failOnSyncError) throw err;
       }
     }
 
-    // Pin diffs to the same head/base SHAs as tip-tree commit identity.
-    let headRef = (opts?.headSha || "").trim();
-    let baseRef = (opts?.baseSha || "").trim();
-    if (!headRef || !baseRef) {
-      try {
-        const identity = await resolveCommitIdentity(
-          { ...repo, baseBranch: repoRow?.baseBranch ?? null },
-          {
-            commitHash: headRef || prRow?.commitHash || "",
-            sourceBranch,
-            targetBranch: diffBaseBranch,
-          },
-        );
-        headRef = headRef || identity.headSha;
-        baseRef = baseRef || identity.baseSha;
-        opts?.onIdentity?.({ headSha: headRef, baseSha: baseRef });
-      } catch (idErr: unknown) {
-        const msg = idErr instanceof Error ? idErr.message : String(idErr);
-        console.warn(`[refreshPrFiles] commit identity resolve failed for ${prId}: ${msg}`);
-        // Branch-name fallback keeps legacy callers working when SHAs
-        // cannot be resolved (empty clone, missing objects).
-        headRef = headRef || sourceBranch;
-        baseRef = baseRef || diffBaseBranch;
-      }
-    } else {
-      opts?.onIdentity?.({ headSha: headRef, baseSha: baseRef });
-    }
-
-    const files = await collectBranchFiles(repo, baseRef, headRef, {
+    const files = await collectBranchFiles(repo, baseBranch, branchName, {
       failOnUnavailable: failOnSyncError,
     });
     await prisma.prFile.deleteMany({ where: { prId } });
@@ -631,35 +560,29 @@ export function isRefreshInFlight(prId: string): boolean {
   return inFlightRefreshes.has(prId);
 }
 
-/**
- * Collect changed files between two git refs (branch names or full SHAs).
- * Prefer pinned head/base SHAs so the file list matches tip-tree identity.
- */
 async function collectBranchFiles(
   repo: RepoLike,
-  baseRef: string,
-  headRef: string,
+  baseBranch: string,
+  branchName: string,
   opts?: { failOnUnavailable?: boolean },
 ): Promise<RepoFile[]> {
   const files: RepoFile[] = [];
   const failOnUnavailable = opts?.failOnUnavailable === true;
-  const range = `${baseRef}...${headRef}`;
 
-  // Verify both refs resolve in the clone before running diff.
+  // Verify both branches actually exist in the clone before running diff.
   // Silently returning an empty list on missing refs is what caused the
   // "No code changes detected" false-positive — the diff technically
   // succeeded (exit 0) but with no commits in common so emitted nothing.
   // Scan path (failOnUnavailable) throws so empty-diff skip is never used.
-  // Refs may be SHAs or branch names — do not force refs/heads/ prefix.
   if (!repo.path && repo.cloneUrl) {
-    const headCheck = await runGitInRepo(repo, [
+    const branchCheck = await runGitInRepo(repo, [
       "rev-parse",
       "--verify",
       "--quiet",
-      `${headRef}^{commit}`,
+      `refs/heads/${branchName}`,
     ]);
-    if (headCheck.exitCode !== 0) {
-      const msg = `head ref ${headRef} not found in clone for ${repo.id}`;
+    if (branchCheck.exitCode !== 0) {
+      const msg = `branch ${branchName} not found in clone for ${repo.id}`;
       console.warn(`[scan] collectBranchFiles: ${msg}`);
       if (failOnUnavailable) throw new Error(msg);
       return files;
@@ -668,28 +591,48 @@ async function collectBranchFiles(
       "rev-parse",
       "--verify",
       "--quiet",
-      `${baseRef}^{commit}`,
+      `refs/heads/${baseBranch}`,
     ]);
     if (baseCheck.exitCode !== 0) {
-      const msg = `base ref ${baseRef} not found in clone for ${repo.id}`;
+      const msg = `base ${baseBranch} not found in clone for ${repo.id}`;
       console.warn(`[scan] collectBranchFiles: ${msg}`);
       if (failOnUnavailable) throw new Error(msg);
       return files;
     }
   }
 
+  // Three-dot diff needs merge-base. Shallow clones often hide it — deepen
+  // or fail closed with a clear gate (never silent wrong/empty diff).
+  const mb = await ensureMergeBase({
+    repo,
+    baseRef: baseBranch,
+    headRef: branchName,
+  });
+  if (mb.ok === false) {
+    console.warn(`[scan] collectBranchFiles: ${mb.message}`);
+    if (failOnUnavailable) {
+      throw new Error(`Blocked at merge-base: ${mb.message}`);
+    }
+    return files;
+  }
+  if (mb.deepened) {
+    console.log(
+      `[scan] collectBranchFiles: deepened shallow history; merge-base=${mb.mergeBase.slice(0, 12)}`,
+    );
+  }
+
   let changedFilesLines: string[] = [];
   try {
-    const stdout = await runGitOrThrow(repo, ["diff", "--name-status", range]);
+    const stdout = await runGitOrThrow(repo, ["diff", "--name-status", `${baseBranch}...${branchName}`]);
     changedFilesLines = stdout.trim().split("\n").filter(Boolean);
   } catch (err: any) {
     console.warn(
-      `[scan] collectBranchFiles: diff failed for ${repo.id} (${range}):`,
+      `[scan] collectBranchFiles: diff failed for ${repo.id} (${baseBranch}...${branchName}):`,
       err.message,
     );
     if (failOnUnavailable) {
       throw new Error(
-        `diff unavailable for ${repo.id} (${range}): ${err.message}`,
+        `diff unavailable for ${repo.id} (${baseBranch}...${branchName}): ${err.message}`,
       );
     }
     return files;
@@ -708,15 +651,15 @@ async function collectBranchFiles(
     try {
       diffStr = await runGitOrThrow(
         repo,
-        ["diff", range, "--", filename],
+        ["diff", `${baseBranch}...${branchName}`, "--", filename],
         FILE_DIFF_TIMEOUT_MS,
       );
     } catch {}
     try {
-      originalContent = await runGitOrThrow(repo, ["show", `${baseRef}:${filename}`]);
+      originalContent = await runGitOrThrow(repo, ["show", `${baseBranch}:${filename}`]);
     } catch {}
     try {
-      modifiedContent = await runGitOrThrow(repo, ["show", `${headRef}:${filename}`]);
+      modifiedContent = await runGitOrThrow(repo, ["show", `${branchName}:${filename}`]);
     } catch {}
 
     const additions = diffStr.split("\n").filter((l) => l.startsWith("+") && !l.startsWith("+++")).length;

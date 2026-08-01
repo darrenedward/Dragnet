@@ -15,15 +15,11 @@ import { completeReviewRun, setReviewRunTokens, setReviewRunLastCheckpointAt, se
 import { safeReadFileSync, resolveSafePath } from "@/src/lib/pathSafety";
 import type { ReviewTree } from "@/src/lib/reviewTree";
 import {
-  searchTipOverlay,
-  getTipOverlayCallers,
-  findTipOverlaySimilar,
-  mergeSymbolSearchResults,
-  mergeCallerResults,
-  isTipOverlayFresh,
-  type TipOverlay,
-  type GraphSymbolHit,
-} from "@/src/lib/tipOverlay";
+  planHostTier1,
+  planTier2,
+  planTier2BindRoot,
+  resolveCheckHeadSha,
+} from "@/src/lib/tipAlignedChecks";
 import {
   runDeterministicChecks,
   runContainerizedChecks,
@@ -890,12 +886,6 @@ export interface RunPrScanOptions {
    * repo.path / localPath / fake container host paths.
    */
   reviewTree?: ReviewTree;
-  /**
-   * Tip overlay index (changed files + neighbors at head). When fresh for
-   * the scan head, searchCodebase / getCallers / findSimilar query it first
-   * so tip-only symbols are visible even if the base index is still main.
-   */
-  tipOverlay?: TipOverlay;
 }
 
 /**
@@ -1020,113 +1010,42 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
   let usedModel = "unconfigured";
   let systemWarn: string | null = null;
 
-  // 4. Retrieve codebase-wide multi-hop context from indexed AST tables.
-  // Prefer tip overlay (scan head) over base index for changed-file symbols.
+  // 4. Retrieve codebase-wide multi-hop context from indexed AST tables
   void logReview(prId, "Building codebase context (AST symbols + call graph)...", "info", reviewRunId, reviewChunkId);
   let codebaseContext = "";
-  // Tools freshness: overlay must match scan head (not volume-on-main base index).
-  const expectedOverlayHead =
-    options?.reviewTree?.headSha ?? options?.tipOverlay?.headSha ?? "";
-  const tipOverlay =
-    options?.tipOverlay &&
-    expectedOverlayHead &&
-    isTipOverlayFresh(options.tipOverlay, expectedOverlayHead)
-      ? options.tipOverlay
-      : null;
   try {
-    const fileNames = files.map((f) => f.filename);
-    const overlaySyms = tipOverlay
-      ? tipOverlay.symbols.filter((s) => fileNames.includes(s.filePath))
-      : [];
-    const baseSymbolList = await prisma.symbol.findMany({
-      where: { repoId: pr.repoId, filePath: { in: fileNames } },
+    const symbolList = await prisma.symbol.findMany({
+      where: { repoId: pr.repoId, filePath: { in: files.map((f) => f.filename) } },
     });
-    // Overlay-first merge by path+name+kind for initial AST context.
-    const mergedForContext = mergeSymbolSearchResults(
-      overlaySyms.map((s) => ({
-        id: s.id,
-        name: s.name,
-        kind: s.kind,
-        filePath: s.filePath,
-        lineStart: s.lineStart,
-        lineEnd: s.lineEnd,
-        summary: s.summary ?? null,
-        source: "tip" as const,
-      })),
-      baseSymbolList.map((s) => ({
-        id: s.id,
-        name: s.name,
-        kind: s.kind,
-        filePath: s.filePath,
-        lineStart: s.lineStart,
-        lineEnd: s.lineEnd,
-        summary: s.summary,
-        source: "base" as const,
-      })),
-      500,
-    );
-    // Recover language from overlay or base for display.
-    const langByKey = new Map<string, string>();
-    for (const s of overlaySyms) langByKey.set(`${s.filePath}|${s.name}|${s.kind}`, s.language);
-    for (const s of baseSymbolList) {
-      const k = `${s.filePath}|${s.name}|${s.kind}`;
-      if (!langByKey.has(k)) langByKey.set(k, s.language);
-    }
-
-    if (mergedForContext.length > 0) {
-      // Tip ids can diverge from base when lineStart shifts; still fetch base
-      // edges for the same path|name|kind so external callers are not dropped.
-      const baseByKey = new Map(
-        baseSymbolList.map((s) => [`${s.filePath}|${s.name}|${s.kind}`, s] as const),
-      );
-      const edgeQueryIds = new Set<string>();
-      const toMergedCalleeId = new Map<string, string>();
-      for (const s of mergedForContext) {
-        edgeQueryIds.add(s.id);
-        toMergedCalleeId.set(s.id, s.id);
-        const base = baseByKey.get(`${s.filePath}|${s.name}|${s.kind}`);
-        if (base) {
-          edgeQueryIds.add(base.id);
-          toMergedCalleeId.set(base.id, s.id);
-        }
-      }
-      const symIds = [...edgeQueryIds];
+    if (symbolList && symbolList.length > 0) {
+      // Batch-fetch all caller edges + caller symbols in 2 round-trips,
+      // then group in memory. Previous code did N+M round-trips: per
+      // symbol a findMany(callers), then per-caller a findUnique for the
+      // caller's name. ~300 queries on a 50-file PR; now 3 total.
+      const symIds = symbolList.map(s => s.id);
       const [allCallerEdges, allCallerSyms] = await Promise.all([
         prisma.edge.findMany({ where: { repoId: pr.repoId, toId: { in: symIds } } }),
         prisma.symbol.findMany({ where: { repoId: pr.repoId, id: { in: symIds } }, select: { id: true, name: true } }),
       ]);
-      const callerIds = [...new Set(allCallerEdges.map((e) => e.fromId))];
+      // Build a lookup of callerSymbol id → name for any fromId we see.
+      // Note: edges may originate from symbols outside the modified-file
+      // set, so we also fetch those names in one shot below if needed.
+      const callerIds = [...new Set(allCallerEdges.map(e => e.fromId))];
       const externalCallerSyms = await prisma.symbol.findMany({
         where: { id: { in: callerIds } },
         select: { id: true, name: true },
       });
       const callerNameById = new Map<string, string>();
       for (const s of [...allCallerSyms, ...externalCallerSyms]) callerNameById.set(s.id, s.name);
-      if (tipOverlay) {
-        for (const s of tipOverlay.symbols) callerNameById.set(s.id, s.name);
-      }
-      const edgesByCallee = new Map<string, Array<{ fromId: string; filePath: string; line: number }>>();
-      const pushEdge = (calleeId: string, edge: { fromId: string; filePath: string; line: number }) => {
-        const arr = edgesByCallee.get(calleeId) || [];
-        arr.push(edge);
-        edgesByCallee.set(calleeId, arr);
-      };
+      const edgesByCallee = new Map<string, typeof allCallerEdges>();
       for (const e of allCallerEdges) {
-        if (!e.toId) continue;
-        const mergedId = toMergedCalleeId.get(e.toId) ?? e.toId;
-        pushEdge(mergedId, { fromId: e.fromId, filePath: e.filePath, line: e.line });
-      }
-      if (tipOverlay) {
-        for (const e of tipOverlay.edges) {
-          if (e.kind !== "CALLS" || !e.toId) continue;
-          const mergedId = toMergedCalleeId.get(e.toId) ?? e.toId;
-          pushEdge(mergedId, { fromId: e.fromId, filePath: e.filePath, line: e.line });
-        }
+        const arr = edgesByCallee.get(e.toId!) || [];
+        arr.push(e);
+        edgesByCallee.set(e.toId!, arr);
       }
       codebaseContext += "\n=== CODEBASE AST SYMBOLS DETECTED & MODIFIED IN PR ===\n";
-      for (const sym of mergedForContext) {
-        const lang = langByKey.get(`${sym.filePath}|${sym.name}|${sym.kind}`) || "unknown";
-        codebaseContext += `- Symbol: "${sym.name}" (${sym.kind}) defined at "${sym.filePath}" [lines ${sym.lineStart}-${sym.lineEnd}] in ${lang}\n`;
+      for (const sym of symbolList) {
+        codebaseContext += `- Symbol: "${sym.name}" (${sym.kind}) defined at "${sym.filePath}" [lines ${sym.lineStart}-${sym.lineEnd}] in ${sym.language}\n`;
         const callers = edgesByCallee.get(sym.id) || [];
         if (callers.length > 0) {
           codebaseContext += "  Codebase call reference linkages (Call graph propagation):\n";
@@ -1185,35 +1104,22 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
   const diffPayload = codePayload +
     (contextPayload ? `\n\n=== CONTEXT FILES (NOT REVIEWABLE — DO NOT CITE IN FINDINGS) ===\n${contextPayload}\n` : "");
 
-  // 5a. Build system detection — host checkout only. Remote/volume repos
-  //     skip host probes (stale/empty mirrors would report "unknown" and
-  //     incorrectly disable Tier 2). They use repo.runnerImage + container Tier 2.
-  let runnerImage = repo.runnerImage ?? "node:20-alpine";
-  let buildSystemWarn: string | null = null;
-  let tier2Supported = true;
-  if (shouldRunHostTier1(repo) && repo?.path) {
-    try {
-      const detected = await detectBuildSystem(repo.path);
-      runnerImage = detected.image;
-      buildSystemWarn = detected.warn;
-      if (detected.buildSystem !== "node") {
-        tier2Supported = false;
-      }
-      void logReview(
-        prId, `Build system: ${detected.buildSystem} → ${detected.image}${detected.warn ? ` (${detected.warn})` : ""}`,
-        "info", reviewRunId, reviewChunkId,
-      );
-    } catch (err: any) {
-      console.warn(`[scan] runPrScan: build system detection crashed:`, err);
-    }
-  }
+  // Tip head SHA shared by tools, Tier 1, and Tier 2 (commit identity).
+  const checkHeadSha = resolveCheckHeadSha({
+    tipHeadSha: options?.reviewTree?.headSha,
+    reviewRunCommitHash: options?.checkpointMetadata?.commitHash,
+    prCommitHash: pr.commitHash,
+  });
 
   let deterministicFindings: DeterministicFinding[] = [];
   let tier1HadErrors = false;
+  let runnerImage = repo.runnerImage ?? "node:20-alpine";
+  let buildSystemWarn: string | null = null;
+  let tier2Supported = true;
 
   if (options?.precomputedFindings) {
     // Large-PR mode: Tier 1+2 already ran globally before the chunk loop.
-    // Use those findings directly; skip the Tier 1+2 pipeline entirely.
+    // Skip planHostTier1 entirely — do not materialize per-chunk worktrees.
     deterministicFindings = options.precomputedFindings;
     void logReview(
       prId,
@@ -1223,32 +1129,68 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
       reviewChunkId,
     );
   } else {
+    // Materialize tip tree for host Tier 1 (or skip with explicit reason).
+    // Never lint ambient main while reviewing another tip.
+    const tier1Plan = planHostTier1(repo, checkHeadSha);
+    // Tier 2 bind must never be ambient checkout (container rw install).
+    const tier2Bind = planTier2BindRoot(tier1Plan, {
+      cloneUrl: repo?.cloneUrl,
+      repoPath: repo?.path,
+    });
+    let tipRootForTier2: string | null = tier2Bind.path;
+    const cleanupTipTrees = () => {
+      try {
+        tier2Bind.cleanup?.();
+      } finally {
+        if (tier1Plan.action === "run") tier1Plan.cleanup?.();
+      }
+    };
+
+    // 5a. Build system detection — tip tree only when host Tier 1 is planned.
+    //     Remote/volume repos skip host probes (stale/empty mirrors would report
+    //     "unknown" and incorrectly disable Tier 2). They use repo.runnerImage.
+    if (tier1Plan.action === "run") {
+      try {
+        const detected = await detectBuildSystem(tier1Plan.rootPath);
+        runnerImage = detected.image;
+        buildSystemWarn = detected.warn;
+        if (detected.buildSystem !== "node") {
+          tier2Supported = false;
+        }
+        void logReview(
+          prId, `Build system: ${detected.buildSystem} → ${detected.image}${detected.warn ? ` (${detected.warn})` : ""} [tip=${tier1Plan.source}]`,
+          "info", reviewRunId, reviewChunkId,
+        );
+      } catch (err: any) {
+        console.warn(`[scan] runPrScan: build system detection crashed:`, err);
+      }
+    }
+
     // 5b-c. Tier 1 + Tier 2 via StepPipeline with retry-on-infrastructure-error.
     //       Critical: false means code errors collect as findings and continue.
     //       Infrastructure errors that exhaust retries cause a hard abort before
     //       the LLM is ever called, matching the "no rating written" invariant.
     const pipeline = new StepPipeline();
 
-    // Tier 1: host tsc/eslint. Skipped for remote/volume-backed repos (Tier 2 only).
+    // Tier 1: host tsc/eslint on tip tree only (never ambient wrong branch).
     pipeline.addStep({
       name: "Tier1: tsc/eslint",
       critical: false,
       maxRetries: 2,
       fn: async () => {
-        if (!shouldRunHostTier1(repo)) {
-          if (repo?.cloneUrl || repo?.localPath === "/workspace") {
-            void logReview(
-              prId,
-              "Tier 1 skipped: remote/volume-backed repo uses container Tier 2 only",
-              "info",
-              reviewRunId,
-              reviewChunkId,
-            );
-          }
+        if (tier1Plan.action === "skip") {
+          void logReview(
+            prId,
+            `Tier 1 skipped: ${tier1Plan.reason}`,
+            "info",
+            reviewRunId,
+            reviewChunkId,
+          );
+          console.log(`[scan] runPrScan: Tier 1 skipped — ${tier1Plan.reason}`);
           return { ok: true, data: [] as DeterministicFinding[] };
         }
         try {
-          const findings = await runDeterministicChecks(repo!.path!);
+          const findings = await runDeterministicChecks(tier1Plan.rootPath);
           tier1HadErrors = findings.some((f) => f.severity === "error");
           const counts = findings.reduce((acc, f) => {
             acc[f.source] = (acc[f.source] ?? 0) + 1; return acc;
@@ -1256,8 +1198,14 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
           const summary = Object.keys(counts).length === 0
             ? "clean (no tsc/eslint findings)"
             : Object.entries(counts).map(([k, v]) => `${v} ${k}`).join(", ");
-          void logReview(prId, `Tier 1 deterministic checks: ${summary}`, "info", reviewRunId, reviewChunkId);
-          console.log(`[scan] runPrScan: Tier 1 deterministic checks → ${findings.length} finding(s)`);
+          void logReview(
+            prId,
+            `Tier 1 deterministic checks (${tier1Plan.source} @ ${checkHeadSha.slice(0, 12)}): ${summary}`,
+            "info",
+            reviewRunId,
+            reviewChunkId,
+          );
+          console.log(`[scan] runPrScan: Tier 1 deterministic checks → ${findings.length} finding(s) source=${tier1Plan.source}`);
           return { ok: true, data: findings };
         } catch (err: any) {
           console.warn(`[scan] runPrScan: Tier 1 deterministic checks crashed:`, err);
@@ -1270,29 +1218,25 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
       },
     });
 
-    // Tier 2: containerized checks (install + test/lint in ephemeral container).
-    //         Gated: skipped when Tier 1 found errors (uncompilable code), when
-    //         the per-repo "Skip Tier 2" toggle is enabled, or when the build
-    //         system is not Node.js (only node images ship with working commands).
+    // Tier 2: containerized checks at the same head SHA tools use.
+    //         Local-only: bind-mount tip tree or skip clearly (no empty URL sync).
     pipeline.addStep({
       name: "Tier2: container checks",
       critical: false,
       maxRetries: 2,
       fn: async () => {
-        const skipTier2 = repo?.skipTier2 ?? false;
-        const tier2ShouldRun =
-          (Boolean(repo?.path) || Boolean(repo?.cloneUrl)) &&
-          !skipTier2 && !tier1HadErrors && tier2Supported;
-        if (!tier2ShouldRun) {
-          const reason = skipTier2
-            ? "per-repo toggle"
-            : tier1HadErrors
-              ? "Tier 1 found errors"
-              : !tier2Supported
-                ? "unsupported build system (non-Node.js)"
-                : "no repo path or clone URL";
-          void logReview(prId, `Tier 2 skipped: ${reason}`, "info", reviewRunId, reviewChunkId);
-          console.log(`[scan] runPrScan: Tier 2 skipped — ${reason}`);
+        const tier2Plan = planTier2({
+          headSha: checkHeadSha,
+          cloneUrl: repo?.cloneUrl,
+          tipRootPath: tipRootForTier2,
+          skipTier2: repo?.skipTier2 ?? false,
+          tier1HadErrors,
+          tier2Supported,
+          hasPathOrClone: Boolean(repo?.path) || Boolean(repo?.cloneUrl),
+        });
+        if (tier2Plan.action === "skip") {
+          void logReview(prId, `Tier 2 skipped: ${tier2Plan.reason}`, "info", reviewRunId, reviewChunkId);
+          console.log(`[scan] runPrScan: Tier 2 skipped — ${tier2Plan.reason}`);
           return { ok: true, data: [] as DeterministicFinding[] };
         }
         try {
@@ -1305,13 +1249,14 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
           if (repo?.patCipher && repo?.patIv && repo?.patTag && hasMasterKey()) {
             pat = decryptSecret(repo.patCipher, repo.patIv, repo.patTag);
           }
-          const tier2Image = shouldRunHostTier1(repo) && repo.path
+          const tier2Image = shouldRunHostTier1(repo) && tipRootForTier2
             ? runnerImage
             : (repo.runnerImage ?? "node:20-alpine");
           const tier2Findings = await runContainerizedChecks({
             repoId: repo.id,
-            cloneUrl: repo.cloneUrl ?? "",
-            commitHash: pr.commitHash,
+            cloneUrl: tier2Plan.action === "sync" ? tier2Plan.cloneUrl : "",
+            commitHash: tier2Plan.commitHash,
+            hostBindPath: tier2Plan.action === "bind" ? tier2Plan.hostPath : undefined,
             deployKey,
             pat,
             runnerImage: tier2Image,
@@ -1321,7 +1266,7 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
             reviewRunId,
             reviewChunkId,
           });
-          console.log(`[scan] runPrScan: Tier 2 containerized checks → ${tier2Findings.length} finding(s)`);
+          console.log(`[scan] runPrScan: Tier 2 containerized checks → ${tier2Findings.length} finding(s) head=${tier2Plan.commitHash.slice(0, 12)} mode=${tier2Plan.action}`);
           return { ok: true, data: tier2Findings };
         } catch (err: any) {
           console.warn(`[scan] runPrScan: Tier 2 containerized checks crashed:`, err);
@@ -1334,33 +1279,39 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
     // Run the pipeline — retries on infrastructure errors, aborts if they
     // persist (infrastructure_failure), collects findings from code errors
     // and continues for non-critical steps.
-    const pipelineResult = await pipeline.run();
-    deterministicFindings = pipelineResult.findings;
+    try {
+      const pipelineResult = await pipeline.run();
+      deterministicFindings = pipelineResult.findings;
 
-    if (pipelineResult.aborted) {
-      const isInfra = pipelineResult.infrastructureFailure;
-      const stepName = pipelineResult.lastStepName ?? "unknown";
-      void logReview(
-        prId, `Pipeline aborted at step "${stepName}"${isInfra ? " (infrastructure failure)" : ""} — aborting scan`,
-        "error", reviewRunId, reviewChunkId,
-      );
-      console.log(`[scan] runPrScan: pipeline aborted at step "${stepName}" (infrastructure=${isInfra})`);
-      if (reviewRunId && !reviewChunkId) {
-        await completeReviewRun(reviewRunId, { status: "failed" });
+      if (pipelineResult.aborted) {
+        const isInfra = pipelineResult.infrastructureFailure;
+        const stepName = pipelineResult.lastStepName ?? "unknown";
+        void logReview(
+          prId, `Pipeline aborted at step "${stepName}"${isInfra ? " (infrastructure failure)" : ""} — aborting scan`,
+          "error", reviewRunId, reviewChunkId,
+        );
+        console.log(`[scan] runPrScan: pipeline aborted at step "${stepName}" (infrastructure=${isInfra})`);
+        if (reviewRunId && !reviewChunkId) {
+          await completeReviewRun(reviewRunId, { status: "failed" });
+        }
+        if (!reviewChunkId) {
+          await prisma.pullRequest.updateMany({ where: { id: prId }, data: { status: "Failed" } });
+        }
+        return {
+          success: false,
+          rating: null,
+          findings: deterministicFindings,
+          usedModel: "none",
+          systemWarn: isInfra
+            ? `Infrastructure failure in step "${stepName}". Check server logs and try again.`
+            : `Scan aborted at step "${stepName}".`,
+          infrastructureFailure: isInfra,
+        };
       }
-      if (!reviewChunkId) {
-        await prisma.pullRequest.updateMany({ where: { id: prId }, data: { status: "Failed" } });
-      }
-      return {
-        success: false,
-        rating: null,
-        findings: deterministicFindings,
-        usedModel: "none",
-        systemWarn: isInfra
-          ? `Infrastructure failure in step "${stepName}". Check server logs and try again.`
-          : `Scan aborted at step "${stepName}".`,
-        infrastructureFailure: isInfra,
-      };
+    } finally {
+      // Drop tip worktree(s) after Tier 1+2 (bind path no longer needed).
+      cleanupTipTrees();
+      tipRootForTier2 = null;
     }
   }
 
@@ -1595,148 +1546,33 @@ ${diffPayload}${deterministicPayload}`;
                 let resultSummary = "no results";
                 try {
                   if (fnName === "searchCodebase") {
-                    // Overlay-first: tip symbols (including tip-only) then base index.
-                    const overlay = tipOverlay;
-                    const overlayHits: GraphSymbolHit[] = overlay
-                      ? searchTipOverlay(overlay, fnArgs.query, 10).map((s) => ({
-                          id: s.id,
-                          name: s.name,
-                          kind: s.kind,
-                          filePath: s.filePath,
-                          lineStart: s.lineStart,
-                          lineEnd: s.lineEnd,
-                          summary: s.summary ?? null,
-                          source: "tip" as const,
-                        }))
-                      : [];
-                    const baseItems = await prisma.symbol.findMany({
+                    const items = await prisma.symbol.findMany({
                       where: { repoId: pr.repoId, name: { contains: fnArgs.query } },
                       take: 10,
                       select: { id: true, name: true, kind: true, filePath: true, lineStart: true, lineEnd: true, summary: true },
                     });
-                    const baseHits: GraphSymbolHit[] = (baseItems || []).map((s) => ({
-                      ...s,
-                      source: "base" as const,
-                    }));
-                    const items = mergeSymbolSearchResults(overlayHits, baseHits, 10);
-                    if (items.length > 0) {
+                    if (items && items.length > 0) {
                       toolResult = JSON.stringify(items);
                       resultSummary = `${items.length} results`;
                     }
                   } else if (fnName === "getCallers") {
-                    const overlay = tipOverlay;
-                    const symbolId = typeof fnArgs.symbolId === "string" ? fnArgs.symbolId : "";
-                    // Tip overlay edges may target tip ids; base edges use base ids.
-                    // When lineStart shifted they differ — query both + name aliases.
-                    const calleeIds = new Set<string>();
-                    if (symbolId) calleeIds.add(symbolId);
-                    const tipSym = overlay?.symbols.find((s) => s.id === symbolId);
-                    if (tipSym) {
-                      const baseAliases = await prisma.symbol.findMany({
-                        where: {
-                          repoId: pr.repoId,
-                          filePath: tipSym.filePath,
-                          name: tipSym.name,
-                        },
-                        select: { id: true },
-                      });
-                      for (const b of baseAliases) calleeIds.add(b.id);
-                    } else if (symbolId) {
-                      // Base id in: also pull tip-overlay callers for same path+name.
-                      const baseSym = await prisma.symbol.findUnique({
-                        where: { id: symbolId },
-                        select: { filePath: true, name: true },
-                      });
-                      if (baseSym && overlay) {
-                        for (const s of overlay.symbols) {
-                          if (s.filePath === baseSym.filePath && s.name === baseSym.name) {
-                            calleeIds.add(s.id);
-                          }
-                        }
-                      }
-                    }
-                    const overlayCallers = overlay
-                      ? [...calleeIds].flatMap((id) => getTipOverlayCallers(overlay, id))
-                      : [];
-                    const edges = await prisma.edge.findMany({
-                      where: {
-                        repoId: pr.repoId,
-                        toId: { in: [...calleeIds] },
-                        kind: "CALLS",
-                      },
-                    });
-                    const baseCallers = await Promise.all(
-                      (edges || []).map(async (e) => {
-                        const sym = await prisma.symbol.findUnique({
-                          where: { id: e.fromId },
-                          select: { name: true },
-                        });
+                    const edges = await prisma.edge.findMany({ where: { repoId: pr.repoId, toId: fnArgs.symbolId, kind: "CALLS" } });
+                    if (edges && edges.length > 0) {
+                      const callers = await Promise.all(edges.map(async (e) => {
+                        const sym = await prisma.symbol.findUnique({ where: { id: e.fromId }, select: { name: true } });
                         return {
                           callerName: sym ? sym.name : e.fromId,
                           filePath: e.filePath,
-                          line: e.line,
-                          fromId: e.fromId,
+                          line: e.line
                         };
-                      }),
-                    );
-                    const callers = mergeCallerResults(overlayCallers, baseCallers).map(
-                      ({ callerName, filePath, line }) => ({ callerName, filePath, line }),
-                    );
-                    if (callers.length > 0) {
+                      }));
                       toolResult = JSON.stringify(callers);
-                      resultSummary = `${callers.length} results`;
+                      resultSummary = `${edges.length} results`;
                     }
                   } else if (fnName === "findSimilar") {
-                    // Prefer tip-generation name/signature matches for tip names,
-                    // then fall through to base semantic search.
-                    const overlay = tipOverlay;
-                    const tipSimilar = overlay
-                      ? findTipOverlaySimilar(overlay, fnArgs.query, 5).map((s) => ({
-                          id: s.id,
-                          name: s.name,
-                          kind: s.kind,
-                          filePath: s.filePath,
-                          lineStart: s.lineStart,
-                          lineEnd: s.lineEnd,
-                          signature: s.signature,
-                          summary: s.summary ?? null,
-                          source: "tip" as const,
-                          score: 1,
-                        }))
-                      : [];
                     const { IndexingService: idxSvc } = await import("@/src/services/indexingService");
-                    const baseScored = await idxSvc.semanticSearch(pr.repoId, fnArgs.query, 5);
-                    const baseHits = (baseScored || []).map((s: Record<string, unknown>) => ({
-                      ...s,
-                      source: "base" as const,
-                    }));
-                    const merged = mergeSymbolSearchResults(
-                      tipSimilar.map((s) => ({
-                        id: s.id,
-                        name: s.name,
-                        kind: s.kind,
-                        filePath: s.filePath,
-                        lineStart: s.lineStart,
-                        lineEnd: s.lineEnd,
-                        summary: s.summary,
-                        source: "tip" as const,
-                      })),
-                      baseHits.map((s: { id: string; name: string; kind: string; filePath: string; lineStart: number; lineEnd: number; summary?: string | null }) => ({
-                        id: s.id,
-                        name: s.name,
-                        kind: s.kind,
-                        filePath: s.filePath,
-                        lineStart: s.lineStart,
-                        lineEnd: s.lineEnd,
-                        summary: s.summary ?? null,
-                        source: "base" as const,
-                      })),
-                      5,
-                    );
-                    // Preserve tip score/signature fields when present.
-                    const tipById = new Map(tipSimilar.map((s) => [s.id, s]));
-                    const scored = merged.map((m) => tipById.get(m.id) || baseHits.find((b: { id: string }) => b.id === m.id) || m);
-                    if (scored.length > 0) {
+                    const scored = await idxSvc.semanticSearch(pr.repoId, fnArgs.query, 5);
+                    if (scored && scored.length > 0) {
                       toolResult = JSON.stringify(scored);
                       resultSummary = `${scored.length} results`;
                     }
@@ -2237,13 +2073,9 @@ ${diffPayload}${deterministicPayload}`;
     confidence: typeof finding.confidence === "number" ? finding.confidence : null,
   }));
   const repoPathForVerifier = repo?.localPath || repo?.path;
-  const reviewTree = options?.reviewTree;
-  const verification =
-    reviewTree || repoPathForVerifier
-      ? await verifyFindings(candidates, repoPathForVerifier ?? "", prId, {
-          ...(reviewTree ? { reviewTree } : {}),
-        })
-      : new Map();
+  const verification = repoPathForVerifier
+    ? await verifyFindings(candidates, repoPathForVerifier, prId)
+    : new Map();
   const rejectedCount = Array.from(verification.values()).filter(v => v.status === "rejected").length;
   if (rejectedCount > 0) {
     console.log(`[scan] runPrScan: verifier rejected ${rejectedCount}/${candidates.length} finding(s)`);
@@ -2280,7 +2112,6 @@ ${diffPayload}${deterministicPayload}`;
         prId,
         skepticSettings,
         onSkepticLog,
-        reviewTree ? { reviewTree } : undefined,
       );
       skepticMap = skepticResult.verdicts;
       const t = skepticResult.telemetry;
