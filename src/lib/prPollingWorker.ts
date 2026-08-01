@@ -4,9 +4,10 @@
  * Used when Dragnet runs behind a firewall or on a local machine where
  * Git webhooks cannot reach the server. For each remote repo with
  * `isPollingEnabled = true`, we query the GitHub API for all open PRs
- * targeting the repo's baseBranch and compare the head commit SHA
- * against what's stored in `pull_requests.commitHash`. If it changed,
- * we update the record and trigger a review scan.
+ * (including stacked PRs whose target is not the repo default base) and
+ * compare the head commit SHA against what's stored in
+ * `pull_requests.commitHash`. If it changed, we update the record and
+ * trigger a review scan.
  *
  * Rate limiting:
  *   - One polling cycle at a time; the timer fires every POLL_INTERVAL_MS.
@@ -194,10 +195,9 @@ export async function pollOnce(triggerScan: TriggerScan): Promise<void> {
     }
 
     // Match GitHub PRs to local DB records by sourceBranch.
+    // Do not drop PRs whose target differs from the repo default base —
+    // stacked PRs target a parent branch and must still be discovered.
     for (const ghPr of ghPrs) {
-      const targetBranch = ghPr.base?.ref ?? repo.baseBranch;
-      if (targetBranch !== repo.baseBranch) continue;
-
       const matchResult = matchLocalPr(repo.pullRequests as LocalPrRow[], ghPr.number, ghPr.head.ref);
       if (matchResult.kind === "ambiguous") {
         console.warn(

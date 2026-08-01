@@ -407,9 +407,10 @@ describe("pollHostedRepos", () => {
     }, { automatic: true, triggerReason: "polling" });
   });
 
-  it("ignores hosted PRs targeting a different base branch", async () => {
+  it("discovers stacked PRs targeting a non-default base branch", async () => {
     mockState.dbFixtures = [baseRepo];
     mockState.existingPrs.set("repo-1:feature:main", null);
+    mockState.existingPrs.set("repo-1:feature:release", null);
     fetchSpy = vi.spyOn(global, "fetch").mockResolvedValueOnce(
       ghResponse([
         { number: 5, title: "Release fix", ref: "feature", sha: "release-sha", baseRef: "release" },
@@ -419,8 +420,13 @@ describe("pollHostedRepos", () => {
 
     const result = await pollHostedRepos();
 
-    expect(result.scanned).toBe(1);
-    expect(triggerHostedScan).toHaveBeenCalledTimes(1);
+    expect(result.scanned).toBe(2);
+    expect(triggerHostedScan).toHaveBeenCalledTimes(2);
+    expect(triggerHostedScan).toHaveBeenCalledWith(
+      "repo-1",
+      expect.objectContaining({ prNumber: 5, baseBranch: "release" }),
+      { automatic: true, triggerReason: "polling" },
+    );
     expect(triggerHostedScan).toHaveBeenCalledWith(
       "repo-1",
       expect.objectContaining({ prNumber: 6, baseBranch: "main" }),
