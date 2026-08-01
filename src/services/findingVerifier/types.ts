@@ -7,6 +7,8 @@
  * everything below for back-compat.
  */
 
+import type { ReviewTree } from "@/src/lib/reviewTree";
+
 export interface CandidateFinding {
   id: string;
   category: string;
@@ -32,7 +34,16 @@ export interface VerificationResult {
  *                Set when the scan's explicit purpose is to review docs
  *                (a future scan mode). Default false — normal PR code
  *                reviews treat docs as context, not bug locations.
+ *
+ *   reviewTree — tip-bound reader from ensureReviewTree. When set, Stage A
+ *                / A.5 / B load tip content and Stage A rejects use a
+ *                `stale_context:` note prefix. Ambient repoPath is not used
+ *                for file bytes when the tree is present.
  */
 export interface VerifyOptions {
   docsReview?: boolean;
+  reviewTree?: ReviewTree;
 }
+
+/** Prefix for findings whose cited location/snippet is absent on tip. */
+export const STALE_CONTEXT_PREFIX = "stale_context:";
