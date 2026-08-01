@@ -8,9 +8,16 @@ const mocks = vi.hoisted(() => ({
   mockEnqueue: vi.fn(),
   mockCheckDelivery: vi.fn(),
   mockRunPrScan: vi.fn(),
-  mockAdmitAfkScanJobForPr: vi.fn((input: { prId: string }) => {
-    mocks.mockRunPrScan(input.prId);
-    return Promise.resolve({ jobId: `job-${input.prId}`, prId: input.prId, state: "queued", queuePosition: 1 });
+  mockAdmitAfkAfterTipReady: vi.fn(async (raw: unknown) => {
+    const input = raw as {
+      prIds: string[];
+      event?: { githubPrNumber?: number };
+    };
+    for (const prId of input.prIds) mocks.mockRunPrScan(prId);
+    return {
+      admitted: input.prIds.length,
+      preferredPrId: input.event?.githubPrNumber != null ? input.prIds[0] ?? null : null,
+    };
   }),
   mockTriggerHostedScan: vi.fn(),
   mockCreateDeliveryLog: vi.fn(),
@@ -38,8 +45,8 @@ vi.mock("@/src/services/reviewService", () => ({
   runPrScan: mocks.mockRunPrScan,
 }));
 
-vi.mock("@/src/services/scanQueue", () => ({
-  admitAfkScanJobForPr: mocks.mockAdmitAfkScanJobForPr,
+vi.mock("@/src/lib/tipReadyAfk", () => ({
+  admitAfkAfterTipReady: (input: unknown) => mocks.mockAdmitAfkAfterTipReady(input),
 }));
 
 vi.mock("../src/services/hostedScan/orchestrator", () => ({
@@ -96,10 +103,15 @@ describe("webhooks/gitlab/route POST", () => {
     mocks.mockCheckDelivery.mockReturnValue(false);
     mocks.mockScanRepoPrs.mockResolvedValue(["pr-1"]);
     mocks.mockRunPrScan.mockResolvedValue(undefined);
-    mocks.mockAdmitAfkScanJobForPr.mockImplementation((input: { prId: string }) => {
-      mocks.mockRunPrScan(input.prId);
-      return Promise.resolve({ jobId: `job-${input.prId}`, prId: input.prId, state: "queued", queuePosition: 1 });
-    });
+    mocks.mockAdmitAfkAfterTipReady.mockImplementation(
+      async (input: { prIds: string[]; event?: { githubPrNumber?: number } }) => {
+        for (const prId of input.prIds) mocks.mockRunPrScan(prId);
+        return {
+          admitted: input.prIds.length,
+          preferredPrId: input.event?.githubPrNumber != null ? input.prIds[0] ?? null : null,
+        };
+      },
+    );
     mocks.mockCreateDeliveryLog.mockResolvedValue("del-1");
     mocks.mockUpdateDeliveryStatus.mockResolvedValue(undefined);
     mocks.mockTriggerHostedScan.mockResolvedValue({ ok: true, prId: "pr-42" });

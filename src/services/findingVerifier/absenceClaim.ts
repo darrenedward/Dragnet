@@ -28,7 +28,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { resolveSafePath } from "@/src/lib/pathSafety";
+import type { ReviewTree } from "@/src/lib/reviewTree";
 import type { CandidateFinding, VerificationResult } from "../findingVerifier";
+
+export interface AbsenceClaimOptions {
+  reviewTree?: ReviewTree;
+}
 
 // ─── Explanation-text extraction (also used by Stage A) ───────────────
 
@@ -205,12 +210,37 @@ function looksLikePath(value: string): boolean {
 
 /**
  * Check if a candidate path exists, trying multiple base directories.
- * Returns the resolved path that exists, or null.
+ * Returns the resolved path that exists (or tip-relative path), or null.
  *
  * For URL-shaped candidates (`/api/skills/import-pack`), tries Next.js
  * App Router conventions: `src/app<url>/route.ts`, `app<url>/route.ts`.
+ *
+ * When `reviewTree` is set, existence is tip-bound (readFile !== null).
  */
-export function pathExists(repoPath: string, candidate: string): string | null {
+export async function pathExists(
+  repoPath: string,
+  candidate: string,
+  options: AbsenceClaimOptions = {},
+): Promise<string | null> {
+  const tip = options.reviewTree;
+
+  const tipHas = async (rel: string): Promise<string | null> => {
+    if (!tip) return null;
+    try {
+      const body = await tip.readFile(rel);
+      return body !== null ? rel : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const ambientHas = (rel: string): string | null => {
+    if (!repoPath) return null;
+    const resolved = resolveSafePath(repoPath, rel);
+    if (resolved && fs.existsSync(resolved)) return resolved;
+    return null;
+  };
+
   // URL → route file conversion. /api/foo/bar → src/app/api/foo/bar/route.ts
   if (/^\/(?:api|repos|hooks|webhooks)\//.test(candidate)) {
     const bases = ["src/app", "app", "src/pages/api", "pages/api"];
@@ -218,22 +248,38 @@ export function pathExists(repoPath: string, candidate: string): string | null {
     for (const base of bases) {
       for (const ext of exts) {
         const rel = `${base}${candidate}/${ext}`;
-        const resolved = resolveSafePath(repoPath, rel);
-        if (resolved && fs.existsSync(resolved)) return resolved;
+        if (tip) {
+          const hit = await tipHas(rel);
+          if (hit) return hit;
+        } else {
+          const hit = ambientHas(rel);
+          if (hit) return hit;
+        }
       }
     }
     return null;
   }
 
   // Try as-is first.
-  const direct = resolveSafePath(repoPath, candidate);
-  if (direct && fs.existsSync(direct)) return direct;
+  if (tip) {
+    const direct = await tipHas(candidate);
+    if (direct) return direct;
+  } else {
+    const direct = ambientHas(candidate);
+    if (direct) return direct;
+  }
 
   // Try common roots if the candidate is a bare filename.
   const prefixes = ["src/", "app/", "pages/", ""];
   for (const prefix of prefixes) {
-    const resolved = resolveSafePath(repoPath, prefix + candidate);
-    if (resolved && fs.existsSync(resolved)) return resolved;
+    const rel = prefix + candidate;
+    if (tip) {
+      const hit = await tipHas(rel);
+      if (hit) return hit;
+    } else {
+      const hit = ambientHas(rel);
+      if (hit) return hit;
+    }
   }
 
   return null;
@@ -243,13 +289,66 @@ export function pathExists(repoPath: string, candidate: string): string | null {
  * Check if a symbol/package is referenced anywhere in the repo's source.
  * Uses grep under the hood; times out after 5s on huge repos.
  *
+ * When tip-bound with a local repoPath, prefers `git grep` at headSha so
+ * ambient main checkout cannot falsely prove usage.
+ *
  * Returns the first matching `file:line` string (repo-relative), or null.
  */
-export function symbolIsUsed(repoPath: string, candidate: string): string | null {
+export function symbolIsUsed(
+  repoPath: string,
+  candidate: string,
+  options: AbsenceClaimOptions = {},
+): string | null {
   if (!isSearchableSymbol(candidate)) return null;
+  if (!repoPath) return null;
 
   // Escape regex metacharacters so the candidate is matched literally.
   const pattern = candidate.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+  const headSha = options.reviewTree?.headSha;
+  if (headSha && /^[0-9a-f]{7,40}$/i.test(headSha)) {
+    try {
+      // git grep at tip tree — independent of working-tree branch.
+      const result = execFileSyncSafe(
+        "git",
+        [
+          "-C",
+          repoPath,
+          "grep",
+          "-n",
+          "-I",
+          "-e",
+          pattern,
+          headSha,
+          "--",
+          "*.ts",
+          "*.tsx",
+          "*.js",
+          "*.jsx",
+          "*.mjs",
+          "*.cjs",
+        ],
+        repoPath,
+        5000,
+      );
+      if (!result) return null;
+      // Output: <sha>:path:line:content — strip sha prefix.
+      const firstLine = result.split("\n")[0] || "";
+      const withoutSha = firstLine.replace(new RegExp(`^${headSha}:`), "");
+      const parts = withoutSha.split(":");
+      if (parts.length >= 2) return `${parts[0]}:${parts[1]}`;
+      return null;
+    } catch {
+      // Fall through to ambient grep only when tip grep fails hard.
+    }
+  }
+
+  // Ambient working-tree grep (legacy path when no tip tree).
+  if (options.reviewTree) {
+    // Tip-bound but git grep failed — do not prove usage from ambient main.
+    return null;
+  }
+
   const args = [
     "-r", "-n",
     "--include=*.ts",
@@ -320,12 +419,13 @@ function execFileSyncSafe(cmd: string, args: string[], cwd: string, timeoutMs: n
  * Stage A.5 entry point. Returns:
  *   - null if no absence phrase matched (fall through to Stage B)
  *   - { status: "verified" } if claim is correct (candidates all genuinely absent)
- *   - { status: "rejected", note } if filesystem contradicts the claim
+ *   - { status: "rejected", note } if tip/FS contradicts the claim
  */
-export function checkAbsenceClaim(
+export async function checkAbsenceClaim(
   finding: CandidateFinding,
   repoPath: string,
-): VerificationResult | null {
+  options: AbsenceClaimOptions = {},
+): Promise<VerificationResult | null> {
   const phrase = matchAbsencePhrase(finding.explanation || "");
   if (!phrase) return null;
 
@@ -336,21 +436,30 @@ export function checkAbsenceClaim(
     return null;
   }
 
+  const tipBound = Boolean(options.reviewTree);
+  const prefix = tipBound
+    ? "absence_claim_contradicted_by_tip"
+    : "absence_claim_contradicted_by_fs";
+
   for (const candidate of candidates) {
     if (candidate.kind === "path") {
-      const exists = pathExists(repoPath, candidate.value);
+      const exists = await pathExists(repoPath, candidate.value, options);
       if (exists) {
+        const where =
+          tipBound || !repoPath || !path.isAbsolute(exists)
+            ? exists
+            : path.relative(repoPath, exists);
         return {
           status: "rejected",
-          note: `absence_claim_contradicted_by_fs: phrase "${phrase}" but path "${candidate.value}" exists at ${path.relative(repoPath, exists)}`,
+          note: `${prefix}: phrase "${phrase}" but path "${candidate.value}" exists at ${where}`,
         };
       }
     } else {
-      const usedAt = symbolIsUsed(repoPath, candidate.value);
+      const usedAt = symbolIsUsed(repoPath, candidate.value, options);
       if (usedAt) {
         return {
           status: "rejected",
-          note: `absence_claim_contradicted_by_fs: phrase "${phrase}" but symbol "${candidate.value}" is referenced at ${usedAt}`,
+          note: `${prefix}: phrase "${phrase}" but symbol "${candidate.value}" is referenced at ${usedAt}`,
         };
       }
     }
@@ -360,6 +469,8 @@ export function checkAbsenceClaim(
   // The absence claim is correct.
   return {
     status: "verified",
-    note: `absence claim verified: ${candidates.length} candidate(s) all confirmed absent`,
+    note: tipBound
+      ? `absence claim verified on tip: ${candidates.length} candidate(s) all confirmed absent`
+      : `absence claim verified: ${candidates.length} candidate(s) all confirmed absent`,
   };
 }

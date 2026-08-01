@@ -366,18 +366,29 @@ describe("refreshPrFiles — concurrent call chaining (issue #13)", () => {
       return { count: 1 };
     });
     mocks.mockRepoFindUnique.mockResolvedValue({ id: "r1", baseBranch: "main" });
+    mocks.mockPrFindUnique.mockResolvedValue({
+      targetBranch: "main",
+      commitHash: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      sourceBranch: "feature/q",
+    });
 
-    // The local path branch skips runGitInRepo, so we don't bother
-    // mocking it for collectBranchFiles — instead we short-circuit via
-    // a fresh tmp repo. Patch collectBranchFiles indirectly by using a
-    // real local-path repo with a known commit history.
+    // The local path branch skips runGitInRepo for ref existence checks;
+    // we still mock diffs. Identity resolve needs rev-parse SHAs.
     execFileSync("git", ["-C", tmpDir, "checkout", "-q", "-b", "feature/q"]);
     execFileSync("git", ["-C", tmpDir, "checkout", "-q", "main"]);
 
     // Fill in the remaining prisma mocks expected by collectBranchFiles.
     mocks.mockPrFindMany.mockResolvedValue([]);
-    mocks.mockPrFindUnique.mockResolvedValue(null);
     mocks.mockRunGitInRepo.mockImplementation(async (_r, args) => {
+      if (args[0] === "rev-parse") {
+        const joined = args.join(" ");
+        if (joined.includes("feature/q") || joined.includes("bbbbbbbb")) {
+          return { stdout: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n", stderr: "", exitCode: 0 };
+        }
+        if (joined.includes("main") || joined.includes("aaaaaaaa")) {
+          return { stdout: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n", stderr: "", exitCode: 0 };
+        }
+      }
       if (args[0] === "show-ref" && args[2] === "refs/heads/main") {
         return { stdout: "", stderr: "", exitCode: 0 };
       }
@@ -434,10 +445,23 @@ describe("refreshPrFiles — concurrent call chaining (issue #13)", () => {
 describe("refreshPrFiles — failOnSyncError (scan prelude path)", () => {
   it("throws on missing branch ref when failOnSyncError is set", async () => {
     mocks.mockRepoFindUnique.mockResolvedValue({ id: "r-remote", baseBranch: "main" });
+    mocks.mockPrFindUnique.mockResolvedValue({
+      targetBranch: "main",
+      commitHash: "",
+      sourceBranch: "feature/missing",
+    });
     mocks.mockPrFileDeleteMany.mockResolvedValue({ count: 0 });
     mocks.mockRunGitInRepo.mockImplementation(async (_r, args) => {
-      if (args[0] === "rev-parse" && args.includes("refs/heads/feature/missing")) {
-        return { stdout: "", stderr: "fatal", exitCode: 1 };
+      // Identity resolve + collectBranchFiles both rev-parse; fail head ref.
+      if (args[0] === "rev-parse") {
+        const joined = args.join(" ");
+        if (joined.includes("feature/missing") || joined.includes("^{commit}")) {
+          // Allow base main to resolve for identity, fail head.
+          if (joined.includes("main") && !joined.includes("feature")) {
+            return { stdout: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n", stderr: "", exitCode: 0 };
+          }
+          return { stdout: "", stderr: "fatal", exitCode: 1 };
+        }
       }
       return { stdout: "", stderr: "", exitCode: 0 };
     });
@@ -447,14 +471,23 @@ describe("refreshPrFiles — failOnSyncError (scan prelude path)", () => {
 
     await expect(
       refreshPrFiles(repo, "feature/missing", "pr-fail-1", { failOnSyncError: true }),
-    ).rejects.toThrow(/branch feature\/missing not found/);
+    ).rejects.toThrow(/not found/);
   });
 
   it("returns empty list on missing branch when failOnSyncError is unset (legacy)", async () => {
     mocks.mockRepoFindUnique.mockResolvedValue({ id: "r-remote", baseBranch: "main" });
+    mocks.mockPrFindUnique.mockResolvedValue({
+      targetBranch: "main",
+      commitHash: "",
+      sourceBranch: "feature/missing",
+    });
     mocks.mockPrFileDeleteMany.mockResolvedValue({ count: 0 });
     mocks.mockRunGitInRepo.mockImplementation(async (_r, args) => {
-      if (args[0] === "rev-parse" && args.includes("refs/heads/feature/missing")) {
+      if (args[0] === "rev-parse") {
+        const joined = args.join(" ");
+        if (joined.includes("main") && !joined.includes("feature")) {
+          return { stdout: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n", stderr: "", exitCode: 0 };
+        }
         return { stdout: "", stderr: "fatal", exitCode: 1 };
       }
       return { stdout: "", stderr: "", exitCode: 0 };

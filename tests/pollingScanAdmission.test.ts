@@ -1,10 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { scanJob, repository, pullRequest, jobs } = vi.hoisted(() => ({
+const { scanJob, repository, pullRequest, jobs, ensureTipReady } = vi.hoisted(() => ({
   scanJob: { upsert: vi.fn(), count: vi.fn(), updateMany: vi.fn() },
   repository: { findMany: vi.fn() },
-  pullRequest: { create: vi.fn(), update: vi.fn() },
+  pullRequest: {
+    create: vi.fn(),
+    update: vi.fn(),
+    findUnique: vi.fn(),
+  },
   jobs: new Map<string, Record<string, unknown>>(),
+  ensureTipReady: vi.fn(),
 }));
 
 vi.mock("@/src/lib/prisma", () => ({
@@ -17,6 +22,13 @@ vi.mock("@/src/lib/autoRescanPolicy", () => ({
   isAutoRescanEnabled: () => true,
   isAutoRescanEnabledForRepo: vi.fn(async () => true),
 }));
+vi.mock("@/src/lib/tipReadyAfk", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/src/lib/tipReadyAfk")>();
+  return {
+    ...actual,
+    ensureTipReady: (...args: unknown[]) => ensureTipReady(...args),
+  };
+});
 
 import { pollOnce } from "@/src/lib/prPollingWorker";
 
@@ -61,6 +73,20 @@ describe("polling scan admission", () => {
       return data;
     });
     pullRequest.update.mockResolvedValue({});
+    pullRequest.findUnique.mockImplementation(async ({ where }: { where: { id: string } }) => ({
+      id: where.id,
+      commitHash: "sha-1",
+      status: "Pending",
+      sourceBranch: "feature/7",
+      targetBranch: "main",
+      repoId: "repo-1",
+    }));
+    ensureTipReady.mockImplementation(async (opts: { prId: string; providerHeadSha?: string }) => ({
+      ok: true,
+      prId: opts.prId,
+      headSha: opts.providerHeadSha || "sha-1",
+      mode: "hash-only",
+    }));
   });
 
   it("admits the observed SHA as automatic work", async () => {
@@ -68,6 +94,13 @@ describe("polling scan admission", () => {
 
     await admitPollingScan({ repoId: "repo-1", prId: "pr-1", commitHash: "sha-1" });
 
+    expect(ensureTipReady).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prId: "pr-1",
+        providerHeadSha: "sha-1",
+        requireClone: false,
+      }),
+    );
     expect(scanJob.upsert).toHaveBeenCalledWith(expect.objectContaining({
       where: { prId_commitHash: { prId: "pr-1", commitHash: "sha-1" } },
       create: expect.objectContaining({
@@ -78,6 +111,22 @@ describe("polling scan admission", () => {
       }),
       update: {},
     }));
+  });
+
+  it("does not AFK-admit when tip-ready fails", async () => {
+    ensureTipReady.mockResolvedValueOnce({
+      ok: false,
+      gate: "TIP_CONTEXT_FAILED",
+      reason: "no tip",
+    });
+    const { admitPollingScan } = await import("@/src/lib/pollingScanAdmission");
+    const result = await admitPollingScan({
+      repoId: "repo-1",
+      prId: "pr-1",
+      commitHash: "sha-1",
+    });
+    expect(result).toBeNull();
+    expect(scanJob.upsert).not.toHaveBeenCalled();
   });
 
   it("coalesces repeated polling admission for one revision", async () => {
