@@ -152,6 +152,7 @@ describe("GET /api/prs/[prId]/findings — outcome field (#19)", () => {
       rejectedFindings: [],
       rejectedCount: 0,
       stale: false,
+      staleReason: null,
     });
 
     const res = await GET(makeFindingsRequest("pr-skip"), {
@@ -197,6 +198,7 @@ describe("GET /api/prs/[prId]/findings — outcome field (#19)", () => {
       rejectedFindings: [],
       rejectedCount: 0,
       stale: false,
+      staleReason: null,
     });
 
     const res = await GET(makeFindingsRequest("pr-success"), {
@@ -242,6 +244,7 @@ describe("GET /api/prs/[prId]/findings — outcome field (#19)", () => {
       rejectedFindings: [],
       rejectedCount: 0,
       stale: false,
+      staleReason: null,
     });
 
     const res = await GET(makeFindingsRequest("pr-null"), {
@@ -261,6 +264,7 @@ describe("GET /api/prs/[prId]/findings — outcome field (#19)", () => {
       rejectedFindings: [],
       rejectedCount: 0,
       stale: false,
+      staleReason: null,
     });
 
     const res = await GET(makeFindingsRequest("pr-none"), {
@@ -299,6 +303,7 @@ describe("GET /api/prs/[prId]/findings — outcome field (#19)", () => {
       rejectedFindings: [],
       rejectedCount: 0,
       stale: false,
+      staleReason: null,
     });
 
     const res = await GET(makeFindingsRequest("pr-failed"), {
@@ -321,6 +326,7 @@ describe("GET /api/prs/[prId]/findings — outcome field (#19)", () => {
       rejectedFindings: [],
       rejectedCount: 0,
       stale: false,
+      staleReason: null,
     });
     scanQueueMocks.getLatestScanJobForPr.mockResolvedValue({
       jobId: "job-1",
@@ -349,6 +355,7 @@ describe("GET /api/prs/[prId]/findings — outcome field (#19)", () => {
       rejectedFindings: [],
       rejectedCount: 0,
       stale: false,
+      staleReason: null,
     });
     scanQueueMocks.getScanJobForPr.mockResolvedValue({
       jobId: "job-active",

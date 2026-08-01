@@ -13,10 +13,12 @@ mergeReady =
   AND rating is non-null and >= 8
   AND reliability is absent-or-complete
   AND not refused
-  AND not stale vs current revision when known
+  AND not stale vs current tip (commit identity) / revision when known
 ```
 
-**Trust-but-verify mandate.** Dragnet's `prlist` topology (`stackDepth`, `dependencies`, `unscannedDepsCount`) may be stale (`targetBranch` is set at PR creation). The skill MUST run `gh pr list --json baseRefName,headRefName` for the authoritative stack. Dragnet topology is a hint; `gh` is truth for GitHub graph state. Dragnet **`mergeReady`** is truth for review eligibility.
+`stale` / `staleReason: "tip_mismatch"` means the completed run does not match the current PR tip — exclude from merge candidates and re-scan.
+
+**Trust-but-verify mandate.** Dragnet's `prlist` topology (`stackDepth`, `dependencies`, `unscannedDepsCount`) is advisory. DB `targetBranch` is re-synced when poller/API discovery runs, but can lag a retarget between syncs. The skill MUST run `gh pr list --json baseRefName,headRefName` for the authoritative stack. Dragnet topology is a hint; `gh` is truth for GitHub graph state. Dragnet **`mergeReady`** is truth for review eligibility (includes tip-identity freshness).
 
 ## Commands
 

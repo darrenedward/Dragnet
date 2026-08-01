@@ -20,6 +20,8 @@ import {
 } from "./layoutCPills";
 import { mergeReadyLabel, type MergeReadyResult } from "./mergeReady";
 import type { PrSizeTier } from "./prSizeProfile";
+import type { ReviewStaleReason } from "./reviewStale";
+import { reviewStaleLabel } from "./reviewStale";
 
 export type LayoutCHeaderChipId =
   | "status"
@@ -54,6 +56,9 @@ export type LayoutCHeaderChipInput = {
   size?: PrSizeTier | { tier: PrSizeTier } | null;
   /** Latest rating for the rating pill (null → "no score"). */
   rating?: number | null;
+  /** When the completed run is stale vs tip/diff. */
+  stale?: boolean | null;
+  staleReason?: ReviewStaleReason | null;
 };
 
 const ORDER: LayoutCHeaderChipId[] = [
@@ -154,6 +159,8 @@ function mergeFromGate(
   merge: MergeReadyResult,
   blockedGate: string | null | undefined,
   checks: SeamChip | undefined,
+  stale?: boolean | null,
+  staleReason?: ReviewStaleReason | null,
 ): LayoutCHeaderChip {
   // Blocked-at-{gate} is the single clear signal when a prelude gate refused work.
   if (blockedGate) {
@@ -176,6 +183,18 @@ function mergeFromGate(
       label: "merge ready",
       tone: "green",
       tooltip,
+    };
+  }
+
+  // Stale / tip-mismatch: keep the not-ready chip, name tip in the label.
+  if (merge.mergeBlockReason === "stale" || stale === true) {
+    const tipLabel =
+      staleReason === "tip_mismatch" ? "tip mismatch" : "stale review";
+    return {
+      id: "merge",
+      label: tipLabel,
+      tone: "amber",
+      tooltip: merge.message ?? reviewStaleLabel(staleReason),
     };
   }
 
@@ -207,13 +226,39 @@ export function buildLayoutCHeaderChips(
     queuePosition: input.queuePosition,
   });
   const size = presentSizePill(input.size);
-  const rating = presentRatingPill(input.rating);
+  const ratingSeam = findSeam(input.seams, "rating");
+  // Prefer seam rating presentation when stale/tip-mismatch so the chip
+  // row matches "tip stale" language instead of a bare score.
+  const ratingPill = presentRatingPill(input.rating);
+  const rating: LayoutCHeaderChip =
+    ratingSeam && (input.stale === true || input.merge.mergeBlockReason === "stale")
+      ? {
+          id: "rating",
+          label:
+            ratingSeam.detail === "tip stale"
+              ? "tip stale"
+              : ratingPill.label,
+          tone: seamToneToPill(ratingSeam.tone),
+          tooltip: ratingSeam.title || ratingPill.tooltip,
+        }
+      : {
+          id: "rating",
+          label: ratingPill.label,
+          tone: ratingPill.tone,
+          tooltip: ratingPill.tooltip,
+        };
 
   const webhook = webhookFromSeam(findSeam(input.seams, "webhook"));
   const cloned = clonedFromSeam(findSeam(input.seams, "clone"));
   const indexed = indexedFromSeam(findSeam(input.seams, "index"));
   const checks = findSeam(input.seams, "checks");
-  const merge = mergeFromGate(input.merge, input.blockedGate, checks);
+  const merge = mergeFromGate(
+    input.merge,
+    input.blockedGate,
+    checks,
+    input.stale,
+    input.staleReason,
+  );
 
   const byId: Record<LayoutCHeaderChipId, LayoutCHeaderChip> = {
     status: {
@@ -231,12 +276,7 @@ export function buildLayoutCHeaderChips(
     webhook,
     cloned,
     indexed,
-    rating: {
-      id: "rating",
-      label: rating.label,
-      tone: rating.tone,
-      tooltip: rating.tooltip,
-    },
+    rating,
     merge,
   };
 

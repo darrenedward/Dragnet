@@ -63,6 +63,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ prIdOrNu
       productionGrade: isProduction,
       reviewRun: latest.reviewRun,
       stale: latest.stale,
+      staleReason: latest.staleReason,
       rejectedCount: latest.rejectedCount,
       sizeProfile,
       comments: latest.findings.map(f => ({

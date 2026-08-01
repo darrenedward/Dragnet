@@ -249,6 +249,16 @@ describe("header merge chip ↔ shared isMergeReady (findings parity)", () => {
       expectReady: false,
     },
     {
+      name: "tip mismatch",
+      seam: healthySeam({
+        rating: 9,
+        stale: true,
+        staleReason: "tip_mismatch",
+      }),
+      rating: 9,
+      expectReady: false,
+    },
+    {
       name: "refused",
       seam: healthySeam({ rating: 9, refused: true }),
       rating: 9,
@@ -265,6 +275,7 @@ describe("header merge chip ↔ shared isMergeReady (findings parity)", () => {
         reliability: c.seam.reliability,
         refused: c.seam.refused,
         stale: c.seam.stale,
+        staleReason: c.seam.staleReason,
       });
       expect(gate.mergeReady).toBe(c.expectReady);
 
@@ -276,10 +287,16 @@ describe("header merge chip ↔ shared isMergeReady (findings parity)", () => {
         rating: c.rating,
       });
       const merge = model.chips.find((ch) => ch.id === "merge");
-      expect(merge?.label).toBe(c.expectReady ? "merge ready" : "not ready");
       if (c.expectReady) {
+        expect(merge?.label).toBe("merge ready");
         expect(merge?.tone).toBe("green");
       } else {
+        // Stale/tip-mismatch use named labels; other blocks stay "not ready".
+        if (c.seam.stale) {
+          expect(merge?.label).toMatch(/tip mismatch|stale review/);
+        } else {
+          expect(merge?.label).toBe("not ready");
+        }
         expect(merge?.tone).not.toBe("green");
       }
     });

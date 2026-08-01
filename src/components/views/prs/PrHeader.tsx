@@ -65,6 +65,7 @@ export interface PrHeaderProps {
   blockedGate?: string | null;
   seamInput?: SeamChipInput | null;
   stale?: boolean | null;
+  staleReason?: "tip_mismatch" | "diff_changed" | null;
 }
 
 export default function PrHeader({
@@ -88,6 +89,7 @@ export default function PrHeader({
   blockedGate,
   seamInput,
   stale,
+  staleReason,
 }: PrHeaderProps) {
   const scanSettings = useScanSettingsSummary();
   const scanning = isScanning || activePR?.status === "In Progress";
@@ -124,6 +126,7 @@ export default function PrHeader({
     rating: seamInput?.rating ?? reviewRun?.rating ?? null,
     refused: seamInput?.refused ?? reviewRun?.refused,
     stale: seamInput?.stale ?? stale,
+    staleReason: seamInput?.staleReason ?? staleReason ?? null,
     blockedGate: seamInput?.blockedGate ?? blockedGate,
   };
 
@@ -139,6 +142,7 @@ export default function PrHeader({
     queuePosition: queueJob?.queuePosition ?? null,
     blockedGate: resolvedSeam.blockedGate,
     stale: resolvedSeam.stale,
+    staleReason: resolvedSeam.staleReason,
   });
 
   const { chips, identity, cloneFailed } = model;

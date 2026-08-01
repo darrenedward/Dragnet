@@ -172,6 +172,7 @@ export function useDashboardData() {
     source: string | null;
   }>>([]);
   const [stale, setStale] = useState(false);
+  const [staleReason, setStaleReason] = useState<"tip_mismatch" | "diff_changed" | null>(null);
   const [stability, setStability] = useState<import("@/src/lib/stabilityScore").StabilityProp | null>(null);
   const [logs, setLogs] = useState<ActivityLog[]>([]);
 
@@ -290,6 +291,7 @@ export function useDashboardData() {
       setRejectedCount(0);
       setRejectedFindings([]);
       setStale(false);
+      setStaleReason(null);
       setMergeReady(null);
       setMergeReadyMessage(null);
       setBlockedGate(null);
@@ -365,6 +367,7 @@ export function useDashboardData() {
       setRejectedCount(0);
       setRejectedFindings([]);
       setStale(false);
+      setStaleReason(null);
       setMergeReady(null);
       setMergeReadyMessage(null);
       setBlockedGate(null);
@@ -423,6 +426,11 @@ export function useDashboardData() {
         setRejectedCount(findingsData.rejectedCount ?? 0);
         setRejectedFindings(findingsData.rejectedFindings ?? []);
         setStale(Boolean(findingsData.stale));
+        setStaleReason(
+          findingsData.staleReason === "tip_mismatch" || findingsData.staleReason === "diff_changed"
+            ? findingsData.staleReason
+            : null,
+        );
         setMergeReady(Boolean(findingsData.mergeReady));
         setMergeReadyMessage(
           typeof findingsData.mergeBlockReason === "string"
@@ -453,9 +461,11 @@ export function useDashboardData() {
         setRejectedCount(0);
         setRejectedFindings([]);
         setStale(false);
+        setStaleReason(null);
       }
     } catch (e) {
       setStale(true);
+      setStaleReason(null);
       setMergeReady(null);
       setMergeReadyMessage(null);
       console.error("Failed retrieving PR files/findings detailed block", e);
@@ -664,6 +674,7 @@ export function useDashboardData() {
     setIsScanning(true);
     setScanResult(null);
     setStale(false);
+    setStaleReason(null);
 
     // Optimistic clear of the prior completed run so the UI instantly
     // flips to "scanning" instead of showing the stale rating + findings
@@ -1248,6 +1259,7 @@ export function useDashboardData() {
       rejectedCount,
       rejectedFindings,
       stale,
+      staleReason,
       stability,
       repoIndexedAt: repos.find((repo) => repo.id === selectedRepoId)?.indexedAt ?? null,
       interruptedScan,

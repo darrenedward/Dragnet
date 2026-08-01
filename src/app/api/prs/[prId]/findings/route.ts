@@ -40,9 +40,9 @@ const CHUNK_SELECT = {
  *   Null/empty when no scan is active.
  * - `sizeProfile`: tier (normal/large/oversized) for the PR's current diff.
  *
- * `stale` is true when the PR's current PrFile diff doesn't match the
- * completed run's recorded diffHash (i.e. the diff has moved since the
- * review).
+ * `stale` is true when the completed run no longer matches the PR tip
+ * commit and/or the current PrFile diff. `staleReason` is
+ * `tip_mismatch` | `diff_changed` when stale.
  */
 export async function GET(req: Request, { params }: { params: Promise<{ prId: string }> }) {
   // Route-level auth: findings expose review content for the PR. proxy.ts
@@ -148,6 +148,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ prId: st
         rejectedCount: 0,
         regressions: [],
         stale: false,
+        staleReason: null,
         mergeReady: noRun.mergeReady,
         mergeBlockReason: noRun.mergeBlockReason,
         mergeReadyMessage: blockedGate
@@ -178,6 +179,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ prId: st
       reliability: latest.reviewRun.reliability,
       refused: latest.reviewRun.refused,
       stale: latest.stale,
+      staleReason: latest.staleReason,
       status: latest.reviewRun.status,
     });
 
@@ -214,6 +216,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ prId: st
       rejectedCount: latest.rejectedCount,
       regressions: latest.regressions,
       stale: latest.stale,
+      staleReason: latest.staleReason,
       stability,
       sizeProfile,
       chunks,

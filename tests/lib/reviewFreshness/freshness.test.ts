@@ -221,6 +221,67 @@ describe("reviewFreshness > freshness gate", () => {
   // the surviving row disappears from the PR page (the log says "1 finding"
   // but the page renders 0).
 
+  describe("getLatestCompletedReview — tip identity stale", () => {
+    it("marks tip_mismatch when run commit differs from PR tip", async () => {
+      // Empty runDiff so only tip identity can mark stale (tip check is first).
+      prismaMocks.reviewRunFindFirst.mockResolvedValue({
+        id: "run-old",
+        commitHash: "commit-old-tip",
+        diffHash: "",
+        reviewConfigHash: "config-current",
+        completedAt: new Date("2026-07-14T00:00:00Z"),
+        rating: 9,
+        model: "test-model",
+        triggerReason: "manual",
+        reliability: "complete",
+        refused: false,
+        refusalNote: null,
+        outcome: "reviewed",
+        status: "completed",
+        chunksTotal: 0,
+        chunksCompleted: 0,
+        chunksFailed: 0,
+        chunksSkipped: 0,
+        tokensUsed: null,
+      });
+      prismaMocks.pullRequestFindUnique.mockResolvedValue({ commitHash: "commit-new-tip" });
+      prismaMocks.prFileFindMany.mockResolvedValue([]);
+
+      const latest = await getLatestCompletedReview("pr-1");
+      expect(latest.stale).toBe(true);
+      expect(latest.staleReason).toBe("tip_mismatch");
+    });
+
+    it("is fresh when tip and empty diffs match", async () => {
+      prismaMocks.reviewRunFindFirst.mockResolvedValue({
+        id: "run-fresh",
+        commitHash: "commit-current",
+        diffHash: "",
+        reviewConfigHash: "config-current",
+        completedAt: new Date("2026-07-14T00:00:00Z"),
+        rating: 9,
+        model: "test-model",
+        triggerReason: "manual",
+        reliability: "complete",
+        refused: false,
+        refusalNote: null,
+        outcome: "reviewed",
+        status: "completed",
+        chunksTotal: 0,
+        chunksCompleted: 0,
+        chunksFailed: 0,
+        chunksSkipped: 0,
+        tokensUsed: null,
+      });
+      prismaMocks.pullRequestFindUnique.mockResolvedValue({ commitHash: "commit-current" });
+      prismaMocks.prFileFindMany.mockResolvedValue([]);
+
+      const latest = await getLatestCompletedReview("pr-1");
+      expect(latest.stale).toBe(false);
+      expect(latest.staleReason).toBe(null);
+    });
+  });
+
   describe("getLatestCompletedReview — lastSeenRunId match (issue #31)", () => {
     const latestRun = {
       id: "run-latest",

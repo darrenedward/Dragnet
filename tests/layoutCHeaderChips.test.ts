@@ -71,6 +71,25 @@ describe("buildLayoutCHeaderChips", () => {
     expect(chips.find((c) => c.id === "merge")?.label).toBe("merge ready");
   });
 
+  it("surfaces tip mismatch on merge and rating chips when stale", () => {
+    const staleMerge = readyMerge({ stale: true, staleReason: "tip_mismatch" });
+    const chips = buildLayoutCHeaderChips(
+      baseInput({
+        merge: staleMerge,
+        rating: 9,
+        stale: true,
+        staleReason: "tip_mismatch",
+        seams: healthySeams({ rating: 9, stale: true, staleReason: "tip_mismatch" }),
+      }),
+    );
+    expect(chips.find((c) => c.id === "merge")).toMatchObject({
+      label: "tip mismatch",
+      tone: "amber",
+    });
+    expect(chips.find((c) => c.id === "merge")?.tooltip).toMatch(/tip/i);
+    expect(chips.find((c) => c.id === "rating")?.label).toBe("tip stale");
+  });
+
   it("merge ready chip is true only when shared isMergeReady gate passes", () => {
     const ok = buildLayoutCHeaderChips(baseInput());
     expect(ok.find((c) => c.id === "merge")).toMatchObject({

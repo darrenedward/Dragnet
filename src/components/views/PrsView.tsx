@@ -96,6 +96,7 @@ interface Props {
     source: string | null;
   }>;
   stale?: boolean;
+  staleReason?: "tip_mismatch" | "diff_changed" | null;
   /** Shared merge gate from findings payload — not the same as status Completed. */
   mergeReady?: boolean | null;
   mergeBlockReason?: string | null;
@@ -140,6 +141,7 @@ export default function PrsView({
   rejectedCount,
   rejectedFindings,
   stale,
+  staleReason,
   mergeReady,
   mergeReadyMessage,
   blockedGate,
@@ -191,6 +193,7 @@ export default function PrsView({
           blockedGate={blockedGate}
           seamInput={seamInput}
           stale={stale}
+          staleReason={staleReason}
         />
 
         <div className="space-y-4 min-w-0 mt-4 flex-1 overflow-y-auto overflow-x-hidden min-h-0 pr-1">
@@ -219,6 +222,7 @@ export default function PrsView({
                 rejectedCount={rejectedCount}
                 rejectedFindings={rejectedFindings}
                 stale={stale}
+                staleReason={staleReason}
                 isScanning={isScanning}
                 onCopySuggestion={onCopySuggestion}
                 copyFeedback={copyFeedback}

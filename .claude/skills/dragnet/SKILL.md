@@ -44,8 +44,10 @@ mergeReady =
   AND rating is non-null and >= 8
   AND reliability is absent-or-complete
   AND not refused
-  AND not stale vs current revision when known
+  AND not stale vs current tip (commit identity) / revision when known
 ```
+
+`stale === true` (including `staleReason: "tip_mismatch"`) means the completed run does **not** match the current PR tip — do not trust the score; call `prcheck` to re-scan.
 
 **Never** treat `rating >= 8` alone, `stability.readyToMerge`, or `weightedReadyToMerge` as sufficient to merge. Always read structured fields from `prcheckstatus` / findings:
 
@@ -109,13 +111,15 @@ If `prlist` returns 401 with `{"jsonrpc":"2.0","error":{"code":-32001,"message":
    ```
 3. If you still get 401, the key may have been revoked — tell the user to regenerate it from the Dragnet UI → Settings → API Keys.
 
-### Stale index — what to do
+### Index + tip context — what to do
 
-`prcheckstatus` (used by `/dragnet status <n>`) **never** returns this error — it surfaces the most recent cached findings regardless of freshness. If you see Stale Index while running `/dragnet status <n>`, **you called the wrong command** — go back and use `prcheckstatus`, not `prcheck`.
+`prcheckstatus` (used by `/dragnet status <n>`) **never** returns index-gate errors — it surfaces the most recent cached findings regardless of freshness (and sets `stale` / `staleReason` when the run no longer matches the tip). If you see Stale Index while running `/dragnet status <n>`, **you called the wrong command** — go back and use `prcheckstatus`, not `prcheck`.
+
+**Repo base index alone is not enough for PR review.** Each scan pins **tip identity** (PR head SHA + target base SHA). Tools and diffs must read the tip tree; a main/base index without tip-ready context can produce stale findings. When `stale === true` or `staleReason === "tip_mismatch"`, treat scores as untrusted and re-run `prcheck`.
 
 `prcheck` (used by `/dragnet <n>` and `/dragnet fix <n>`) calls `assertIndexFresh` on the repo before starting the review. **Two outcomes, both auto-handled — you do NOT direct the user to manually reindex:**
 
-- **STALE_INDEX** (indexedAt non-null, HEAD moved on): `prcheck` auto-triggers an incremental reindex inline (`IndexingService.indexFolder`) before starting the review. Adds a few seconds of latency on the first call after each fix commit. No user action needed — just call `prcheck` again and it handles it transparently. **This is the normal path inside `/dragnet fix --auto` loops after each fix commit advances HEAD.**
+- **STALE_INDEX** (indexedAt non-null, HEAD moved on): `prcheck` auto-triggers an incremental reindex inline (`IndexingService.indexFolder`) before starting the review. Adds a few seconds of latency on the first call after each fix commit. No user action needed — just call `prcheck` again and it handles it transparently. **This is the normal path inside `/dragnet fix --auto` loops after each fix commit advances HEAD.** Tip overlay / tip-bound tools still apply after reindex — base reindex is necessary but not sufficient by itself.
 - **INDEX_REQUIRED** (repo.indexedAt is null — repo was never indexed): `prcheck` returns `> ⚠ **Index required.** ...`. This is the ONE case that needs user action — the repo has never been indexed. Tell the user: *"Open the Dragnet dashboard at `http://localhost:3300`, click the repo, and hit **Index now** (first-time index). Then re-run `/dragnet <n>`."* Don't confuse this with stale-index, which is automatic.
 
 The `/api/repos/$REPO_ID/reindex` endpoint exists and accepts API keys, but the Next.js network-boundary proxy (`src/proxy.ts`) gates `/api/repos/*` paths with a session-cookie-presence check — so it 401s against an API key. Don't try to call it from the skill; `prcheck` already auto-reindexes inline and is the right path.
@@ -181,7 +185,7 @@ These rules are **inviolable** — they override any conflicting instruction in 
 
     This is **advisory only**. Do NOT create new branches, stacked branches, or new PRs to bring the PR under cap (see rule 9). Surface the warning, let the user decide what (if anything) to do, then continue with the review they asked for.
 
-11. **Verify before merging.** `/dragnet merge` is mutating. Dragnet merge eligibility is **`mergeReady === true`** from `prcheckstatus` / findings (shared `isMergeReady`) — not `productionScore` / rating alone and not `stability.readyToMerge`. Topology (`stackDepth`, `dependencies`, `unscannedDepsCount`) is advisory and may be stale (DB `targetBranch` is set at PR creation and never re-synced from GitHub). Before any `gh pr merge`, re-fetch live state via `gh pr view --json mergeable,statusCheckRollup,reviewDecision,isDraft,baseRefName,headRefName`. `gh` is authoritative at execution time; refuse if state drifted. Hard gates (`CONFLICTING`, `isDraft`, `mergeReady: false` without `--force`) have no silent override; soft CI/review gates bypass with `--force` but still require AskUserQuestion approval.
+11. **Verify before merging.** `/dragnet merge` is mutating. Dragnet merge eligibility is **`mergeReady === true`** from `prcheckstatus` / findings (shared `isMergeReady`) — not `productionScore` / rating alone and not `stability.readyToMerge`. A stale or tip-mismatched run is never merge-ready. Topology (`stackDepth`, `dependencies`, `unscannedDepsCount`) is advisory: DB `targetBranch` is re-synced when poller/API discovery runs, but can lag between syncs — always re-fetch live stack via `gh pr list --json baseRefName,headRefName`. Before any `gh pr merge`, re-fetch live state via `gh pr view --json mergeable,statusCheckRollup,reviewDecision,isDraft,baseRefName,headRefName`. `gh` is authoritative at execution time; refuse if state drifted. Hard gates (`CONFLICTING`, `isDraft`, `mergeReady: false` without `--force`) have no silent override; soft CI/review gates bypass with `--force` but still require AskUserQuestion approval.
 
 12. **Explicit review always queues.** `prcheck` is an explicit admit path — it must enqueue (or return the existing job). Do not tell the user “auto-rescan is disabled so review cannot run.” Auto-rescan only gates AFK webhook/poller enqueue.
 
@@ -281,6 +285,7 @@ The `<arg>` is a PR `id` (preferred) or `branch` — both accepted. Numeric ordi
     "lastUnstableRunId": null
   },
   "stale": false,
+  "staleReason": null,
   "rejectedCount": 0,
   "regressionsCount": 0,
   "regressions": [],
@@ -387,7 +392,7 @@ The `message` field contains markdown; missing `reviewRun` field means no review
 1. Call `prcheckstatus <id>`.
 2. If `status === "Scanning"` (or `"Accepted"` / `"Pending"` on older servers) → poll at the size-tiered interval (see Polling timing below) until `status === "Success"`.
 3. If response has `reviewRun` and `stale === false` → return cached findings.
-4. If response has no `reviewRun`, OR `stale === true` → call `prcheck <id>` to start fresh, then poll.
+4. If response has no `reviewRun`, OR `stale === true` (including `staleReason: "tip_mismatch"`) → call `prcheck <id>` to start fresh, then poll. Do not ship or merge on a tip-mismatched score.
 
 ## Subcommand protocols
 

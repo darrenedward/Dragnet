@@ -114,6 +114,21 @@ describe("buildSeamChips", () => {
     });
   });
 
+  it("surfaces tip mismatch on rating seam when stale", () => {
+    const chips = buildSeamChips({
+      ...healthy,
+      rating: 9,
+      stale: true,
+      staleReason: "tip_mismatch",
+    });
+    const rating = chips.find((c) => c.id === "rating");
+    expect(rating).toMatchObject({
+      tone: "warn",
+      detail: "tip stale",
+    });
+    expect(rating?.title).toMatch(/tip/i);
+  });
+
   it("does not treat bare rating without a run as merge-ready", () => {
     const chips = buildSeamChips({
       ...healthy,
