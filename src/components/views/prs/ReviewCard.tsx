@@ -411,7 +411,7 @@ export default function ReviewCard({
       )}
 
       {reviewRun?.refused && !isScanning && (
-        <div className="border-t border-amber-500/20 bg-amber-500/[0.03] px-4 py-2.5 flex items-start gap-2">
+        <div className="border-t border-amber-500/20 bg-amber-500/[0.03] px-4 py-2.5 flex items-start gap-2 select-text">
           <ShieldAlert size={12} className="text-amber-500 mt-0.5 flex-shrink-0" />
           <div className="flex-1 min-w-0">
             <p className="text-[10px] font-mono uppercase tracking-wider text-amber-400 font-bold">
@@ -460,10 +460,10 @@ export default function ReviewCard({
                     )}
                     <span className="text-[8px] uppercase tracking-wider text-slate-600">{f.severity}/{f.category}</span>
                   </div>
-                  <div className="text-[10px] text-amber-300/70 italic font-mono mb-1">
+                  <div className="text-[10px] text-amber-300/70 italic font-mono mb-1 select-text">
                     {f.verificationNote || f.skepticNote || "no note"}
                   </div>
-                  <div className="text-[10px] text-slate-500 font-mono leading-relaxed">
+                  <div className="text-[10px] text-slate-500 font-mono leading-relaxed select-text">
                     {f.explanation.slice(0, 280)}{f.explanation.length > 280 ? "…" : ""}
                   </div>
                 </div>
@@ -542,7 +542,7 @@ function ScanningBanner({
   const detail = [chunksText, iterText, partialText].filter(Boolean).join(" · ");
 
   return (
-    <div className="p-3 bg-cyan-950/20 border-b border-cyan-500/15 flex items-center gap-2 flex-wrap">
+    <div className="p-3 bg-cyan-950/20 border-b border-cyan-500/15 flex items-center gap-2 flex-wrap select-text">
       <Loader2 size={14} className="text-cyan-400 animate-spin shrink-0" />
       <span className="text-[11px] font-bold text-cyan-300 font-mono uppercase tracking-wider">
         AI review pipeline running

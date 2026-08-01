@@ -58,7 +58,7 @@ export default function InterruptedScanBanner({
       : null;
 
   return (
-    <div className="mt-3 p-3 bg-amber-500/[0.05] border border-amber-500/30 rounded-lg text-xs font-mono">
+    <div className="mt-3 p-3 bg-amber-500/[0.05] border border-amber-500/30 rounded-lg text-xs font-mono select-text">
       <div className="flex items-start gap-2.5">
         <AlertTriangle size={14} className="text-amber-400 shrink-0 mt-0.5" />
         <div className="flex-1 text-amber-200/90 space-y-1">
@@ -83,7 +83,7 @@ export default function InterruptedScanBanner({
         <button
           onClick={onContinue}
           disabled={!scan.resumeAllowed || isScanning}
-          className="bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-200 px-2.5 py-1 rounded font-bold uppercase tracking-wider text-[10px] flex items-center gap-1 cursor-pointer shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
+          className="bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-200 px-2.5 py-1 rounded font-bold uppercase tracking-wider text-[10px] flex items-center gap-1 cursor-pointer shrink-0 disabled:opacity-40 disabled:cursor-not-allowed select-none"
           title={
             !scan.resumeAllowed
               ? "Resume blocked — code or config changed since checkpoint"
@@ -98,7 +98,7 @@ export default function InterruptedScanBanner({
         <button
           onClick={onStartFresh}
           disabled={isScanning}
-          className="bg-transparent hover:bg-amber-500/10 border border-amber-500/30 text-amber-300/80 px-2.5 py-1 rounded font-bold uppercase tracking-wider text-[10px] flex items-center gap-1 cursor-pointer shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
+          className="bg-transparent hover:bg-amber-500/10 border border-amber-500/30 text-amber-300/80 px-2.5 py-1 rounded font-bold uppercase tracking-wider text-[10px] flex items-center gap-1 cursor-pointer shrink-0 disabled:opacity-40 disabled:cursor-not-allowed select-none"
           title={isScanning ? "Scan already in progress…" : "Delete the checkpoint and start a fresh scan"}
         >
           <RotateCcw size={11} />

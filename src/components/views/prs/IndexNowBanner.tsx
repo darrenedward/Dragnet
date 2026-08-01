@@ -55,7 +55,7 @@ export default function IndexNowBanner({ repoId, indexedAt, onIndexComplete }: P
   };
 
   return (
-    <div className="mt-3 p-3 bg-amber-500/[0.05] border border-amber-500/30 rounded-lg text-xs font-mono flex items-start gap-2.5">
+    <div className="mt-3 p-3 bg-amber-500/[0.05] border border-amber-500/30 rounded-lg text-xs font-mono flex items-start gap-2.5 select-text">
       <Database size={14} className="text-amber-400 shrink-0 mt-0.5" />
       <div className="flex-1 text-amber-200/90">
         <strong className="text-amber-300">Codebase not indexed.</strong>{" "}
@@ -73,7 +73,7 @@ export default function IndexNowBanner({ repoId, indexedAt, onIndexComplete }: P
       <button
         onClick={handleStart}
         disabled={isStarting}
-        className="bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-200 px-2.5 py-1 rounded font-bold uppercase tracking-wider text-[10px] flex items-center gap-1 cursor-pointer shrink-0 disabled:opacity-50 disabled:cursor-wait"
+        className="bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-200 px-2.5 py-1 rounded font-bold uppercase tracking-wider text-[10px] flex items-center gap-1 cursor-pointer shrink-0 disabled:opacity-50 disabled:cursor-wait select-none"
         title={isStarting ? "Indexing in progress…" : "Run the indexer now"}
       >
         <Database size={11} className={isStarting ? "animate-pulse" : ""} />
