@@ -178,6 +178,16 @@ describe("ensureTipReady", () => {
       expect.arrayContaining(["fetch", "origin"]),
       expect.anything(),
     );
+    // Must not write refs/heads/* (fails when base/main is checked out) or --prune.
+    const fetchCall = mocks.runGitInRepo.mock.calls.find(
+      (c: unknown[]) => Array.isArray(c[1]) && (c[1] as string[])[0] === "fetch",
+    );
+    expect(fetchCall?.[1]).toEqual([
+      "fetch",
+      "origin",
+      "+refs/heads/feat:refs/remotes/origin/feat",
+      "+refs/heads/main:refs/remotes/origin/main",
+    ]);
   });
 
   it("fails closed with CLONE_FAILED when head/base fetch fails", async () => {
@@ -196,6 +206,8 @@ describe("ensureTipReady", () => {
     expect(result).toEqual(
       expect.objectContaining({ ok: false, gate: "CLONE_FAILED" }),
     );
+    // Hash must not advance when fetch fails.
+    expect(mocks.pullRequestUpdate).not.toHaveBeenCalled();
   });
 
   it("hash-only tip-ready when no clone path (poller / scan prelude path)", async () => {

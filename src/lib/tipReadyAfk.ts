@@ -124,18 +124,21 @@ async function fetchHeadAndBase(
   headRef?: string,
   baseRef?: string,
 ): Promise<{ ok: true } | { ok: false; detail: string }> {
+  // Fetch into remote-tracking refs only. Writing refs/heads/* fails when the
+  // destination branch is checked out (typical: base = main on the clone).
+  // No --prune: limited refspecs must not prune sibling PR branches.
   const refspecs: string[] = [];
   if (headRef?.trim()) {
     const h = headRef.trim();
-    refspecs.push(`+refs/heads/${h}:refs/heads/${h}`);
+    refspecs.push(`+refs/heads/${h}:refs/remotes/origin/${h}`);
   }
   if (baseRef?.trim() && baseRef.trim() !== headRef?.trim()) {
     const b = baseRef.trim();
-    refspecs.push(`+refs/heads/${b}:refs/heads/${b}`);
+    refspecs.push(`+refs/heads/${b}:refs/remotes/origin/${b}`);
   }
   const args =
     refspecs.length > 0
-      ? ["fetch", "origin", "--prune", ...refspecs]
+      ? ["fetch", "origin", ...refspecs]
       : ["fetch", "origin"];
   try {
     const r = await runGitInRepo(repo, args, {
@@ -163,7 +166,13 @@ async function revParseHead(
 ): Promise<string | null> {
   const candidates = [headSha];
   if (headRef?.trim()) {
-    candidates.push(headRef.trim(), `refs/heads/${headRef.trim()}`);
+    const h = headRef.trim();
+    candidates.push(
+      h,
+      `refs/remotes/origin/${h}`,
+      `origin/${h}`,
+      `refs/heads/${h}`,
+    );
   }
   for (const c of candidates) {
     if (!c) continue;
@@ -314,10 +323,6 @@ export async function ensureTipReady(opts: {
     };
   }
 
-  if (providerTip) {
-    await updatePrCommitToProviderTip(opts.prId, providerTip);
-  }
-
   const cloneOk = hasCloneAccess(opts.repo);
   const requireClone = opts.requireClone ?? cloneOk;
 
@@ -331,6 +336,9 @@ export async function ensureTipReady(opts: {
       };
     }
     // Hash-only: poller / no local tree. Scan prelude materializes tip context.
+    if (providerTip) {
+      await updatePrCommitToProviderTip(opts.prId, providerTip);
+    }
     return { ok: true, prId: opts.prId, headSha, mode: "hash-only" };
   }
 
@@ -344,6 +352,11 @@ export async function ensureTipReady(opts: {
       reason: fetched.detail,
       prId: opts.prId,
     };
+  }
+
+  // Pin tip identity only after fetch succeeds (AC: update hash after fetch).
+  if (providerTip) {
+    await updatePrCommitToProviderTip(opts.prId, providerTip);
   }
 
   const resolved = await revParseHead(opts.repo, headSha, headRef);
