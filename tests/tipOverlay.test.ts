@@ -252,4 +252,36 @@ describe("ensureTipOverlay — tip-only symbols searchable after prelude", () =>
     expect(searchTipOverlay(overlay, "brandNewTipSymbol")).toHaveLength(0);
     expect(isTipOverlayFresh(overlay, tipSha)).toBe(true);
   });
+
+  it("resolves tip CALLS edges onto base-index callees via baseSymbols", async () => {
+    // Changed file only — no neighbor seed. Call target lives solely in baseSymbols
+    // (simulates non-relative / out-of-neighborhood callee).
+    const baseHelperId = "sym-base-mainOnlyHelper";
+    const overlay = await ensureTipOverlay({
+      repoId: "repo-tip",
+      headSha: tipSha,
+      changedFiles: ["src/tipOnly.ts"],
+      readFile: async (p) => {
+        if (p === "src/tipOnly.ts") {
+          return (
+            `export function tipCallsBase() {\n` +
+            `  return mainOnlyHelper();\n` +
+            `}\n`
+          );
+        }
+        return null;
+      },
+      // Deliberately omit neighbor expansion content for mainOnly.ts
+      baseSymbols: [
+        { id: baseHelperId, filePath: "src/mainOnly.ts", name: "mainOnlyHelper" },
+      ],
+    });
+
+    const tipFn = searchTipOverlay(overlay, "tipCallsBase");
+    expect(tipFn.length).toBeGreaterThanOrEqual(1);
+
+    // Without baseSymbols this edge would have toId=null and be invisible to getCallers(baseId).
+    const callers = getTipOverlayCallers(overlay, baseHelperId);
+    expect(callers.some((c) => c.callerName === "tipCallsBase")).toBe(true);
+  });
 });

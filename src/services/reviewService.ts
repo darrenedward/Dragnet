@@ -1074,7 +1074,23 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
     }
 
     if (mergedForContext.length > 0) {
-      const symIds = mergedForContext.map((s) => s.id);
+      // Tip ids can diverge from base when lineStart shifts; still fetch base
+      // edges for the same path|name|kind so external callers are not dropped.
+      const baseByKey = new Map(
+        baseSymbolList.map((s) => [`${s.filePath}|${s.name}|${s.kind}`, s] as const),
+      );
+      const edgeQueryIds = new Set<string>();
+      const toMergedCalleeId = new Map<string, string>();
+      for (const s of mergedForContext) {
+        edgeQueryIds.add(s.id);
+        toMergedCalleeId.set(s.id, s.id);
+        const base = baseByKey.get(`${s.filePath}|${s.name}|${s.kind}`);
+        if (base) {
+          edgeQueryIds.add(base.id);
+          toMergedCalleeId.set(base.id, s.id);
+        }
+      }
+      const symIds = [...edgeQueryIds];
       const [allCallerEdges, allCallerSyms] = await Promise.all([
         prisma.edge.findMany({ where: { repoId: pr.repoId, toId: { in: symIds } } }),
         prisma.symbol.findMany({ where: { repoId: pr.repoId, id: { in: symIds } }, select: { id: true, name: true } }),
@@ -1090,18 +1106,21 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
         for (const s of tipOverlay.symbols) callerNameById.set(s.id, s.name);
       }
       const edgesByCallee = new Map<string, Array<{ fromId: string; filePath: string; line: number }>>();
+      const pushEdge = (calleeId: string, edge: { fromId: string; filePath: string; line: number }) => {
+        const arr = edgesByCallee.get(calleeId) || [];
+        arr.push(edge);
+        edgesByCallee.set(calleeId, arr);
+      };
       for (const e of allCallerEdges) {
         if (!e.toId) continue;
-        const arr = edgesByCallee.get(e.toId) || [];
-        arr.push({ fromId: e.fromId, filePath: e.filePath, line: e.line });
-        edgesByCallee.set(e.toId, arr);
+        const mergedId = toMergedCalleeId.get(e.toId) ?? e.toId;
+        pushEdge(mergedId, { fromId: e.fromId, filePath: e.filePath, line: e.line });
       }
       if (tipOverlay) {
         for (const e of tipOverlay.edges) {
           if (e.kind !== "CALLS" || !e.toId) continue;
-          const arr = edgesByCallee.get(e.toId) || [];
-          arr.push({ fromId: e.fromId, filePath: e.filePath, line: e.line });
-          edgesByCallee.set(e.toId, arr);
+          const mergedId = toMergedCalleeId.get(e.toId) ?? e.toId;
+          pushEdge(mergedId, { fromId: e.fromId, filePath: e.filePath, line: e.line });
         }
       }
       codebaseContext += "\n=== CODEBASE AST SYMBOLS DETECTED & MODIFIED IN PR ===\n";
@@ -1606,11 +1625,45 @@ ${diffPayload}${deterministicPayload}`;
                     }
                   } else if (fnName === "getCallers") {
                     const overlay = tipOverlay;
+                    const symbolId = typeof fnArgs.symbolId === "string" ? fnArgs.symbolId : "";
+                    // Tip overlay edges may target tip ids; base edges use base ids.
+                    // When lineStart shifted they differ — query both + name aliases.
+                    const calleeIds = new Set<string>();
+                    if (symbolId) calleeIds.add(symbolId);
+                    const tipSym = overlay?.symbols.find((s) => s.id === symbolId);
+                    if (tipSym) {
+                      const baseAliases = await prisma.symbol.findMany({
+                        where: {
+                          repoId: pr.repoId,
+                          filePath: tipSym.filePath,
+                          name: tipSym.name,
+                        },
+                        select: { id: true },
+                      });
+                      for (const b of baseAliases) calleeIds.add(b.id);
+                    } else if (symbolId) {
+                      // Base id in: also pull tip-overlay callers for same path+name.
+                      const baseSym = await prisma.symbol.findUnique({
+                        where: { id: symbolId },
+                        select: { filePath: true, name: true },
+                      });
+                      if (baseSym && overlay) {
+                        for (const s of overlay.symbols) {
+                          if (s.filePath === baseSym.filePath && s.name === baseSym.name) {
+                            calleeIds.add(s.id);
+                          }
+                        }
+                      }
+                    }
                     const overlayCallers = overlay
-                      ? getTipOverlayCallers(overlay, fnArgs.symbolId)
+                      ? [...calleeIds].flatMap((id) => getTipOverlayCallers(overlay, id))
                       : [];
                     const edges = await prisma.edge.findMany({
-                      where: { repoId: pr.repoId, toId: fnArgs.symbolId, kind: "CALLS" },
+                      where: {
+                        repoId: pr.repoId,
+                        toId: { in: [...calleeIds] },
+                        kind: "CALLS",
+                      },
                     });
                     const baseCallers = await Promise.all(
                       (edges || []).map(async (e) => {

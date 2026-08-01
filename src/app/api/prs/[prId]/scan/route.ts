@@ -286,11 +286,18 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
           .map((f: { filename?: string }) => f.filename)
           .filter((p: unknown): p is string => typeof p === "string" && p.length > 0);
         try {
+          // Base-index symbols so tip CALLS edges resolve to existing callees
+          // outside the overlay neighborhood (non-relative imports, 2+ hops).
+          const baseSymbols = await prisma.symbol.findMany({
+            where: { repoId: pr.repoId },
+            select: { id: true, filePath: true, name: true },
+          });
           tipOverlay = await ensureTipOverlay({
             repoId: pr.repoId,
             headSha: tipIdentity.headSha,
             changedFiles: changedPaths,
             readFile: (p) => reviewTree!.readFile(p),
+            baseSymbols,
           });
           if (!isTipOverlayFresh(tipOverlay, tipIdentity.headSha)) {
             console.warn(
