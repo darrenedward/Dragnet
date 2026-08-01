@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { prisma } from "../lib/prisma";
@@ -9,6 +9,10 @@ import { buildSshEnv } from "../lib/gitService";
 import { getInstallationToken } from "../lib/githubApp";
 import { IndexingService } from "./indexingService";
 import { shellEscape } from "../lib/shellEscape";
+import {
+  VOLUME_WORKSPACE_PATH,
+  usableHostLocalPath,
+} from "../lib/repoClonePath";
 
 const activeFetches = new Set<string>();
 const GIT_IMAGE = process.env.DRAGNET_GIT_IMAGE ?? "alpine/git";
@@ -16,18 +20,6 @@ const GIT_IMAGE = process.env.DRAGNET_GIT_IMAGE ?? "alpine/git";
 function volumeName(repoId: string): string {
   return `dragnet-repo-${repoId}`;
 }
-
-/** Host-path localPath only if the directory actually exists on this host. */
-function usableHostLocalPath(localPath: string | null | undefined): string | null {
-  if (!localPath || localPath === "/workspace") return null;
-  try {
-    if (existsSync(localPath)) return localPath;
-  } catch {
-    /* ignore */
-  }
-  return null;
-}
-
 
 function interpolatePat(cloneUrl: string, pat?: string): string {
   if (!pat) return cloneUrl;
@@ -158,13 +150,13 @@ export async function enqueue(repoId: string): Promise<string | null> {
         throw new Error(`Git sync timed out for repo ${repoId}`);
       }
 
-      localPath = "/workspace";
+      localPath = VOLUME_WORKSPACE_PATH;
 
-      // Normalize phantom host paths so the next fetch stays in volume mode.
-      if (repo.localPath !== localPath) {
+      // App-owned marker — users never set this path.
+      if (repo.localPath !== VOLUME_WORKSPACE_PATH) {
         await prisma.repository.update({
           where: { id: repoId },
-          data: { localPath },
+          data: { localPath: VOLUME_WORKSPACE_PATH },
         });
       }
 

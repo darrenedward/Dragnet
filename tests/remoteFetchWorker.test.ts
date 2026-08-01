@@ -2,7 +2,6 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { ContainerOrchestrator } from "../src/lib/containerOrchestrator";
 
 const mockExecFileSync = vi.fn();
-const mockExistsSync = vi.fn((p: string) => p === "/tmp/legacy-repo");
 const mockFindUnique = vi.fn();
 const mockUpdate = vi.fn();
 const mockCreateVolume = vi.fn();
@@ -16,14 +15,6 @@ vi.mock("node:child_process", async () => {
   return {
     ...actual,
     execFileSync: (...args: Parameters<typeof actual.execFileSync>) => mockExecFileSync(...args),
-  };
-});
-
-vi.mock("node:fs", async () => {
-  const actual = await vi.importActual("node:fs") as typeof import("node:fs");
-  return {
-    ...actual,
-    existsSync: (p: Parameters<typeof actual.existsSync>[0]) => mockExistsSync(String(p)),
   };
 });
 
@@ -51,6 +42,16 @@ vi.mock("../src/lib/containerOrchestrator", () => ({
 vi.mock("../src/services/indexingService", () => ({
   IndexingService: { indexFolder: (...args: unknown[]) => mockIndexFolder(...args) },
 }));
+
+
+vi.mock("../src/lib/repoClonePath", async () => {
+  const actual = await vi.importActual<typeof import("../src/lib/repoClonePath")>("../src/lib/repoClonePath");
+  return {
+    ...actual,
+    usableHostLocalPath: (p: string | null | undefined) =>
+      p && p !== "/workspace" && p === "/tmp/legacy-repo" ? p : null,
+  };
+});
 
 vi.mock("../src/lib/githubApp", () => ({
   getInstallationToken: (...args: unknown[]) => mockGetInstallationToken(...args),
@@ -81,8 +82,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   if (!process.env.DRAGNET_MASTER_KEY) {
     process.env.DRAGNET_MASTER_KEY = "QQe7IAjrJKIUR/yBCcjdW91OJXQt2zVQsm9NvZqXjzc=";
-  
-    mockExistsSync.mockImplementation((p: string) => p === "/tmp/legacy-repo");}
+  }
   mockRunRunner.mockResolvedValue({ exitCode: 0, stdout: "", stderr: "", timedOut: false });
   mockCopyVolumeToHost.mockResolvedValue(undefined);
   mockUpdate.mockResolvedValue({});
@@ -286,8 +286,7 @@ describe("enqueue", () => {
 
 
   describe("phantom host localPath", () => {
-    it("uses volume mode when localPath directory is missing", async () => {
-      mockExistsSync.mockReturnValue(false);
+    it("uses volume mode when localPath is not a usable host directory", async () => {
       mockRunRunner.mockResolvedValue({ exitCode: 0, stdout: "", stderr: "", timedOut: false });
       mockCopyVolumeToHost.mockResolvedValue(undefined);
       mockIndexFolder.mockResolvedValue({ fileParsedCount: 0, symbolsExtractedCount: 0, edgesResolvedCount: 0 });

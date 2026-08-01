@@ -307,6 +307,8 @@ describe("webhooks/github/route POST", () => {
     mocks.mockFindRepo.mockResolvedValue({
       id: "repo-1",
       localPath: null,
+      path: null,
+      cloneUrl: "https://github.com/owner/repo.git",
       webhookSecret: "test-secret",
       hostedMode: false,
     });
@@ -321,8 +323,9 @@ describe("webhooks/github/route POST", () => {
     const res = await POST(req);
     expect(res.status).toBe(200);
     expect(mocks.mockEnqueue).toHaveBeenCalledWith("repo-1");
-    expect(mocks.mockGitFetch).toHaveBeenCalledWith(expect.objectContaining({ id: "repo-1", path: "/tmp/remote-repo" }));
-    expect(mocks.mockScanRepoPrs).toHaveBeenCalledWith(expect.objectContaining({ id: "repo-1", path: "/tmp/remote-repo" }));
+    expect(mocks.mockGitFetch).toHaveBeenCalledWith(expect.objectContaining({ id: "repo-1" }));
+    expect(mocks.mockGitFetch.mock.calls[0][0].path == null || mocks.mockGitFetch.mock.calls[0][0].path === undefined).toBe(true);
+    expect(mocks.mockScanRepoPrs).toHaveBeenCalledWith(expect.objectContaining({ id: "repo-1" }));
     expect(mocks.mockRunPrScan).toHaveBeenCalledWith("pr-1");
     const body = await res.json();
     expect(body.afkScans).toBe(1);
@@ -347,6 +350,7 @@ describe("webhooks/github/route POST", () => {
       id: "repo-1",
       localPath: null,
       path: null,
+      cloneUrl: "https://github.com/owner/repo.git",
       webhookSecret: "test-secret",
       hostedMode: false,
     });
@@ -359,8 +363,9 @@ describe("webhooks/github/route POST", () => {
     const res = await POST(req);
     expect(res.status).toBe(200);
     expect(mocks.mockEnqueue).toHaveBeenCalledWith("repo-1");
-    expect(mocks.mockGitFetch).toHaveBeenCalledWith(expect.objectContaining({ id: "repo-1", path: "/tmp/remote-repo" }));
-    expect(mocks.mockScanRepoPrs).toHaveBeenCalledWith(expect.objectContaining({ id: "repo-1", path: "/tmp/remote-repo" }));
+    expect(mocks.mockGitFetch).toHaveBeenCalledWith(expect.objectContaining({ id: "repo-1" }));
+    expect(mocks.mockGitFetch.mock.calls[0][0].path == null || mocks.mockGitFetch.mock.calls[0][0].path === undefined).toBe(true);
+    expect(mocks.mockScanRepoPrs).toHaveBeenCalledWith(expect.objectContaining({ id: "repo-1" }));
     expect(mocks.mockRunPrScan).toHaveBeenCalledWith("pr-1");
     const body = await res.json();
     expect(body.afkScans).toBe(1);
@@ -394,6 +399,7 @@ describe("webhooks/github/route POST", () => {
       id: "repo-1",
       localPath: null,
       path: null,
+      cloneUrl: "https://github.com/owner/repo.git",
       webhookSecret: "test-secret",
       hostedMode: false,
     });

@@ -9,6 +9,7 @@ import { requireSession } from "@/src/lib/api-auth";
 import { computeRepoId, canonicalizeUrl } from "@/src/lib/repoIdentity";
 import { getInstallationToken } from "@/src/lib/githubApp";
 import { captureRepoOwnership } from "@/src/lib/repoOwnership";
+import { VOLUME_WORKSPACE_PATH } from "@/src/lib/repoClonePath";
 
 export async function GET(req: Request) {
   const auth = await authenticateSessionOrKey(req);
@@ -126,6 +127,7 @@ export async function POST(req: Request) {
             id: cleanId,
             name,
             path: null,
+            localPath: VOLUME_WORKSPACE_PATH,
             repoId: remoteRepoId,
             canonicalRemote,
             provider: "github",
@@ -245,6 +247,7 @@ export async function POST(req: Request) {
             id: cleanId,
             name,
             path: null,
+            localPath: VOLUME_WORKSPACE_PATH,
             repoId: remoteRepoId,
             canonicalRemote,
             provider,

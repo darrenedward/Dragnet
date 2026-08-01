@@ -43,7 +43,7 @@ model Repository {
   lastFetchAt     DateTime?
   /// Last clone/fetch failure message; null after a successful fetch.
   lastFetchError  String?
-  localPath       String? // server-managed clone directory
+  localPath       String? // app-managed: "/workspace" = Docker volume mode; real host path = legacy only
 
   baseBranch             String
   activeBranch           String

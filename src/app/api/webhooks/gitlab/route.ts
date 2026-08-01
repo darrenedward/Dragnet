@@ -120,36 +120,37 @@ export async function POST(request: Request) {
     return NextResponse.json(body);
   };
 
+  /** Refresh clone + PR list; on clone failure mark delivery failed (still HTTP 200). */
   const refreshCloneAndPrs = async (): Promise<{
     prIds: string[];
     cloneError?: string;
     repoPath?: string | null;
   }> => {
-    if (matched.path || matched.cloneUrl) {
+    if (matched.path) {
       const ok = await gitFetch(matched);
       if (!ok) {
         return { prIds: [], cloneError: "git fetch failed" };
       }
       return { prIds: await scanRepoPrs(matched), repoPath: matched.path };
     }
-    try {
-      const localPath = await enqueue(matched.id);
-      if (!localPath) {
-        return { prIds: [], cloneError: "Clone/fetch already in progress" };
+    if (matched.cloneUrl) {
+      try {
+        const cloned = await enqueue(matched.id);
+        if (!cloned) {
+          return { prIds: [], cloneError: "Clone/fetch already in progress" };
+        }
+        const ok = await gitFetch(matched);
+        if (!ok) {
+          return { prIds: [], cloneError: "git fetch failed" };
+        }
+        return { prIds: await scanRepoPrs(matched) };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(`[webhook] enqueue failed for ${matched.id}:`, err);
+        return { prIds: [], cloneError: msg };
       }
-      const ok = await gitFetch({ ...matched, path: localPath });
-      if (!ok) {
-        return { prIds: [], cloneError: "git fetch failed" };
-      }
-      return {
-        prIds: await scanRepoPrs({ ...matched, path: localPath }),
-        repoPath: localPath,
-      };
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(`[webhook] enqueue failed for ${matched.id}:`, err);
-      return { prIds: [], cloneError: msg };
     }
+    return { prIds: [], cloneError: "Repository has no path or cloneUrl" };
   };
 
   if (event === "Merge Request Hook") {

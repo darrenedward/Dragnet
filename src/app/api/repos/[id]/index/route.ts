@@ -7,6 +7,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { shellEscape } from "@/src/lib/shellEscape";
+import { usableHostLocalPath, VOLUME_WORKSPACE_PATH } from "@/src/lib/repoClonePath";
 
 export const runtime = "nodejs";
 
@@ -35,9 +36,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       );
     }
 
-    if (!repo.path && !repo.localPath) {
+    // Remote volume clones: app owns volume path; path/localPath may be null or /workspace.
+    if (!repo.path && !repo.cloneUrl && !usableHostLocalPath(repo.localPath)) {
       return NextResponse.json(
-        { error: "NO_PATH_FOUND", message: "No local path or volume configured for this repo." },
+        { error: "NO_PATH_FOUND", message: "No local path or clone URL configured for this repo." },
         { status: 409 },
       );
     }
@@ -56,8 +58,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       }
 
       const orchestrator = ContainerOrchestrator.getInstance();
-      const isContainerMode = !repo.localPath || repo.localPath === "/workspace";
-      const volName = isContainerMode ? volumeName(id) : repo.localPath!;
+      const hostLocal = usableHostLocalPath(repo.localPath);
+      const isContainerMode = Boolean(repo.cloneUrl) && hostLocal == null;
+      const volName = isContainerMode ? volumeName(id) : (hostLocal || volumeName(id));
 
       const baseBranch = repo.baseBranch || "main";
       await orchestrator.runRunner({

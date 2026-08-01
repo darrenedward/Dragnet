@@ -289,6 +289,7 @@ describe("webhooks/gitlab/route POST", () => {
       id: "repo-1",
       localPath: null,
       path: null,
+      cloneUrl: "https://github.com/owner/repo.git",
       webhookSecret: "test-secret",
       hostedMode: false,
     });
@@ -301,7 +302,7 @@ describe("webhooks/gitlab/route POST", () => {
     const res = await POST(req);
     expect(res.status).toBe(200);
     expect(mocks.mockEnqueue).toHaveBeenCalledWith("repo-1");
-    expect(mocks.mockGitFetch).toHaveBeenCalledWith(expect.objectContaining({ id: "repo-1", path: "/tmp/remote-repo" }));
+    expect(mocks.mockGitFetch).toHaveBeenCalledWith(expect.objectContaining({ id: "repo-1" }));
   });
 
   it("handles enqueue failure gracefully and marks delivery failed", async () => {
@@ -309,6 +310,7 @@ describe("webhooks/gitlab/route POST", () => {
       id: "repo-1",
       localPath: null,
       path: null,
+      cloneUrl: "https://github.com/owner/repo.git",
       webhookSecret: "test-secret",
       hostedMode: false,
     });
