@@ -95,8 +95,7 @@ export default function ProviderConfig({
             }
             const n = Number(raw);
             if (!Number.isFinite(n)) return;
-            // Clamp to server floor/ceiling so UI never shows a value the
-            // runtime will silently rewrite (e.g. 2 → 4).
+            // Clamp to server bounds so UI matches resolveMaxIterations.
             const clamped = Math.min(
               MAX_ITERATIONS_BOUNDS.max,
               Math.max(MAX_ITERATIONS_BOUNDS.min, Math.floor(n)),
