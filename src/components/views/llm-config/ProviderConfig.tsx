@@ -1,7 +1,21 @@
 "use client";
 
 import { Eye, EyeOff, RefreshCw, Terminal } from "lucide-react";
-import { DEFAULT_ENDPOINT, MAX_ITERATIONS_BOUNDS, type WorkingPreset } from "./shared";
+import {
+  DEFAULT_ENDPOINT,
+  DEFAULT_MAX_ITERATIONS,
+  MAX_ITERATIONS_BOUNDS,
+  type WorkingPreset,
+} from "./shared";
+
+/** Same clamp as server `resolveMaxIterations` for display. */
+function effectiveMaxIterations(stored: number | undefined): number {
+  if (typeof stored !== "number" || !Number.isFinite(stored)) return DEFAULT_MAX_ITERATIONS;
+  const n = Math.floor(stored);
+  if (n < MAX_ITERATIONS_BOUNDS.min) return MAX_ITERATIONS_BOUNDS.min;
+  if (n > MAX_ITERATIONS_BOUNDS.max) return DEFAULT_MAX_ITERATIONS;
+  return n;
+}
 
 /**
  * Provider-level config: name, endpoint, api key, and a Fetch Models
@@ -72,23 +86,33 @@ export default function ProviderConfig({
           min={MAX_ITERATIONS_BOUNDS.min}
           max={MAX_ITERATIONS_BOUNDS.max}
           step={1}
-          value={preset.maxIterations ?? 16}
+          value={effectiveMaxIterations(preset.maxIterations)}
           onChange={(e) => {
             const raw = e.target.value;
             if (raw === "") {
-              onUpdate({ maxIterations: undefined });
+              onUpdate({ maxIterations: DEFAULT_MAX_ITERATIONS });
               return;
             }
             const n = Number(raw);
-            if (Number.isFinite(n)) {
-              onUpdate({ maxIterations: Math.floor(n) });
-            }
+            if (!Number.isFinite(n)) return;
+            // Clamp to server floor/ceiling so UI never shows a value the
+            // runtime will silently rewrite (e.g. 2 → 4).
+            const clamped = Math.min(
+              MAX_ITERATIONS_BOUNDS.max,
+              Math.max(MAX_ITERATIONS_BOUNDS.min, Math.floor(n)),
+            );
+            onUpdate({ maxIterations: clamped });
           }}
-          placeholder="16 (server default)"
+          placeholder={`${DEFAULT_MAX_ITERATIONS} (server default)`}
           className="w-full bg-slate-900 border border-white/10 rounded-lg px-3 py-2 text-xs text-slate-100 font-mono focus:border-cyan-500 outline-none"
         />
-        <p className="text-[10px] text-slate-500 mt-1 font-mono">
-          {MAX_ITERATIONS_BOUNDS.min}–{MAX_ITERATIONS_BOUNDS.max} tool calls per review. Lower for fast models (GPT-5: 8), higher for reasoning models (NVIDIA Nemotron: 10).
+        <p className="text-[10px] text-slate-500 mt-1 font-mono leading-snug">
+          {MAX_ITERATIONS_BOUNDS.min}–{MAX_ITERATIONS_BOUNDS.max} main-loop turns per AI review
+          (default {DEFAULT_MAX_ITERATIONS}). Values below {MAX_ITERATIONS_BOUNDS.min} are raised
+          to {MAX_ITERATIONS_BOUNDS.min} at runtime. The last turn is reserved for{" "}
+          <code className="text-slate-400">submitReview</code> if needed. Skeptic is a separate
+          pass after the main loop — not counted here. Scan log lines like{" "}
+          <code className="text-slate-400">2/4</code> mean iteration 2 of this cap.
         </p>
       </FieldLabel>
 
