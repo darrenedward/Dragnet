@@ -21,6 +21,7 @@ import {
   type PrIdentityLines,
 } from "./prIdentity";
 import type { PrSizeTier } from "./prSizeProfile";
+import type { ReviewStaleReason } from "./reviewStale";
 import { buildSeamChips, type SeamChipInput } from "./seamChips";
 
 export type PrWorkspaceHeaderInput = PrIdentityInput & {
@@ -33,6 +34,7 @@ export type PrWorkspaceHeaderInput = PrIdentityInput & {
   queuePosition?: number | null;
   blockedGate?: string | null;
   stale?: boolean | null;
+  staleReason?: ReviewStaleReason | null;
 };
 
 export type PrWorkspaceHeaderModel = {
@@ -57,11 +59,15 @@ export function buildPrWorkspaceHeaderModel(
   const rating =
     input.rating !== undefined ? input.rating : (input.seam.rating ?? null);
 
+  const stale = input.stale ?? input.seam.stale;
+  const staleReason = input.staleReason ?? input.seam.staleReason ?? null;
+
   const seamInput: SeamChipInput = {
     ...input.seam,
     rating,
     blockedGate,
-    stale: input.stale ?? input.seam.stale,
+    stale,
+    staleReason,
   };
 
   const seams = buildSeamChips(seamInput);
@@ -78,6 +84,7 @@ export function buildPrWorkspaceHeaderModel(
         reliability: seamInput.reliability,
         refused: seamInput.refused,
         stale: seamInput.stale,
+        staleReason: seamInput.staleReason,
       })
     : isMergeReady(null);
 
@@ -90,6 +97,8 @@ export function buildPrWorkspaceHeaderModel(
     queuePosition: input.queuePosition,
     size: input.sizeTier,
     rating,
+    stale,
+    staleReason,
   });
 
   const identity = formatPrIdentity({

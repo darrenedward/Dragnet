@@ -6,6 +6,8 @@
  */
 
 import { isMergeReady, type MergeReadyInput } from "./mergeReady";
+import type { ReviewStaleReason } from "./reviewStale";
+import { reviewStaleLabel } from "./reviewStale";
 
 export type SeamTone = "ok" | "warn" | "fail" | "pending" | "na";
 
@@ -40,6 +42,8 @@ export interface SeamChipInput {
   rating?: number | null;
   refused?: boolean | null;
   stale?: boolean | null;
+  /** tip_mismatch | diff_changed when stale is known. */
+  staleReason?: ReviewStaleReason | null;
   /** Named prelude/gate block when scan cannot start (index, clone, config…). */
   blockedGate?: string | null;
   /** Deterministic check infrastructure failure on the latest run. */
@@ -275,6 +279,7 @@ function ratingChip(input: SeamChipInput): SeamChip {
     reliability: input.reliability,
     refused: input.refused,
     stale: input.stale,
+    staleReason: input.staleReason,
   };
   const merge = isMergeReady(mergeInput);
 
@@ -301,6 +306,23 @@ function ratingChip(input: SeamChipInput): SeamChip {
       tone: "pending",
       detail: "—",
       title: merge.message ?? "Scan not finished — not merge-ready.",
+    };
+  }
+
+  // Stale / tip-mismatch: keep score visible but mark not merge-ready.
+  if (merge.mergeBlockReason === "stale" || input.stale === true) {
+    const staleTitle = merge.message ?? reviewStaleLabel(input.staleReason);
+    return {
+      id: "rating",
+      label,
+      tone: "warn",
+      detail:
+        input.staleReason === "tip_mismatch"
+          ? "tip stale"
+          : input.rating != null
+            ? `${input.rating}/10`
+            : "stale",
+      title: staleTitle,
     };
   }
 

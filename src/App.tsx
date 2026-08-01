@@ -279,6 +279,7 @@ export default function App() {
                   rejectedCount={workspace.rejectedCount}
                   rejectedFindings={workspace.rejectedFindings}
                   stale={workspace.stale}
+                  staleReason={workspace.staleReason}
                   mergeReady={workspace.mergeReady}
                   mergeBlockReason={workspace.mergeBlockReason ?? workspace.mergeReadyMessage}
                   mergeReadyMessage={workspace.mergeReadyMessage}
@@ -312,6 +313,7 @@ export default function App() {
                           rating: workspace.reviewRun?.rating,
                           refused: workspace.reviewRun?.refused,
                           stale: workspace.stale,
+                          staleReason: workspace.staleReason,
                         }
                       : null
                   }

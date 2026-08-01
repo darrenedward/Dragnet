@@ -102,6 +102,13 @@ describe("isMergeReady", () => {
     expect(r.mergeBlockReason).toBe("stale");
   });
 
+  it("tip_mismatch stale message mentions tip", () => {
+    const r = isMergeReady(ready({ stale: true, staleReason: "tip_mismatch" }));
+    expect(r.mergeReady).toBe(false);
+    expect(r.mergeBlockReason).toBe("stale");
+    expect(r.message).toMatch(/tip/i);
+  });
+
   it("omitted stale does not block (unknown staleness)", () => {
     const { stale: _s, ...noStale } = ready();
     expect(isMergeReady(noStale).mergeReady).toBe(true);

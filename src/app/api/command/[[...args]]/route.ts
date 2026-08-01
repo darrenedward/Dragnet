@@ -184,6 +184,7 @@ function formatFindings(
       reliability: pr.reliability ?? null,
       refused: pr.refused ?? false,
       stale: pr.stale ?? null,
+      staleReason: pr.staleReason ?? null,
       status: pr.status ?? null,
     });
   const verdict = pr.rating == null && !resolved.mergeReady
@@ -226,6 +227,7 @@ async function formatLatestFindings(pr: any): Promise<string> {
         reliability: run.reliability,
         refused: run.refused,
         stale: latest.stale,
+        staleReason: latest.staleReason,
         status: run.status,
       })
     : { mergeReady: false, mergeBlockReason: "No completed review yet" };
@@ -236,6 +238,7 @@ async function formatLatestFindings(pr: any): Promise<string> {
     reliability: run?.reliability ?? null,
     refused: run?.refused ?? false,
     stale: latest.stale,
+    staleReason: latest.staleReason,
     status: run?.status ?? null,
   };
   const sizeProfile = await loadPrSizeProfile(pr);
@@ -243,7 +246,12 @@ async function formatLatestFindings(pr: any): Promise<string> {
   if (!run) {
     out += "\n_No completed ReviewRun yet._\n";
   } else {
-    out += `\n_Reviewed commit ${run.commitHash.slice(0, 7)}${latest.stale ? " (stale)" : ""}._\n`;
+    const staleTag = !latest.stale
+      ? ""
+      : latest.staleReason === "tip_mismatch"
+        ? " (stale — tip mismatch)"
+        : " (stale)";
+    out += `\n_Reviewed commit ${run.commitHash.slice(0, 7)}${staleTag}._\n`;
     if (latest.rejectedCount > 0) {
       out += `_Verifier filtered ${latest.rejectedCount} finding${latest.rejectedCount === 1 ? "" : "s"}._\n`;
     }
@@ -309,6 +317,7 @@ async function handlePrCheckStatus(args: any, _userId: string | null): Promise<s
         reliability: run.reliability,
         refused: run.refused,
         stale: latest.stale,
+        staleReason: latest.staleReason,
         status: run.status,
       })
     : { mergeReady: false, mergeBlockReason: "No completed review yet" };
@@ -319,6 +328,7 @@ async function handlePrCheckStatus(args: any, _userId: string | null): Promise<s
     reliability: run?.reliability ?? null,
     refused: run?.refused ?? false,
     stale: latest.stale,
+    staleReason: latest.staleReason,
     status: run?.status ?? null,
   };
   const sizeProfile = await loadPrSizeProfile(pr);
@@ -338,7 +348,12 @@ async function handlePrCheckStatus(args: any, _userId: string | null): Promise<s
   if (!run) {
     out += "\n_No completed ReviewRun yet._\n";
   } else {
-    out += `\n_Reviewed commit ${run.commitHash.slice(0, 7)}${latest.stale ? " (stale)" : ""}._\n`;
+    const staleTag = !latest.stale
+      ? ""
+      : latest.staleReason === "tip_mismatch"
+        ? " (stale — tip mismatch)"
+        : " (stale)";
+    out += `\n_Reviewed commit ${run.commitHash.slice(0, 7)}${staleTag}._\n`;
     if (latest.rejectedCount > 0) {
       out += `_Verifier filtered ${latest.rejectedCount} finding${latest.rejectedCount === 1 ? "" : "s"}._\n`;
     }
@@ -358,7 +373,12 @@ async function handlePrComments(args: any, _userId: string | null): Promise<stri
   const findings = latest.findings;
   if (findings.length === 0) return `No findings for this PR.\nSize: ${formatSizeProfile(sizeProfile)}${latest.rejectedCount > 0 ? `\nVerifier filtered ${latest.rejectedCount}.` : ""}`;
   let out = `## Findings for PR ${pr.sourceBranch}\n\n`;
-  out += `_Reviewed commit ${latest.reviewRun.commitHash.slice(0, 7)}${latest.stale ? " (stale)" : ""}._\n\n`;
+  const commentsStaleTag = !latest.stale
+    ? ""
+    : latest.staleReason === "tip_mismatch"
+      ? " (stale — tip mismatch)"
+      : " (stale)";
+  out += `_Reviewed commit ${latest.reviewRun.commitHash.slice(0, 7)}${commentsStaleTag}._\n\n`;
   out += `**Size:** ${formatSizeProfile(sizeProfile)}\n\n`;
   for (const f of findings) {
     out += `- [${f.category}|${f.severity}${f.exploitability ? `|${f.exploitability}` : ""}] ${f.filename}:${f.line}\n  ${f.explanation}\n`;
@@ -549,6 +569,7 @@ async function handleLegacyCommand(body: any, defRepo: string | null, userId: st
         productionScore: latest.reviewRun?.rating != null ? `${latest.reviewRun.rating}/10` : "Not Scanned Yet",
         reviewRun: latest.reviewRun,
         stale: latest.stale,
+        staleReason: latest.staleReason,
         rejectedCount: latest.rejectedCount,
         sizeProfile,
         comments: latest.findings.map((f: any) => `[${f.category} | ${f.severity}${f.exploitability ? ` | ${f.exploitability}` : ""}] ${f.filename}:${f.line} - ${f.explanation}`),
@@ -602,6 +623,7 @@ async function handleLegacyCommand(body: any, defRepo: string | null, userId: st
               reliability: latest.reviewRun.reliability,
               refused: latest.reviewRun.refused,
               stale: latest.stale,
+              staleReason: latest.staleReason,
             }
           : null,
       );
@@ -619,6 +641,7 @@ async function handleLegacyCommand(body: any, defRepo: string | null, userId: st
         mergeBlockReason: merge.mergeBlockReason,
         mergeReadyMessage: merge.message,
         stale: latest.stale,
+        staleReason: latest.staleReason,
         rejectedCount: latest.rejectedCount,
         regressionsCount: latest.regressions.length,
         regressions: latest.regressions.map((r: any) =>

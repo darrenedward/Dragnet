@@ -26,6 +26,10 @@ import crypto from "node:crypto";
 import { randomUUID } from "node:crypto";
 import { prisma } from "./prisma";
 import type { ReviewLimits } from "./prSizeConfig";
+import {
+  evaluateReviewStale,
+  type ReviewStaleReason,
+} from "./reviewStale";
 import type { RatingTrendEntry } from "./stabilityScore";
 
 /**
@@ -170,6 +174,8 @@ export interface LatestReviewResult {
     source: string | null;
   }>;
   stale: boolean;
+  /** tip_mismatch | diff_changed when stale; null when fresh. */
+  staleReason: ReviewStaleReason | null;
 }
 
 export interface ChatChainEntry {
@@ -644,7 +650,7 @@ export async function setReviewChunkLastCheckpointAt(
  *
  * This is the read-side single source of truth for "current report" style
  * endpoints. It deliberately filters verifier-rejected findings and computes
- * a lightweight stale flag against the currently persisted PrFile diffs.
+ * a lightweight stale flag against the PR tip commit and current PrFile diffs.
  */
 export async function getLatestCompletedReview(
   prId: string,
@@ -688,6 +694,7 @@ export async function getLatestCompletedReview(
       rejectedFindings: [],
       rejectedCount: 0,
       stale: false,
+      staleReason: null,
     };
   }
 
@@ -696,7 +703,12 @@ export async function getLatestCompletedReview(
     select: { filename: true, diff: true },
   });
   const currentDiffHash = computeDiffHash(prFiles, prRow?.commitHash ?? "");
-  const stale = latestRun.diffHash !== "" && latestRun.diffHash !== currentDiffHash;
+  const { stale, reason: staleReason } = evaluateReviewStale({
+    runCommitHash: latestRun.commitHash,
+    tipCommitHash: prRow?.commitHash,
+    runDiffHash: latestRun.diffHash,
+    currentDiffHash,
+  });
 
   const reviewFindingSelect = {
     id: true, prId: true, reviewRunId: true, repoId: true,
@@ -783,6 +795,7 @@ export async function getLatestCompletedReview(
     rejectedFindings,
     rejectedCount: rejectedFindings.length,
     stale,
+    staleReason,
   };
 }
 

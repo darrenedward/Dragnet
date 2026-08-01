@@ -23,12 +23,12 @@
  * display. Topology responses key off `sourceBranch`, which is stable
  * across the stack walk.
  *
- * **Staleness caveat:** Dragnet's `targetBranch` is set to `baseBranch`
- * at PR creation and never re-synced from GitHub (see
- * `getRealPrs.ts:175`). Retargeted PRs (common in stacked-PR
- * workflows) will show stale topology here. Callers that need
- * authoritative topology MUST re-walk via `gh pr list --json
- * baseRefName,headRefName`. The fields below are advisory/hint.
+ * **Staleness caveat:** Dragnet's `targetBranch` is re-synced from the
+ * provider when poller/API discovery runs (`getRealPrs` upserts
+ * `baseRef` on open PRs). Between syncs it can still lag a retarget.
+ * Callers that need authoritative topology at merge time MUST re-walk
+ * via `gh pr list --json baseRefName,headRefName`. The fields below are
+ * advisory/hint — not a substitute for live `gh`.
  *
  * The walk is O(N) per PR after the index is built; total O(N²) worst
  * case but typical repos have <30 open PRs so it's negligible. Cycle

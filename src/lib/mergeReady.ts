@@ -11,8 +11,13 @@
  *   AND rating is non-null and >= 8
  *   AND reliability is absent-or-complete (incomplete/partial = not ready)
  *   AND not refused
- *   AND not stale vs current revision when staleness is known
+ *   AND not stale vs current tip (commit identity) / revision when known
  */
+
+import {
+  reviewStaleLabel,
+  type ReviewStaleReason,
+} from "./reviewStale";
 
 export const MERGE_RATING_THRESHOLD = 8;
 
@@ -35,8 +40,14 @@ export interface MergeReadyInput {
   /** "complete" | "partial" | "incomplete_security_review" | null/undefined. */
   reliability?: string | null;
   refused?: boolean | null;
-  /** When known, true means the completed run does not match current HEAD/diff. */
+  /**
+   * When known, true means the completed run does not match current tip
+   * and/or diff. Tip identity is part of the merge gate — a high score on
+   * an old tip must not pass.
+   */
   stale?: boolean | null;
+  /** Optional detail when stale — tip moved vs diff changed. */
+  staleReason?: ReviewStaleReason | null;
 }
 
 export interface MergeReadyResult {
@@ -116,7 +127,7 @@ export function isMergeReady(input: MergeReadyInput | null | undefined): MergeRe
     return {
       mergeReady: false,
       mergeBlockReason: "stale",
-      message: "Review is stale vs current revision — re-scan required.",
+      message: reviewStaleLabel(input.staleReason),
     };
   }
 

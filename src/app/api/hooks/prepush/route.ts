@@ -38,8 +38,10 @@ export async function POST(req: Request) {
   // The hook knows the commit being pushed even when the local PR mirror has
   // not observed it yet. Keep the queue's coalescing key and worker revision
   // guard aligned with that commit.
-  if (typeof sha === "string" && sha && sha !== pr.commitHash) {
-    await prisma.pullRequest.update({ where: { id: pr.id }, data: { commitHash: sha } });
+  const tipSha =
+    typeof sha === "string" && sha.trim() ? sha.trim() : pr.commitHash;
+  if (tipSha && tipSha !== pr.commitHash) {
+    await prisma.pullRequest.update({ where: { id: pr.id }, data: { commitHash: tipSha } });
   }
 
   const job = await admitScanJobForPr({
@@ -72,6 +74,7 @@ export async function POST(req: Request) {
       outcome: true,
       refused: true,
       status: true,
+      commitHash: true,
     },
   });
   const findings = await prisma.reviewFinding.findMany({
@@ -80,12 +83,17 @@ export async function POST(req: Request) {
   });
   const rating = run?.rating ?? null;
   const reliability = run?.reliability ?? null;
+  // Tip identity: fail closed if the finished run pinned a different head.
+  const tipMismatch =
+    Boolean(run?.commitHash) && Boolean(tipSha) && run!.commitHash !== tipSha;
   const gate = isMergeReady({
     rating,
     reliability,
     outcome: run?.outcome ?? null,
     refused: run?.refused ?? false,
     status: run?.status ?? "completed",
+    stale: tipMismatch,
+    staleReason: tipMismatch ? "tip_mismatch" : null,
   });
   const passed = gate.mergeReady;
   return NextResponse.json({

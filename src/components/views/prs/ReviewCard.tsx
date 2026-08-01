@@ -68,6 +68,7 @@ interface Props {
     source: string | null;
   }>;
   stale?: boolean;
+  staleReason?: "tip_mismatch" | "diff_changed" | null;
   stability?: StabilityProp | null;
   isScanning?: boolean;
   chunks?: ReviewChunk[];
@@ -152,6 +153,7 @@ export default function ReviewCard({
   rejectedCount,
   rejectedFindings,
   stale,
+  staleReason,
   stability,
   isScanning,
   chunks = [],
@@ -173,6 +175,7 @@ export default function ReviewCard({
         reliability: reviewRun.reliability,
         refused: reviewRun.refused,
         stale: stale ?? false,
+        staleReason: staleReason ?? null,
         status: reviewRun.status,
       })
     : null;
@@ -231,11 +234,15 @@ export default function ReviewCard({
           )}
           {stale && !isScanning && (
             <span
-              title="The saved review no longer matches the current PR diff. Run the scan again to refresh it."
+              title={
+                staleReason === "tip_mismatch"
+                  ? "Tip moved — completed review does not match current PR tip. Re-scan required."
+                  : "The saved review no longer matches the current PR tip or diff. Run the scan again to refresh it."
+              }
               className="flex items-center gap-1 px-2 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/25 text-[9px] font-mono font-bold uppercase"
             >
               <AlertTriangle size={10} />
-              <span>Review out of date</span>
+              <span>{staleReason === "tip_mismatch" ? "Tip mismatch" : "Review out of date"}</span>
             </span>
           )}
         </div>
