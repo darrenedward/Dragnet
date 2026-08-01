@@ -50,6 +50,12 @@ import { computeCost } from "@/src/lib/llmPricing";
 import { recordProviderQualityFailure, recordProviderSuccess } from "@/src/lib/providerHealth";
 import { completePrReviewIfCurrent } from "@/src/lib/prRevisionStatus";
 import {
+  outcomeFromScanResult,
+  prStatusForTerminal,
+  runPersistForTerminal,
+  type ScanTerminalClass,
+} from "@/src/lib/scanTerminalOutcome";
+import {
   deleteCheckpoint,
   deleteRunCheckpoints,
   RUN_CHECKPOINT_ID,
@@ -970,10 +976,17 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
     const rating = null;
     const usedModel = "unconfigured";
     const systemWarn = "No code changes detected. Push your changes and re-scan. If this PR is intentionally empty, close it.";
-    // Persist the result for this new scan
+    // Persist the result for this new scan (empty-diff is not an AI pass)
     await completePrReviewIfCurrent(prId, pr.commitHash, rating);
     if (reviewRunId && !reviewChunkId) {
-      await completeReviewRun(reviewRunId, { status: "completed", rating, refused: false, outcome: "reviewed" });
+      await completeReviewRun(reviewRunId, {
+        status: "completed",
+        rating,
+        refused: false,
+        outcome: "reviewed",
+        terminalClass: "skipped",
+        systemWarn,
+      });
     }
     if (!reviewChunkId) {
       try {
@@ -1306,20 +1319,19 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
           "error", reviewRunId, reviewChunkId,
         );
         console.log(`[scan] runPrScan: pipeline aborted at step "${stepName}" (infrastructure=${isInfra})`);
-        if (reviewRunId && !reviewChunkId) {
-          await completeReviewRun(reviewRunId, { status: "failed" });
-        }
-        if (!reviewChunkId) {
-          await prisma.pullRequest.updateMany({ where: { id: prId }, data: { status: "Failed" } });
-        }
+        const warn = isInfra
+          ? `Infrastructure failure in step "${stepName}". Check server logs and try again.`
+          : `Scan aborted at step "${stepName}".`;
+        await finalizeScanFailure(prId, reviewRunId, reviewChunkId, {
+          systemWarn: warn,
+          infrastructureFailure: isInfra,
+        });
         return {
           success: false,
           rating: null,
           findings: deterministicFindings,
           usedModel: "none",
-          systemWarn: isInfra
-            ? `Infrastructure failure in step "${stepName}". Check server logs and try again.`
-            : `Scan aborted at step "${stepName}".`,
+          systemWarn: warn,
           infrastructureFailure: isInfra,
         };
       }
@@ -1958,13 +1970,15 @@ ${diffPayload}${deterministicPayload}`;
 
   // Handle abort: infrastructure error or code error (no review produced).
   if (llmResult.aborted) {
-    if (!reviewChunkId) {
-      await prisma.pullRequest.updateMany({ where: { id: prId }, data: { status: "Failed" } });
-    }
     const sr = llmResult.stepResults[0]?.result;
     if (sr && isStepFailure(sr)) {
       const infra = sr.error.isInfrastructure;
       const msg = sr.error.message || systemWarn || "LLM review failed.";
+      await finalizeScanFailure(prId, reviewRunId, reviewChunkId, {
+        systemWarn: msg,
+        infrastructureFailure: !!infra,
+        providerOutcomes: providerAttempts.map((a) => a.outcome),
+      });
       return {
         success: false,
         rating: null,
@@ -1974,6 +1988,10 @@ ${diffPayload}${deterministicPayload}`;
         infrastructureFailure: !!infra,
       };
     }
+    await finalizeScanFailure(prId, reviewRunId, reviewChunkId, {
+      systemWarn: "LLM review aborted.",
+      providerOutcomes: providerAttempts.map((a) => a.outcome),
+    });
     return {
       success: false,
       rating: null,
@@ -1986,9 +2004,10 @@ ${diffPayload}${deterministicPayload}`;
   const stepResult = llmResult.stepResults[0]?.result;
   const llmData: LlmStepData | undefined = stepResult && isStepSuccess(stepResult) ? stepResult.data : undefined;
   if (!llmData) {
-    if (!reviewChunkId) {
-      await prisma.pullRequest.updateMany({ where: { id: prId }, data: { status: "Failed" } });
-    }
+    await finalizeScanFailure(prId, reviewRunId, reviewChunkId, {
+      systemWarn: "LLM step returned no data.",
+      providerOutcomes: providerAttempts.map((a) => a.outcome),
+    });
     return {
       success: false,
       rating: null,
@@ -2008,9 +2027,12 @@ ${diffPayload}${deterministicPayload}`;
     // branches) keeps the run-row lifecycle co-located with the result.
     if (reviewRunId && !reviewChunkId) {
       try {
-        await prisma.reviewRun.update({
-          where: { id: reviewRunId },
-          data: { status: "completed", outcome: "skipped", completedAt: new Date(), rating: null },
+        await completeReviewRun(reviewRunId, {
+          status: "completed",
+          rating: null,
+          outcome: "skipped",
+          terminalClass: "skipped",
+          systemWarn: llmData.systemWarn ?? null,
         });
       } catch (runErr) {
         console.warn(`[scan] runPrScan: failed to mark trivial-skip run completed:`, runErr);
@@ -2372,9 +2394,19 @@ ${diffPayload}${deterministicPayload}`;
     }
   }
 
-  // 6b. Mark the ReviewRun complete with the final rating. Best-effort —
-  // completeReviewRun swallows errors. Await it so callers that immediately
-  // refetch the latest completed run don't race the status write.
+  // 6b. Mark the ReviewRun terminal. Null rating after an AI attempt is a
+  // hard fail (issue #140) — never "Completed" with a quiet null score.
+  const terminal = outcomeFromScanResult({
+    success: rating != null && Number.isFinite(rating),
+    rating,
+    systemWarn,
+    usedModel,
+    providerOutcomes: providerAttempts.map((a) => a.outcome),
+  });
+  // All-rejected / skeptic null still had a submitReview path — treat as
+  // quality_failure when rating was nulled after AI work.
+  const earnedOk = terminal.isEarnedSuccess;
+
   if (reviewRunId && !reviewChunkId) {
     // Intra-run dedup first: collapse duplicates within this run by fingerprint.
     // Then reconcile against prior runs so the skill sees a consistent view
@@ -2390,22 +2422,41 @@ ${diffPayload}${deterministicPayload}`;
     } catch (err) {
       console.error(`[scan] reconcileFindingsAcrossRuns failed for run ${reviewRunId}:`, err);
     }
-    await completeReviewRun(reviewRunId, {
-      status: "completed",
-      rating,
-      refused,
-      refusalNote,
-      outcome: "reviewed",
-    });
-    recordFixesForCompletedScan(reviewRunId).catch((err) =>
-      console.warn(`[scan] recordFixesForCompletedScan failed for run ${reviewRunId}:`, err),
-    );
+    if (earnedOk) {
+      await completeReviewRun(reviewRunId, {
+        status: "completed",
+        rating,
+        refused,
+        refusalNote,
+        outcome: "reviewed",
+        terminalClass: "success",
+        systemWarn,
+      });
+      recordFixesForCompletedScan(reviewRunId).catch((err) =>
+        console.warn(`[scan] recordFixesForCompletedScan failed for run ${reviewRunId}:`, err),
+      );
+    } else {
+      const persist = runPersistForTerminal(terminal);
+      await completeReviewRun(reviewRunId, {
+        status: "failed",
+        rating: null,
+        terminalClass: persist.terminalClass,
+        systemWarn:
+          systemWarn ||
+          "Scan finished without a usable rating — not an earned AI pass. Re-scan.",
+      });
+    }
   }
 
-  // 7. Update PR rating + status
+  // 7. Update PR rating + status — only Complete on earned success.
   if (!reviewChunkId) {
-    console.log(`[scan] runPrScan: setting PR status=Completed rating=${rating}`);
-    await completePrReviewIfCurrent(prId, pr.commitHash, rating);
+    if (earnedOk) {
+      console.log(`[scan] runPrScan: setting PR status=Completed rating=${rating}`);
+      await completePrReviewIfCurrent(prId, pr.commitHash, rating);
+    } else {
+      console.log(`[scan] runPrScan: setting PR status=Failed (null/unearned rating)`);
+      await prisma.pullRequest.updateMany({ where: { id: prId }, data: { status: "Failed" } });
+    }
   }
 
   // 8. Audit trail
@@ -2428,6 +2479,22 @@ ${diffPayload}${deterministicPayload}`;
       where: { id: pr.repoId },
       data: { reviewsCount: { increment: 1 }, status: "idle" },
     });
+  }
+
+  if (!earnedOk) {
+    const failWarn =
+      systemWarn ||
+      "Scan finished without a usable rating — not an earned AI pass. Re-scan.";
+    void logReview(prId, `Review failed — no earned rating. ${failWarn}`, "error", reviewRunId, reviewChunkId);
+    console.log(`[scan] runPrScan: returning failure (unearned null rating) findings=${findings.length} model=${usedModel}`);
+    return {
+      success: false,
+      rating: null,
+      findings,
+      summary: scanSummary,
+      usedModel,
+      systemWarn: failWarn,
+    };
   }
 
   void logReview(prId, `Review complete — ${findings.length} finding(s), rating ${rating}/10`, "info", reviewRunId, reviewChunkId);
@@ -2471,8 +2538,57 @@ ${diffPayload}${deterministicPayload}`;
       } catch (telemetryErr) {
         console.warn(`[scan] failed to persist tokensUsed on failed run:`, telemetryErr);
       }
-      await completeReviewRun(reviewRunId, { status: "failed" });
+      const msg = err?.message ? String(err.message) : "Scan failed.";
+      await completeReviewRun(reviewRunId, {
+        status: "failed",
+        terminalClass: "unknown_failure",
+        systemWarn: msg,
+      });
     }
     throw err;
   }
+}
+
+/**
+ * Persist Failed PR + failed ReviewRun with terminal class (issue #140).
+ * Soft-fail paths must not leave runs in_progress or later flip to Completed.
+ */
+async function finalizeScanFailure(
+  prId: string,
+  reviewRunId: string | null | undefined,
+  reviewChunkId: string | null | undefined,
+  opts: {
+    systemWarn: string;
+    infrastructureFailure?: boolean;
+    providerOutcomes?: Array<string | null | undefined>;
+  },
+): Promise<void> {
+  if (reviewChunkId) return;
+  const terminal = outcomeFromScanResult({
+    success: false,
+    rating: null,
+    systemWarn: opts.systemWarn,
+    infrastructureFailure: opts.infrastructureFailure,
+    providerOutcomes: opts.providerOutcomes,
+  });
+  const persist = runPersistForTerminal(terminal);
+  if (reviewRunId) {
+    try {
+      await completeReviewRun(reviewRunId, {
+        status: "failed",
+        terminalClass: persist.terminalClass as ScanTerminalClass,
+        systemWarn: opts.systemWarn,
+        rating: null,
+      });
+    } catch (err) {
+      console.warn(`[scan] finalizeScanFailure: completeReviewRun failed:`, err);
+    }
+  }
+  try {
+    await prisma.pullRequest.updateMany({ where: { id: prId }, data: { status: "Failed" } });
+  } catch (err) {
+    console.warn(`[scan] finalizeScanFailure: PR Failed write failed:`, err);
+  }
+  // silence unused helper import when tree-shaken differently
+  void prStatusForTerminal;
 }

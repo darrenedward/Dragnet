@@ -163,21 +163,18 @@ describe("ReviewRun.outcome persistence — issue #19", () => {
       "run-skip",
     );
 
-    // The trivial-skip path writes via prisma.reviewRun.update with
-    // outcome="skipped" (the direct write, NOT via completeReviewRun).
-    const skipUpdateCall = prismaMocks.reviewRunUpdate.mock.calls.find(
-      (c: any[]) => c[0]?.data?.outcome === "skipped",
+    // Trivial-skip persists via completeReviewRun (issue #140 terminal class).
+    expect(prismaMocks.completeReviewRun).toHaveBeenCalledWith(
+      "run-skip",
+      expect.objectContaining({
+        status: "completed",
+        outcome: "skipped",
+        rating: null,
+        terminalClass: "skipped",
+      }),
     );
-    expect(skipUpdateCall).toBeDefined();
-    expect(skipUpdateCall?.[0]?.data).toMatchObject({
-      status: "completed",
-      outcome: "skipped",
-      rating: null,
-    });
 
-    // completeReviewRun is NOT called for the trivial-skip path — the
-    // direct prisma.reviewRun.update at reviewService.ts:1907 is the
-    // sole terminal write. Assert no "reviewed" outcome slipped in.
+    // Assert no "reviewed" outcome slipped in on the skip path.
     const reviewedCalls = prismaMocks.completeReviewRun.mock.calls.filter(
       (c: any[]) => c[1]?.outcome === "reviewed",
     );
@@ -334,6 +331,8 @@ describe("ReviewRun.outcome persistence — issue #19", () => {
       rating: null,
       refused: false,
       outcome: "reviewed",
+      terminalClass: "skipped",
+      systemWarn: expect.any(String),
     });
   });
 });

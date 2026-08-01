@@ -20,6 +20,7 @@ import {
   createReviewRun,
   completeReviewRun,
   getLatestCompletedReview,
+  getLatestTerminalReview,
   getRecentRuns,
   getActiveScan,
 } from "@/src/lib/reviewFreshness";
@@ -27,6 +28,10 @@ import { computeStability, computeWeightedStability } from "@/src/lib/stabilityS
 import { lookupTrustWeight } from "@/src/lib/modelTrustWeights";
 import { isMergeReady } from "@/src/lib/isMergeReady";
 import { admitScanJobForPr } from "@/src/services/scanQueue";
+import {
+  classifyScanTerminalOutcome,
+  providerOutcomesFromTokensUsed,
+} from "@/src/lib/scanTerminalOutcome";
 
 /**
  * Start a tracked review: refresh files, create an in_progress ReviewRun,
@@ -595,6 +600,8 @@ async function handleLegacyCommand(body: any, defRepo: string | null, userId: st
         return NextResponse.json({
           status: "Scanning",
           message: `> Scan in progress for **${pr.sourceBranch}**...`,
+          outcomeClass: "processing",
+          systemWarn: null,
           sizeProfile,
           progress: run && {
             chunksCompleted: run.chunksCompleted,
@@ -611,27 +618,61 @@ async function handleLegacyCommand(body: any, defRepo: string | null, userId: st
       // Re-fetch so we pick up any rating update from the async runPrScan.
       const freshPr = await prisma.pullRequest.findUnique({ where: { id: pr.id } });
       const latest = await getLatestCompletedReview(pr.id);
+      const terminal = await getLatestTerminalReview(pr.id);
       const ratingTrend = await getRecentRuns(pr.id, 5);
       const stability = computeStability(ratingTrend);
       const weighted = computeWeightedStability(ratingTrend, lookupTrustWeight);
+      const terminalRun = terminal.reviewRun;
+      const terminalOutcome = classifyScanTerminalOutcome({
+        prStatus: freshPr?.status ?? pr.status,
+        runStatus: terminalRun?.status ?? latest.reviewRun?.status,
+        runOutcome: terminalRun?.outcome ?? latest.reviewRun?.outcome,
+        rating: terminalRun?.rating ?? latest.reviewRun?.rating,
+        systemWarn: terminalRun?.systemWarn ?? null,
+        terminalClass: terminalRun?.terminalClass ?? null,
+        providerOutcomes: providerOutcomesFromTokensUsed(
+          terminalRun?.tokensUsed ?? latest.reviewRun?.tokensUsed,
+        ),
+      });
+      const statusRunFailed = terminalRun?.status === "failed";
       const merge = isMergeReady(
-        latest.reviewRun
-          ? {
-              status: latest.reviewRun.status,
-              outcome: latest.reviewRun.outcome,
-              rating: latest.reviewRun.rating,
-              reliability: latest.reviewRun.reliability,
-              refused: latest.reviewRun.refused,
-              stale: latest.stale,
-              staleReason: latest.staleReason,
-            }
-          : null,
+        statusRunFailed
+          ? { status: "failed", outcome: null, rating: null }
+          : latest.reviewRun
+            ? {
+                status: latest.reviewRun.status,
+                outcome: latest.reviewRun.outcome,
+                rating: latest.reviewRun.rating,
+                reliability: latest.reviewRun.reliability,
+                refused: latest.reviewRun.refused,
+                stale: latest.stale,
+                staleReason: latest.staleReason,
+              }
+            : null,
       );
+      const httpStatus = terminalOutcome.isFailed
+        ? "Failed"
+        : latest.reviewRun
+          ? "Success"
+          : freshPr?.rating != null
+            ? "Success"
+            : "Pending";
       return NextResponse.json({
-        status: latest.reviewRun ? "Success" : (freshPr?.rating != null ? "Success" : "Pending"),
+        status: httpStatus,
         type: "status",
-        productionScore: latest.reviewRun?.rating != null ? `${latest.reviewRun.rating}/10` : (freshPr?.rating != null ? `${freshPr.rating}/10` : "Not scanned yet"),
-        reviewRun: latest.reviewRun,
+        productionScore:
+          statusRunFailed
+            ? "Failed"
+            : latest.reviewRun?.rating != null
+              ? `${latest.reviewRun.rating}/10`
+              : freshPr?.rating != null
+                ? `${freshPr.rating}/10`
+                : "Not scanned yet",
+        reviewRun: terminalRun ?? latest.reviewRun,
+        /** Scan terminal outcome class + warn for /dragnet automation (issue #140). */
+        outcomeClass: terminalOutcome.class,
+        systemWarn: terminalOutcome.systemWarn ?? terminalRun?.systemWarn ?? null,
+        terminalOutcome,
         ratingTrend,
         stability,
         weightedStability: weighted.weightedStability,
@@ -640,8 +681,8 @@ async function handleLegacyCommand(body: any, defRepo: string | null, userId: st
         mergeReady: merge.mergeReady,
         mergeBlockReason: merge.mergeBlockReason,
         mergeReadyMessage: merge.message,
-        stale: latest.stale,
-        staleReason: latest.staleReason,
+        stale: latest.stale || terminal.stale,
+        staleReason: latest.staleReason ?? terminal.staleReason,
         rejectedCount: latest.rejectedCount,
         regressionsCount: latest.regressions.length,
         regressions: latest.regressions.map((r: any) =>

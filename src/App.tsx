@@ -267,6 +267,7 @@ export default function App() {
                   onDismissScanResult={workspaceCommands.dismissScanResult}
                   findings={workspace.findings}
                   reviewRun={workspace.reviewRun}
+                  terminalOutcome={workspace.terminalOutcome ?? null}
                   chunks={workspace.reviewChunks}
                   activeScan={workspace.activeScan}
                   queueJob={workspace.queueJob}

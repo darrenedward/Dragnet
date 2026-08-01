@@ -90,6 +90,8 @@ export function useDashboardData() {
     refused?: boolean | null;
     status?: string; // lifecycle: "in_progress" | "completed" | "failed"
     outcome?: string | null; // "reviewed" | "skipped" | null (legacy / failed)
+    terminalClass?: string | null;
+    systemWarn?: string | null;
     chunksTotal?: number;
     chunksCompleted?: number;
     chunksFailed?: number;
@@ -186,7 +188,16 @@ export function useDashboardData() {
   // handleTriggerPrScan, cleared in its finally block.
   const [scanningPrId, setScanningPrId] = useState<string | null>(null);
   const [isRetryingChunks, setIsRetryingChunks] = useState(false);
-  const [scanResult, setScanResult] = useState<{ count: number; model: string; notice?: string | null } | null>(null);
+  const [scanResult, setScanResult] = useState<{
+    count: number;
+    model: string;
+    notice?: string | null;
+    failed?: boolean;
+    terminalOutcome?: import("../lib/scanTerminalOutcome").ScanTerminalOutcome | null;
+  } | null>(null);
+  const [terminalOutcome, setTerminalOutcome] = useState<
+    import("../lib/scanTerminalOutcome").ScanTerminalOutcome | null
+  >(null);
   const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
   // Trivial-skip popup state. Lives here (not in App.tsx) because the
   // decision to open it is derived from inside handleTriggerPrScan, and
@@ -394,9 +405,22 @@ export function useDashboardData() {
       if (findingsData && typeof findingsData === "object" && "findings" in findingsData) {
         setFindings(findingsData.findings);
         setReviewRun(findingsData.reviewRun ?? null);
+        setTerminalOutcome(findingsData.terminalOutcome ?? null);
         setReviewChunks(findingsData.chunks ?? []);
         setActiveScan(findingsData.activeScan ?? null);
         setQueueJob(findingsData.queueJob ?? null);
+        // Keep sidebar PR status honest after failed terminal outcomes.
+        if (
+          findingsData.terminalOutcome?.isFailed &&
+          !findingsData.queueJob &&
+          !findingsData.activeScan
+        ) {
+          setPrs((prev) =>
+            prev.map((p) =>
+              p.id === prId && p.status !== "Merged" ? { ...p, status: "Failed" } : p,
+            ),
+          );
+        }
         setMergeReady(
           typeof findingsData.mergeReady === "boolean" ? findingsData.mergeReady : null,
         );
@@ -779,11 +803,28 @@ export function useDashboardData() {
           );
         }
         if (isTargetActive(scanningRepoId, targetPrId)) {
+          const failed =
+            result.success === false || result.terminalOutcome?.isFailed === true;
           setScanResult({
             count: result.findings?.length || 0,
             model: result.usedModel,
             notice: result.systemWarn,
+            failed,
+            terminalOutcome: result.terminalOutcome ?? null,
           });
+          if (result.terminalOutcome) {
+            setTerminalOutcome(result.terminalOutcome);
+          }
+          if (failed) {
+            setPrs((prev) =>
+              prev.map((p) =>
+                p.id === targetPrId && p.status !== "Merged" ? { ...p, status: "Failed" } : p,
+              ),
+            );
+            if (result.systemWarn || result.terminalOutcome?.reason) {
+              toast.error(result.systemWarn || result.terminalOutcome?.reason || "Scan failed");
+            }
+          }
         }
         // Trivial-skip: backend returned `usedModel: "none (skipped)"`
         // because the diff was all config/docs/generated files. The
@@ -1246,6 +1287,7 @@ export function useDashboardData() {
       activeFile: prFiles.find((file) => file.filename === selectedFilename) ?? prFiles[0] ?? null,
       findings,
       reviewRun,
+      terminalOutcome,
       reviewChunks,
       activeScan,
       queueJob,

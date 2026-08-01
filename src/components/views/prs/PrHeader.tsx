@@ -17,6 +17,8 @@ import { canForceRescan } from "../../../lib/forceRescan";
 import { buildPrWorkspaceHeaderModel } from "../../../lib/prWorkspaceHeader";
 import type { ReviewLimits } from "../../../lib/prSizeConfig";
 import type { SeamChipInput } from "../../../lib/seamChips";
+import type { ScanTerminalOutcome } from "../../../lib/scanTerminalOutcome";
+import FailedScanBanner from "./FailedScanBanner";
 import IndexNowBanner from "./IndexNowBanner";
 import InterruptedScanBanner, { type InterruptedScan } from "./InterruptedScanBanner";
 import LayoutCChips from "./LayoutCChips";
@@ -25,6 +27,12 @@ interface ScanResult {
   count: number;
   model: string;
   notice?: string | null;
+  /** When true / failed outcome, show Failed banner instead of completed. */
+  failed?: boolean;
+  terminalOutcome?: Pick<
+    ScanTerminalOutcome,
+    "class" | "reason" | "reasonKind" | "systemWarn" | "primaryCta" | "label" | "isFailed"
+  > | null;
 }
 
 interface ScanSettingsSummary {
@@ -52,7 +60,10 @@ export interface PrHeaderProps {
     completedAt?: string | null;
     reliability?: string | null;
     refused?: boolean | null;
+    terminalClass?: string | null;
+    systemWarn?: string | null;
   } | null;
+  terminalOutcome?: ScanTerminalOutcome | null;
   repoId?: string;
   repoIndexedAt?: string | null;
   onIndexComplete?: () => void;
@@ -79,6 +90,7 @@ export default function PrHeader({
   scanResult,
   onDismissScanResult,
   reviewRun,
+  terminalOutcome,
   repoId,
   repoIndexedAt,
   onIndexComplete,
@@ -94,7 +106,15 @@ export default function PrHeader({
   const scanSettings = useScanSettingsSummary();
   const scanning = isScanning || activePR?.status === "In Progress";
   const queued = queueJob?.state === "queued";
-  const failed = reviewRun?.status === "failed";
+  const liveFail = scanResult?.failed || scanResult?.terminalOutcome?.isFailed;
+  const failed =
+    liveFail ||
+    reviewRun?.status === "failed" ||
+    terminalOutcome?.isFailed === true ||
+    (!!reviewRun &&
+      reviewRun.status === "completed" &&
+      reviewRun.rating == null &&
+      reviewRun.outcome !== "skipped");
   const skipped = reviewRun?.outcome === "skipped";
   const [descExpanded, setDescExpanded] = useState(false);
 
@@ -196,7 +216,7 @@ export default function PrHeader({
               } ${scanning ? "animate-pulse opacity-50" : ""}`}
             >
               <Zap size={12} className={cloneFailed || !repoIndexedAt ? "" : "fill-black"} />
-              <span>
+                  <span>
                 {scanning
                   ? "Review Running..."
                   : cloneFailed
@@ -204,7 +224,7 @@ export default function PrHeader({
                     : !repoIndexedAt
                       ? "Index Required"
                       : failed
-                        ? "Re-run review"
+                        ? "Re-scan"
                         : skipped
                           ? "Skipped — re-scan"
                           : "Run PR Review"}
@@ -329,9 +349,32 @@ export default function PrHeader({
         />
       )}
 
+      {!interruptedScan && failed && !scanning && (
+        <FailedScanBanner
+          outcome={
+            scanResult?.terminalOutcome ??
+            terminalOutcome ?? {
+              class: "hard_fail",
+              label: "Failed",
+              reason:
+                reviewRun?.systemWarn ||
+                scanResult?.notice ||
+                "Last scan did not produce an earned AI verdict.",
+              reasonKind: "unknown",
+              systemWarn: reviewRun?.systemWarn || scanResult?.notice || null,
+              primaryCta: "rescan",
+            }
+          }
+          isScanning={isScanning}
+          onRescan={() => onTriggerScan()}
+          onForceRescan={() => onTriggerScan({ force: true })}
+          forceAvailable={!!repoIndexedAt && !cloneFailed}
+        />
+      )}
+
       <ScanSettingsStrip settings={scanSettings} />
 
-      {scanResult && (
+      {scanResult && !scanResult.failed && !scanResult.terminalOutcome?.isFailed && (
         <div className="p-2 bg-cyan-950/20 border border-cyan-800/30 rounded text-xs text-cyan-400 font-mono flex items-center justify-between">
           <span>
             ✓ Scan run completed: Discovered <strong className="text-emerald-400">{scanResult.count}</strong> alerts using{" "}
@@ -343,7 +386,7 @@ export default function PrHeader({
         </div>
       )}
 
-      {scanResult?.notice && (
+      {scanResult?.notice && !scanResult.failed && !scanResult.terminalOutcome?.isFailed && (
         <div className="p-2 bg-amber-950/30 border border-amber-800/30 rounded text-xs text-amber-400 font-mono flex items-center gap-2">
           <AlertTriangle size={14} className="shrink-0" />
           <span>{scanResult.notice}</span>

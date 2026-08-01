@@ -153,6 +153,8 @@ describe("Empty-diff PR handling — issue #61", () => {
     expect(prismaMocks.completeReviewRun).toHaveBeenCalledWith("run-abc", {
       status: "completed",
       rating: null,
+      terminalClass: "skipped",
+      systemWarn: expect.any(String),
       refused: false,
       outcome: "reviewed",
     });

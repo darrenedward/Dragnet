@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   mockAuthenticateSessionOrKey: vi.fn(),
   mockEnforcePrRepoScope: vi.fn(),
   mockGetLatestCompletedReview: vi.fn(),
+  mockGetLatestTerminalReview: vi.fn(),
   mockGetActiveScan: vi.fn(),
   mockGetRecentRuns: vi.fn(),
   mockPullRequestFindUnique: vi.fn(),
@@ -30,6 +31,7 @@ vi.mock("@/src/lib/apiAuth", () => ({
 
 vi.mock("@/src/lib/reviewFreshness", () => ({
   getLatestCompletedReview: mocks.mockGetLatestCompletedReview,
+  getLatestTerminalReview: mocks.mockGetLatestTerminalReview,
   getActiveScan: mocks.mockGetActiveScan,
   getRecentRuns: mocks.mockGetRecentRuns,
   // scan route imports these — stub them so the module mock is complete.
@@ -115,10 +117,19 @@ describe("GET /api/prs/[prId]/findings — outcome field (#19)", () => {
       iterationsByChunk: {},
     });
     mocks.mockGetRecentRuns.mockResolvedValue([]);
+    mocks.mockGetLatestTerminalReview.mockImplementation(async () => {
+      const latest = await mocks.mockGetLatestCompletedReview();
+      return {
+        reviewRun: latest?.reviewRun ?? null,
+        stale: latest?.stale ?? false,
+        staleReason: latest?.staleReason ?? null,
+      };
+    });
     mocks.mockPullRequestFindUnique.mockResolvedValue({
+      status: "Completed",
       sourceBranch: "feature/x",
       targetBranch: "main",
-      repository: { id: "repo-1", path: null, baseBranch: "main" },
+      repository: { id: "repo-1", path: null, baseBranch: "main", maxConcurrentScans: null },
     });
     mocks.mockPrFileFindMany.mockResolvedValue([]);
     mocks.mockReviewChunkFindMany.mockResolvedValue([]);
@@ -266,6 +277,12 @@ describe("GET /api/prs/[prId]/findings — outcome field (#19)", () => {
       stale: false,
       staleReason: null,
     });
+    mocks.mockPullRequestFindUnique.mockResolvedValue({
+      status: "Pending",
+      sourceBranch: "feature/x",
+      targetBranch: "main",
+      repository: { id: "repo-1", path: null, baseBranch: "main", maxConcurrentScans: null },
+    });
 
     const res = await GET(makeFindingsRequest("pr-none"), {
       params: Promise.resolve({ prId: "pr-none" }),
@@ -274,6 +291,68 @@ describe("GET /api/prs/[prId]/findings — outcome field (#19)", () => {
     const body = await res.json();
     expect(body.mergeReady).toBe(false);
     expect(body.mergeBlockReason).toMatch(/no_run|no completed review/i);
+    expect(body.outcomeClass).toBeDefined();
+  });
+
+  it("failed terminal run exposes outcomeClass + systemWarn (#140)", async () => {
+    const failedRun = {
+      id: "run-hard",
+      commitHash: "abc",
+      diffHash: "def",
+      reviewConfigHash: "cfg",
+      completedAt: new Date("2026-07-01T00:00:00Z"),
+      rating: null,
+      model: null,
+      triggerReason: "manual",
+      reliability: null,
+      refused: false,
+      refusalNote: null,
+      outcome: null,
+      status: "failed",
+      terminalClass: "hard_fail",
+      systemWarn: "hard_fail: dual quality_failure",
+      chunksTotal: 0,
+      chunksCompleted: 0,
+      chunksFailed: 0,
+      chunksSkipped: 0,
+      tokensUsed: {
+        providers: [
+          { outcome: "quality_failure" },
+          { outcome: "quality_failure" },
+        ],
+      },
+    };
+    mocks.mockGetLatestCompletedReview.mockResolvedValue({
+      reviewRun: null,
+      findings: [],
+      regressions: [],
+      rejectedFindings: [],
+      rejectedCount: 0,
+      stale: false,
+      staleReason: null,
+    });
+    mocks.mockGetLatestTerminalReview.mockResolvedValue({
+      reviewRun: failedRun,
+      stale: false,
+      staleReason: null,
+    });
+    mocks.mockPullRequestFindUnique.mockResolvedValue({
+      status: "Failed",
+      sourceBranch: "feature/x",
+      targetBranch: "main",
+      repository: { id: "repo-1", path: null, baseBranch: "main", maxConcurrentScans: null },
+    });
+
+    const res = await GET(makeFindingsRequest("pr-fail"), {
+      params: Promise.resolve({ prId: "pr-fail" }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.outcomeClass).toMatch(/hard_fail|quality_failure/);
+    expect(body.systemWarn).toMatch(/hard_fail|quality/i);
+    expect(body.terminalOutcome.isFailed).toBe(true);
+    expect(body.terminalOutcome.primaryCta).toBe("rescan");
+    expect(body.mergeReady).toBe(false);
   });
 
   it("response surfaces status='failed' when latest run failed (for button rose-state)", async () => {

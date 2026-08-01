@@ -262,12 +262,16 @@ The `<arg>` is a PR `id` (preferred) or `branch` — both accepted. Numeric ordi
   "mergeReady": false,
   "mergeBlockReason": "rating_below_threshold",
   "mergeReadyMessage": "Rating 7/10 is below the merge threshold (8+).",
+  "outcomeClass": "success",
+  "systemWarn": null,
   "reviewRun": {
     "id": "run-...",
     "commitHash": "abc1234...",
     "rating": 7,             // numeric 1-10, or null if run failed — null ⇒ not merge-ready
     "outcome": "reviewed",   // "reviewed" | "skipped" | null — skipped ⇒ not merge-ready
     "status": "completed",   // scan finished ≠ merge ready
+    "terminalClass": "success",
+    "systemWarn": null,
     "model": "MiniMax-M3",
     "completedAt": "2026-06-26T06:28:34.413Z",
     "refused": false,
@@ -296,6 +300,28 @@ The `<arg>` is a PR `id` (preferred) or `branch` — both accepted. Numeric ordi
   ]
 }
 ```
+
+**Failed (hard fail / quality_failure / transport / gate — not an earned AI pass):**
+```json
+{
+  "status": "Failed",
+  "type": "status",
+  "productionScore": "Failed",
+  "outcomeClass": "hard_fail",
+  "systemWarn": "hard_fail: primary and secondary quality_failure",
+  "mergeReady": false,
+  "mergeBlockReason": "not_finished",
+  "terminalOutcome": {
+    "class": "hard_fail",
+    "label": "Failed",
+    "reason": "…",
+    "reasonKind": "quality",
+    "primaryCta": "rescan",
+    "isFailed": true
+  }
+}
+```
+Never treat `status: "Success"` with a quiet null rating as a clean pass. Branch automation on `outcomeClass` + `systemWarn` (`quality_failure` | `transport_failure` | `hard_fail` | `gate_blocked` | `infrastructure_failure` | `success` | `skipped` | `processing` | `queued`).
 
 **Rating trend rendering:** when `ratingTrend` has 2+ entries, render it above the findings list so the user sees progress across scan rounds. Format (omit if `ratingTrend.length < 2`):
 

@@ -31,6 +31,7 @@ import {
 import { logReview } from "@/src/services/deterministicChecks/logging";
 import { admitScanJob } from "@/src/services/scanQueue";
 import { completePrReviewIfCurrent } from "@/src/lib/prRevisionStatus";
+import { outcomeFromScanResult } from "@/src/lib/scanTerminalOutcome";
 import { retryFailedChunks } from "@/src/services/largePrReview";
 import { getScanConfigurationIssues } from "@/src/lib/scanPreflight";
 import {
@@ -630,17 +631,40 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
         interrupted: true,
       });
     }
-    // Sync the PR's `status` column with what runPrScan just produced.
-    // The optimistic 'In Progress' was set when the lock was acquired;
-    // for any terminal outcome (full-review success, trivial-skip, or
-    // quality-failure with findings) the sidebar needs to flip back so
-    // the user sees the real state instead of "In Progress" until the
-    // 15s poller overwrites it. `Failed` is handled in the catch block
-    // below; we only handle the non-failure terminal cases here.
-    try {
-      await completePrReviewIfCurrent(prId, pr.commitHash);
-    } catch (statusErr) {
-      console.warn(`[scan] route: failed to clear PR In Progress status:`, statusErr);
+    // Sync PR status with the scan terminal outcome (issue #140).
+    // Soft-fail returns success:false without throwing — must NOT call
+    // completePrReviewIfCurrent (that was the Complete flash bug).
+    // runPrScan already writes Failed/Completed; this is a belt-and-suspenders
+    // clear of leftover In Progress on earned success / skip only.
+    if (result.success && !result.interrupted) {
+      try {
+        await completePrReviewIfCurrent(prId, pr.commitHash, result.rating);
+      } catch (statusErr) {
+        console.warn(`[scan] route: failed to clear PR In Progress status:`, statusErr);
+      }
+    } else if (!result.success && !result.interrupted) {
+      try {
+        await prisma.pullRequest.updateMany({
+          where: { id: prId, status: { notIn: ["Merged"] } },
+          data: { status: "Failed" },
+        });
+      } catch (statusErr) {
+        console.warn(`[scan] route: failed to set PR Failed on soft-fail:`, statusErr);
+      }
+      const infraFail =
+        "infrastructureFailure" in result && !!(result as { infrastructureFailure?: boolean }).infrastructureFailure;
+      if (reviewRunId && result.systemWarn) {
+        try {
+          await completeReviewRun(reviewRunId, {
+            status: "failed",
+            systemWarn: result.systemWarn,
+            terminalClass: infraFail ? "infrastructure_failure" : "hard_fail",
+            rating: null,
+          });
+        } catch (runErr) {
+          console.warn(`[scan] route: failed to stamp failed run:`, runErr);
+        }
+      }
     }
     // Popup data-source: most recent prior NON-SKIPPED completed run for
     // this PR. Used by TrivialSkipNotice to honestly show "your last code
@@ -668,7 +692,26 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
     } catch (priorErr) {
       console.warn(`[scan] route: failed to load priorReviewRun for prId=${prId}:`, priorErr);
     }
-    return NextResponse.json({ ...result, runId: reviewRunId, sizeProfile, priorReviewRun });
+    const terminalOutcome = outcomeFromScanResult({
+      success: !!result.success,
+      rating: result.rating,
+      systemWarn: result.systemWarn,
+      infrastructureFailure:
+        "infrastructureFailure" in result
+          ? !!(result as { infrastructureFailure?: boolean }).infrastructureFailure
+          : false,
+      interrupted: result.interrupted,
+      usedModel: result.usedModel,
+    });
+    return NextResponse.json({
+      ...result,
+      runId: reviewRunId,
+      sizeProfile,
+      priorReviewRun,
+      terminalOutcome,
+      outcomeClass: terminalOutcome.class,
+      systemWarn: result.systemWarn ?? terminalOutcome.systemWarn,
+    });
   } catch (err: any) {
     console.error(`[scan] route: ERROR:`, err);
     if (acquired) endReview(prId);

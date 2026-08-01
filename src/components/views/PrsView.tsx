@@ -10,6 +10,7 @@ import ReviewProgress from "./prs/ReviewProgress";
 import ReviewCard from "./prs/ReviewCard";
 import BugFixFeed from "./prs/BugFixFeed";
 import ScanHistory from "./prs/ScanHistory";
+import type { ScanTerminalOutcome } from "../../lib/scanTerminalOutcome";
 import PrHeader from "./prs/PrHeader";
 import type { InterruptedScan } from "./prs/InterruptedScanBanner";
 
@@ -17,6 +18,11 @@ interface ScanResult {
   count: number;
   model: string;
   notice?: string | null;
+  failed?: boolean;
+  terminalOutcome?: Pick<
+    ScanTerminalOutcome,
+    "class" | "label" | "reason" | "reasonKind" | "systemWarn" | "primaryCta" | "isFailed"
+  > | null;
 }
 
 interface Props {
@@ -41,6 +47,8 @@ interface Props {
     refused?: boolean | null;
     status?: string;
     outcome?: string | null;
+    terminalClass?: string | null;
+    systemWarn?: string | null;
     chunksTotal?: number;
     chunksCompleted?: number;
     chunksFailed?: number;
@@ -116,6 +124,8 @@ interface Props {
   blockedGate?: string | null;
   /** Optional repo/pipeline fields for glanceable seam chips. */
   seamInput?: SeamChipInput | null;
+  /** Shared scan terminal outcome (issue #140). */
+  terminalOutcome?: ScanTerminalOutcome | null;
 }
 
 export default function PrsView({
@@ -145,6 +155,7 @@ export default function PrsView({
   mergeReady,
   mergeReadyMessage,
   blockedGate,
+  terminalOutcome,
   onCopySuggestion,
   copyFeedback,
   prFiles,
@@ -181,6 +192,7 @@ export default function PrsView({
           scanResult={scanResult}
           onDismissScanResult={onDismissScanResult}
           reviewRun={reviewRun}
+          terminalOutcome={terminalOutcome ?? null}
           repoId={repoId}
           repoIndexedAt={repoIndexedAt}
           onIndexComplete={onIndexComplete}

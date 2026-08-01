@@ -60,6 +60,16 @@ export type PresentStatusPillInput = {
   queueState?: string | null;
   /** 1-based queue depth when known. */
   queuePosition?: number | null;
+  /**
+   * Optional shared terminal outcome (issue #140). When failed, overrides
+   * Completed-green even if PR.status lagged. When processing/queued, keeps
+   * processing. Queue wait reason surfaces in tooltip when provided.
+   */
+  terminalClass?: string | null;
+  terminalReason?: string | null;
+  /** Global concurrent scan limit for queue wait tooltip. */
+  queueGlobalLimit?: number | null;
+  queueRepoLimit?: number | null;
 };
 
 const ACTIVE_QUEUE = new Set(["queued", "running"]);
@@ -79,19 +89,25 @@ export function presentStatusPill(input: PresentStatusPillInput): LayoutCStatusP
   const queueState = (input.queueState ?? "").trim().toLowerCase();
   const queuePosition = normalizeQueuePosition(input.queuePosition);
   const inActiveQueue = ACTIVE_QUEUE.has(queueState);
+  const terminalClass = (input.terminalClass ?? "").trim().toLowerCase();
+  const terminalReason = (input.terminalReason ?? "").trim();
 
   // Active queue / In Progress wins over a leftover Failed PR badge so a
   // re-admitted scan is glanceable as processing (admit does not always flip
   // PR.status off Failed until the worker claims the job).
-  if (inActiveQueue || status === "In Progress") {
+  if (inActiveQueue || status === "In Progress" || terminalClass === "processing" || terminalClass === "queued") {
     const label =
       queuePosition != null ? `processing #${queuePosition}` : "processing";
     const tipBase =
-      "Processing — scan is admitted or running. Completed ≠ merge-ready; wait for the rating chip.";
+      queueState === "queued" || terminalClass === "queued"
+        ? buildQueueWaitTooltip(queuePosition, input.queueGlobalLimit, input.queueRepoLimit)
+        : "Processing — scan is admitted or running. Completed ≠ merge-ready; wait for the rating chip.";
     const tooltip =
-      queuePosition != null
-        ? `${tipBase} Currently #${queuePosition} in the queue.`
-        : tipBase;
+      terminalReason && (queueState === "queued" || terminalClass === "queued")
+        ? terminalReason
+        : queuePosition != null && queueState !== "queued"
+          ? `${tipBase} Currently #${queuePosition} in the queue.`
+          : tipBase;
     return {
       kind: "processing",
       label,
@@ -101,14 +117,25 @@ export function presentStatusPill(input: PresentStatusPillInput): LayoutCStatusP
     };
   }
 
+  // Terminal failure classes win over a lagged Completed PR badge (issue #140).
+  const failedByClass =
+    terminalClass === "hard_fail" ||
+    terminalClass === "quality_failure" ||
+    terminalClass === "transport_failure" ||
+    terminalClass === "infrastructure_failure" ||
+    terminalClass === "gate_blocked" ||
+    terminalClass === "unknown_failure";
+
   // Failed never looks completed-green, even if a stale terminal queue row exists.
-  if (status === "Failed" || queueState === "failed") {
+  if (status === "Failed" || queueState === "failed" || failedByClass) {
+    const reasonTip =
+      terminalReason ||
+      "Failed — the last scan did not finish successfully. Re-scan when ready; this is not completed.";
     return {
       kind: "failed",
       label: "failed",
       tone: "red",
-      tooltip:
-        "Failed — the last scan did not finish successfully. Re-run when ready; this is not completed.",
+      tooltip: reasonTip,
       queuePosition: null,
     };
   }
@@ -143,6 +170,25 @@ export function presentStatusPill(input: PresentStatusPillInput): LayoutCStatusP
       "Pending — waiting to enter the scan queue. Not running yet. Not merge-ready.",
     queuePosition: null,
   };
+}
+
+function buildQueueWaitTooltip(
+  position: number | null,
+  globalLimit?: number | null,
+  repoLimit?: number | null,
+): string {
+  const parts = [
+    "Queued — waiting for a concurrent scan slot.",
+  ];
+  if (position != null) parts.push(`Position #${position}.`);
+  if (globalLimit != null && Number.isFinite(globalLimit)) {
+    parts.push(`Global limit ${Math.floor(globalLimit)}.`);
+  }
+  if (repoLimit != null && Number.isFinite(repoLimit)) {
+    parts.push(`Repo limit ${Math.floor(repoLimit)}.`);
+  }
+  parts.push("Force does not bypass concurrent caps.");
+  return parts.join(" ");
 }
 
 /**

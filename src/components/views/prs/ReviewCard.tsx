@@ -23,6 +23,8 @@ export interface ReviewRunMeta {
   refusalNote?: string | null;
   status?: string;
   outcome?: string | null;
+  terminalClass?: string | null;
+  systemWarn?: string | null;
   chunksTotal?: number;
   chunksCompleted?: number;
   chunksFailed?: number;
@@ -378,14 +380,23 @@ export default function ReviewCard({
         </>
       ) : findings.length === 0 ? (
         <div className="p-8 text-center text-slate-500 flex flex-col items-center justify-center">
-          {reviewRun && reviewRun.rating === null ? (
+          {reviewRun &&
+          (reviewRun.status === "failed" ||
+            reviewRun.terminalClass === "quality_failure" ||
+            reviewRun.terminalClass === "hard_fail" ||
+            reviewRun.terminalClass === "transport_failure" ||
+            reviewRun.terminalClass === "infrastructure_failure" ||
+            (reviewRun.rating === null && reviewRun.outcome !== "skipped")) ? (
             <>
-              <ShieldAlert size={24} className="text-amber-400 mb-1.5" />
-              <p className="text-xs font-bold text-amber-300 font-mono">
-                Rating unreliable — verifier rejected all findings
+              <ShieldAlert size={24} className="text-rose-400 mb-1.5" />
+              <p className="text-xs font-bold text-rose-300 font-mono">
+                {reviewRun.status === "failed" || reviewRun.terminalClass
+                  ? "Scan failed — not an earned AI pass"
+                  : "Rating unreliable — verifier rejected all findings"}
               </p>
               <p className="text-[10px] text-slate-500 font-mono mt-0.5 max-w-md">
-                The LLM produced findings but none passed verification (cited files were missing, wrong, or documentation). Re-scan recommended — expand the rejected list below for details.
+                {reviewRun.systemWarn ||
+                  "No usable rating. Use Re-scan (or Force) — this is not a clean completed review."}
               </p>
             </>
           ) : (
