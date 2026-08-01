@@ -1,8 +1,13 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Bot, ChevronDown, ChevronRight, Cpu, Loader2, Search, Siren, XCircle } from "lucide-react";
 import { fetchJson } from "../../../lib/http";
+import {
+  isLogLineVisible,
+  LOG_VERBOSITY_CHANGED_EVENT,
+  type LogVerbosity,
+} from "../../../lib/logVerbosityCore";
 
 interface LogEntry {
   id: string;
@@ -32,13 +37,44 @@ const LEVEL_COLORS: Record<string, string> = {
   error: "text-rose-300",
 };
 
+function parseVerbosity(raw: unknown): LogVerbosity {
+  if (raw === "warn" || raw === "error" || raw === "debug" || raw === "user") return raw;
+  return "user";
+}
+
 export default function ReviewProgress({ prId, reviewRunId, isScanning }: Props) {
   const [expanded, setExpanded] = useState(true);
   const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [verbosity, setVerbosity] = useState<LogVerbosity>("user");
   const bottomRef = useRef<HTMLDivElement>(null);
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const logSignatureRef = useRef("");
   const logCountRef = useRef(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const res = await fetch("/api/llm/log-verbosity", { cache: "no-store" });
+        if (!res.ok || cancelled) return;
+        const data = await res.json();
+        if (!cancelled) setVerbosity(parseVerbosity(data.settings?.level));
+      } catch {
+        // keep default User
+      }
+    };
+    void load();
+    const onChange = () => void load();
+    if (typeof window !== "undefined") {
+      window.addEventListener(LOG_VERBOSITY_CHANGED_EVENT, onChange);
+    }
+    return () => {
+      cancelled = true;
+      if (typeof window !== "undefined") {
+        window.removeEventListener(LOG_VERBOSITY_CHANGED_EVENT, onChange);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!reviewRunId) {
@@ -78,12 +114,17 @@ export default function ReviewProgress({ prId, reviewRunId, isScanning }: Props)
     };
   }, [reviewRunId]);
 
+  const visibleLogs = useMemo(
+    () => logs.filter((log) => isLogLineVisible(verbosity, log.level)),
+    [logs, verbosity],
+  );
+
   useEffect(() => {
-    if (expanded && logs.length > logCountRef.current) {
+    if (expanded && visibleLogs.length > logCountRef.current) {
       bottomRef.current?.scrollIntoView({ block: "nearest" });
     }
-    logCountRef.current = logs.length;
-  }, [logs.length, expanded]);
+    logCountRef.current = visibleLogs.length;
+  }, [visibleLogs.length, expanded]);
 
   if (!reviewRunId || !prId) return null;
 
@@ -102,7 +143,7 @@ export default function ReviewProgress({ prId, reviewRunId, isScanning }: Props)
           <span className="text-cyan-400 font-bold uppercase tracking-wider text-[10px]">
             {isScanning ? "Review Progress" : "Last Scan Log"}
           </span>
-          <span className="text-slate-500 text-[10px]">({logs.length} events)</span>
+          <span className="text-slate-500 text-[10px]">({visibleLogs.length} events)</span>
         </div>
         {expanded ? <ChevronDown size={14} className="text-slate-400" /> : <ChevronRight size={14} className="text-slate-400" />}
       </button>
@@ -113,9 +154,13 @@ export default function ReviewProgress({ prId, reviewRunId, isScanning }: Props)
             <div className="text-[10px] text-slate-600 font-mono text-center py-4 italic">
               Waiting for AI review loop to start...
             </div>
+          ) : visibleLogs.length === 0 ? (
+            <div className="text-[10px] text-slate-600 font-mono text-center py-4 italic">
+              No events at current log verbosity.
+            </div>
           ) : (
             <>
-              {logs.map((log) => (
+              {visibleLogs.map((log) => (
                 <div key={log.id} className="flex gap-1.5 text-[10px] font-mono leading-relaxed px-1 py-0.5 rounded hover:bg-white/[0.02]">
                   <span className="shrink-0 mt-0.5">{LEVEL_ICONS[log.level] || <Cpu size={11} className="text-slate-500" />}</span>
                   <span className={`${LEVEL_COLORS[log.level] || "text-slate-300"} flex-1 min-w-0`}>{log.message}</span>

@@ -203,10 +203,10 @@ export default function FindingsList({ findings, onCopySuggestion, copyFeedback,
                       </div>
                     </div>
 
-                    <p className="text-xs text-slate-300 leading-relaxed font-sans break-words whitespace-pre-wrap">{finding.explanation}</p>
+                    <p className="text-xs text-slate-300 leading-relaxed font-sans break-words whitespace-pre-wrap select-text">{finding.explanation}</p>
 
                     {evidencePoints.length > 0 && (
-                      <div className="mt-2 text-xs font-mono bg-slate-950/50 p-2.5 rounded-lg border border-white/5 space-y-1.5">
+                      <div className="mt-2 text-xs font-mono bg-slate-950/50 p-2.5 rounded-lg border border-white/5 space-y-1.5 select-text">
                         <div className="text-[10px] text-cyan-400 uppercase font-bold flex items-center gap-1.5 border-b border-white/5 pb-1 select-none">
                           <Network size={11} className="text-cyan-400" />
                           <span>Evidence Chain</span>
@@ -215,7 +215,7 @@ export default function FindingsList({ findings, onCopySuggestion, copyFeedback,
                           {evidencePoints.map((point, pIdx) => (
                             <div key={pIdx} className="text-[11px] leading-relaxed flex items-start gap-1.5">
                               <span className="text-cyan-500 font-extrabold select-none shrink-0">[{pIdx + 1}]</span>
-                              <span className="text-slate-400 break-words">
+                              <span className="text-slate-400 break-words select-text">
                                 <strong className="text-slate-300 break-all">{point.file}</strong> (Line {point.line}): {point.text}
                               </span>
                             </div>
@@ -226,8 +226,8 @@ export default function FindingsList({ findings, onCopySuggestion, copyFeedback,
 
                     {finding.diffSuggestion && (
                       <div className="mt-2 relative">
-                        <div className="bg-black/50 rounded-lg p-3 font-mono text-xs text-slate-300 border border-white/5 overflow-y-auto max-h-40 whitespace-pre-wrap break-words">
-                          <div className="text-slate-600 text-[10px] font-semibold border-b border-white/5 pb-1 mb-2 uppercase tracking-wide flex items-center justify-between">
+                        <div className="bg-black/50 rounded-lg p-3 font-mono text-xs text-slate-300 border border-white/5 overflow-y-auto max-h-40 whitespace-pre-wrap break-words select-text">
+                          <div className="text-slate-600 text-[10px] font-semibold border-b border-white/5 pb-1 mb-2 uppercase tracking-wide flex items-center justify-between select-none">
                             <span>Suggested Fix</span>
                             <button
                               onClick={() => onCopySuggestion(finding.diffSuggestion, finding.id)}
@@ -236,7 +236,7 @@ export default function FindingsList({ findings, onCopySuggestion, copyFeedback,
                               {copyFeedback === finding.id ? "Copied!" : "Copy"}
                             </button>
                           </div>
-                          <div className="text-[11px] font-mono leading-relaxed text-slate-300">{finding.diffSuggestion}</div>
+                          <div className="text-[11px] font-mono leading-relaxed text-slate-300 select-text">{finding.diffSuggestion}</div>
                         </div>
                       </div>
                     )}

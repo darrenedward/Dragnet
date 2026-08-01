@@ -26,7 +26,7 @@ export default function SystemSetupBanner({
   const needsPublicUrl = health.items.some((item) => item.id === "public-url");
 
   return (
-    <div className="border-b border-amber-500/20 bg-amber-500/10 px-4 sm:px-6 py-3 shrink-0">
+    <div className="border-b border-amber-500/20 bg-amber-500/10 px-4 sm:px-6 py-3 shrink-0 select-text">
       <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-3">
         <div className="flex gap-3 min-w-0">
           <div className="w-8 h-8 rounded-md bg-amber-500/15 border border-amber-500/30 flex items-center justify-center shrink-0">
@@ -74,7 +74,7 @@ export default function SystemSetupBanner({
           </div>
         </div>
 
-        <div className="flex flex-wrap gap-2 shrink-0">
+        <div className="flex flex-wrap gap-2 shrink-0 select-none">
           {needsPublicUrl && (
             <button
               onClick={onUseCurrentUrl}

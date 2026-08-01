@@ -366,7 +366,7 @@ export default function ScanHistory({ prId, currentRunId }: Props) {
                             <div className="px-3 py-1 text-[9px] font-mono uppercase tracking-wider text-slate-600 bg-white/[0.01]">
                               logs ({runLogs[run.id]?.length ?? 0})
                             </div>
-                            <div className="max-h-32 overflow-y-auto">
+                            <div className="max-h-32 overflow-y-auto select-text">
                               {(runLogs[run.id]?.length ?? 0) === 0 ? (
                                 <div className="text-[10px] text-slate-600 font-mono py-2 italic text-center">
                                   No logs for this run.
@@ -377,8 +377,8 @@ export default function ScanHistory({ prId, currentRunId }: Props) {
                                     key={log.id}
                                     className="text-[10px] font-mono leading-relaxed py-0.5 px-3 text-slate-400 hover:bg-white/[0.02]"
                                   >
-                                    <span className="text-slate-600">{new Date(log.createdAt).toLocaleTimeString()}</span>{" "}
-                                    <span className="text-slate-600">·</span> {log.message}
+                                    <span className="text-slate-600 select-none">{new Date(log.createdAt).toLocaleTimeString()}</span>{" "}
+                                    <span className="text-slate-600 select-none">·</span> {log.message}
                                   </div>
                                 ))
                               )}
