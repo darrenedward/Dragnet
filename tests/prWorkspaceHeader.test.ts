@@ -197,6 +197,24 @@ describe("buildPrWorkspaceHeaderModel", () => {
     expect(model.chips.find((c) => c.id === "rating")?.label).toBe("no score");
     expect(model.chips.find((c) => c.id === "merge")?.label).toBe("not ready");
   });
+
+  it("terminalClass hard_fail forces failed status chip over Completed PR (#140)", () => {
+    const model = buildPrWorkspaceHeaderModel({
+      title: "x",
+      sourceBranch: "main",
+      status: "Completed",
+      sizeTier: "small",
+      seam: healthySeam({ rating: null, runStatus: "failed" }),
+      rating: null,
+      terminalClass: "hard_fail",
+      terminalReason: "hard_fail: primary and secondary quality_failure",
+    });
+    expect(model.chips.find((c) => c.id === "status")).toMatchObject({
+      label: "failed",
+      tone: "red",
+    });
+    expect(model.chips.find((c) => c.id === "merge")?.label).toBe("not ready");
+  });
 });
 
 describe("isCloneFailedForActions", () => {

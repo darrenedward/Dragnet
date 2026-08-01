@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
-import { getActiveScan, getLatestCompletedReview, getRecentRuns } from "@/src/lib/reviewFreshness";
+import {
+  getActiveScan,
+  getLatestCompletedReview,
+  getLatestTerminalReview,
+  getRecentRuns,
+} from "@/src/lib/reviewFreshness";
 import { computeStability, computeWeightedStability } from "@/src/lib/stabilityScore";
 import { lookupTrustWeight } from "@/src/lib/modelTrustWeights";
 import { authenticateSessionOrKey, enforcePrRepoScope } from "@/src/lib/apiAuth";
@@ -9,6 +14,11 @@ import { readPrCommitCount } from "@/src/lib/prSizeProfile.server";
 import { getLatestScanJobForPr, getScanJobForPr } from "@/src/services/scanQueue";
 import { isMergeReady, mergeReadyLabel } from "@/src/lib/mergeReady";
 import { parseScanGate } from "@/src/lib/scanPrelude";
+import {
+  classifyScanTerminalOutcome,
+  providerOutcomesFromTokensUsed,
+} from "@/src/lib/scanTerminalOutcome";
+import { readLimits } from "@/src/lib/prSizeConfig";
 
 const CHUNK_SELECT = {
   id: true,
@@ -54,11 +64,13 @@ export async function GET(req: Request, { params }: { params: Promise<{ prId: st
     const prScopeErr = await enforcePrRepoScope(auth, prId);
     if (prScopeErr) return NextResponse.json(prScopeErr, { status: 403 });
 
-    const [latest, pr, files, activeScan, queueJob, latestJob] = await Promise.all([
+    const [latest, terminal, pr, files, activeScan, queueJob, latestJob] = await Promise.all([
       getLatestCompletedReview(prId),
+      getLatestTerminalReview(prId),
       prisma.pullRequest.findUnique({
         where: { id: prId },
         select: {
+          status: true,
           sourceBranch: true,
           targetBranch: true,
           repository: {
@@ -74,6 +86,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ prId: st
               patCipher: true,
               patIv: true,
               patTag: true,
+              maxConcurrentScans: true,
             },
           },
         },
@@ -86,6 +99,31 @@ export async function GET(req: Request, { params }: { params: Promise<{ prId: st
       getScanJobForPr(prId),
       getLatestScanJobForPr(prId),
     ]);
+    const limits = readLimits();
+    const terminalRun = terminal.reviewRun;
+    const terminalOutcome = classifyScanTerminalOutcome({
+      prStatus: pr?.status,
+      runStatus: activeScan.reviewRun
+        ? "in_progress"
+        : terminalRun?.status ?? latest.reviewRun?.status,
+      runOutcome: terminalRun?.outcome ?? latest.reviewRun?.outcome,
+      rating: terminalRun?.rating ?? latest.reviewRun?.rating,
+      systemWarn: terminalRun?.systemWarn ?? null,
+      terminalClass: terminalRun?.terminalClass ?? null,
+      blockedGate:
+        !queueJob && latestJob?.state === "failed"
+          ? parseScanGate(latestJob.errorMessage)
+          : null,
+      queueState: queueJob?.state ?? null,
+      queuePosition: queueJob?.queuePosition ?? null,
+      queueSlots: {
+        globalLimit: limits.maxConcurrentScans,
+        repoLimit: pr?.repository?.maxConcurrentScans ?? null,
+      },
+      providerOutcomes: providerOutcomesFromTokensUsed(
+        terminalRun?.tokensUsed ?? latest.reviewRun?.tokensUsed,
+      ),
+    });
     // Active queue work is never "blocked finished." Terminal failed jobs may
     // carry a prelude gate code so the UI can show Blocked at {gate}.
     const blockedGate =
@@ -140,21 +178,54 @@ export async function GET(req: Request, { params }: { params: Promise<{ prId: st
     const activeIterations = activeScan.iterationsByChunk;
 
     if (!latest.reviewRun) {
-      const noRun = isMergeReady(null);
+      const noRun = isMergeReady(
+        terminalOutcome.isFailed
+          ? {
+              status: "failed",
+              outcome: null,
+              rating: null,
+            }
+          : null,
+      );
       return NextResponse.json({
-        reviewRun: null,
+        reviewRun: terminalRun
+          ? {
+              id: terminalRun.id,
+              commitHash: terminalRun.commitHash,
+              diffHash: terminalRun.diffHash,
+              completedAt: terminalRun.completedAt,
+              rating: terminalRun.rating,
+              model: terminalRun.model,
+              triggerReason: terminalRun.triggerReason,
+              reliability: terminalRun.reliability,
+              refused: terminalRun.refused,
+              refusalNote: terminalRun.refusalNote,
+              status: terminalRun.status,
+              outcome: terminalRun.outcome,
+              terminalClass: terminalRun.terminalClass,
+              systemWarn: terminalRun.systemWarn,
+              chunksTotal: terminalRun.chunksTotal,
+              chunksCompleted: terminalRun.chunksCompleted,
+              chunksFailed: terminalRun.chunksFailed,
+              chunksSkipped: terminalRun.chunksSkipped,
+              tokensUsed: terminalRun.tokensUsed ?? null,
+            }
+          : null,
         findings: [],
         rejectedFindings: [],
         rejectedCount: 0,
         regressions: [],
-        stale: false,
-        staleReason: null,
+        stale: terminal.stale,
+        staleReason: terminal.staleReason,
         mergeReady: noRun.mergeReady,
         mergeBlockReason: noRun.mergeBlockReason,
         mergeReadyMessage: blockedGate
           ? mergeReadyLabel(noRun, blockedGate)
           : noRun.message,
         blockedGate,
+        terminalOutcome,
+        outcomeClass: terminalOutcome.class,
+        systemWarn: terminalOutcome.systemWarn,
         sizeProfile,
         stability: null,
         weightedStability: null,
@@ -166,21 +237,35 @@ export async function GET(req: Request, { params }: { params: Promise<{ prId: st
         queueJob,
         message: blockedGate
           ? mergeReadyLabel(noRun, blockedGate)
-          : "No completed review yet. Run a scan.",
+          : terminalOutcome.isFailed
+            ? terminalOutcome.reason
+            : "No completed review yet. Run a scan.",
       });
     }
 
     const ratingTrend = await getRecentRuns(prId, 5);
     const stability = computeStability(ratingTrend);
     const weighted = computeWeightedStability(ratingTrend, lookupTrustWeight);
+    // Prefer terminal run for status honesty when the latest terminal is a
+    // failed rescan (do not let prior completed green mask the failure).
+    const statusRun =
+      terminalRun &&
+      (terminalRun.status === "failed" ||
+        terminalRun.id === latest.reviewRun.id ||
+        (terminalRun.completedAt &&
+          latest.reviewRun.completedAt &&
+          terminalRun.completedAt >= latest.reviewRun.completedAt))
+        ? terminalRun
+        : latest.reviewRun;
+
     const merge = isMergeReady({
-      rating: latest.reviewRun.rating,
-      outcome: latest.reviewRun.outcome,
-      reliability: latest.reviewRun.reliability,
-      refused: latest.reviewRun.refused,
+      rating: statusRun.status === "failed" ? null : latest.reviewRun.rating,
+      outcome: statusRun.status === "failed" ? null : latest.reviewRun.outcome,
+      reliability: statusRun.status === "failed" ? null : latest.reviewRun.reliability,
+      refused: statusRun.status === "failed" ? false : latest.reviewRun.refused,
       stale: latest.stale,
       staleReason: latest.staleReason,
-      status: latest.reviewRun.status,
+      status: statusRun.status === "failed" ? "failed" : latest.reviewRun.status,
     });
 
     return NextResponse.json({
@@ -192,31 +277,38 @@ export async function GET(req: Request, { params }: { params: Promise<{ prId: st
         ? mergeReadyLabel(merge, blockedGate)
         : merge.message,
       blockedGate,
+      terminalOutcome,
+      outcomeClass: terminalOutcome.class,
+      systemWarn: terminalOutcome.systemWarn ?? statusRun.systemWarn ?? null,
       reviewRun: {
-        id: latest.reviewRun.id,
-        commitHash: latest.reviewRun.commitHash,
-        diffHash: latest.reviewRun.diffHash,
-        completedAt: latest.reviewRun.completedAt,
-        rating: latest.reviewRun.rating,
-        model: latest.reviewRun.model,
-        triggerReason: latest.reviewRun.triggerReason,
-        reliability: latest.reviewRun.reliability,
-        refused: latest.reviewRun.refused,
-        refusalNote: latest.reviewRun.refusalNote,
-        status: latest.reviewRun.status,
-        outcome: latest.reviewRun.outcome,
-        chunksTotal: latest.reviewRun.chunksTotal,
-        chunksCompleted: latest.reviewRun.chunksCompleted,
-        chunksFailed: latest.reviewRun.chunksFailed,
-        chunksSkipped: latest.reviewRun.chunksSkipped,
-        tokensUsed: latest.reviewRun.tokensUsed ?? null,
+        id: statusRun.id,
+        commitHash: statusRun.commitHash,
+        diffHash: statusRun.diffHash,
+        completedAt: statusRun.completedAt,
+        rating: statusRun.rating,
+        model: statusRun.model,
+        triggerReason: statusRun.triggerReason,
+        reliability: statusRun.reliability,
+        refused: statusRun.refused,
+        refusalNote: statusRun.refusalNote,
+        status: statusRun.status,
+        outcome: statusRun.outcome,
+        terminalClass: statusRun.terminalClass,
+        systemWarn: statusRun.systemWarn,
+        chunksTotal: statusRun.chunksTotal,
+        chunksCompleted: statusRun.chunksCompleted,
+        chunksFailed: statusRun.chunksFailed,
+        chunksSkipped: statusRun.chunksSkipped,
+        tokensUsed: statusRun.tokensUsed ?? null,
       },
-      findings: latest.findings,
+      findings: statusRun.status === "failed" && statusRun.id !== latest.reviewRun.id
+        ? latest.findings
+        : latest.findings,
       rejectedFindings: latest.rejectedFindings,
       rejectedCount: latest.rejectedCount,
       regressions: latest.regressions,
-      stale: latest.stale,
-      staleReason: latest.staleReason,
+      stale: latest.stale || terminal.stale,
+      staleReason: latest.staleReason ?? terminal.staleReason,
       stability,
       sizeProfile,
       chunks,

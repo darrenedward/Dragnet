@@ -36,6 +36,31 @@ describe("presentStatusPill", () => {
     expect(pill.tooltip).toMatch(/#2/);
   });
 
+  it("surfaces queue wait reason with concurrent slot limits", () => {
+    const pill = presentStatusPill({
+      status: "Pending",
+      queueState: "queued",
+      queuePosition: 3,
+      queueGlobalLimit: 2,
+      queueRepoLimit: 1,
+    });
+    expect(pill.kind).toBe("processing");
+    expect(pill.tooltip.toLowerCase()).toMatch(/concurrent/);
+    expect(pill.tooltip).toMatch(/#3/);
+    expect(pill.tooltip).toMatch(/Global limit 2/);
+  });
+
+  it("terminalClass hard_fail overrides Completed PR status to failed red", () => {
+    const pill = presentStatusPill({
+      status: "Completed",
+      terminalClass: "hard_fail",
+      terminalReason: "hard_fail: dual quality_failure",
+    });
+    expect(pill.kind).toBe("failed");
+    expect(pill.tone).toBe("red");
+    expect(pill.tooltip).toMatch(/hard_fail|quality/i);
+  });
+
   it("treats active queue job as processing even when PR status is still Pending", () => {
     const queued = presentStatusPill({
       status: "Pending",

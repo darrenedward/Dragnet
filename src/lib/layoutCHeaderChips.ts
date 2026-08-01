@@ -52,6 +52,13 @@ export type LayoutCHeaderChipInput = {
   queueState?: string | null;
   /** 1-based queue depth when known. */
   queuePosition?: number | null;
+  /** Shared scan terminal class (issue #140) — overrides lagged PR.status. */
+  terminalClass?: string | null;
+  /** Operator-facing reason for failed/queued status tooltip. */
+  terminalReason?: string | null;
+  /** Global concurrent scan limit for queue wait tooltip. */
+  queueGlobalLimit?: number | null;
+  queueRepoLimit?: number | null;
   /** Size tier or profile (findings/workspace sizeProfile). */
   size?: PrSizeTier | { tier: PrSizeTier } | null;
   /** Latest rating for the rating pill (null → "no score"). */
@@ -224,6 +231,10 @@ export function buildLayoutCHeaderChips(
     status: input.status,
     queueState: input.queueState,
     queuePosition: input.queuePosition,
+    terminalClass: input.terminalClass,
+    terminalReason: input.terminalReason,
+    queueGlobalLimit: input.queueGlobalLimit,
+    queueRepoLimit: input.queueRepoLimit,
   });
   const size = presentSizePill(input.size);
   const ratingSeam = findSeam(input.seams, "rating");

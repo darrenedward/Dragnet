@@ -103,6 +103,9 @@ export interface LatestReviewResult {
     refusalNote: string | null;
     outcome: string | null;
     status: string;
+    /** Scan-level terminal class (issue #140). */
+    terminalClass: string | null;
+    systemWarn: string | null;
     chunksTotal: number;
     chunksCompleted: number;
     chunksFailed: number;
@@ -540,8 +543,16 @@ export async function completeReviewRun(
         // docs/generated, Tier 1+2 clean). Omitted/null on `failed` and
         // on legacy call sites that haven't been migrated.
         outcome?: "reviewed" | "skipped" | null;
+        /** Scan-level terminal class (issue #140). */
+        terminalClass?: string | null;
+        systemWarn?: string | null;
       }
-    | { status: "failed" },
+    | {
+        status: "failed";
+        terminalClass?: string | null;
+        systemWarn?: string | null;
+        rating?: number | null;
+      },
 ): Promise<void> {
   try {
     await prisma.reviewRun.update({
@@ -549,6 +560,10 @@ export async function completeReviewRun(
       data: {
         status: result.status,
         completedAt: new Date(),
+        ...(result.terminalClass !== undefined
+          ? { terminalClass: result.terminalClass }
+          : {}),
+        ...(result.systemWarn !== undefined ? { systemWarn: result.systemWarn } : {}),
         ...(result.status === "completed"
           ? {
               rating: result.rating,
@@ -559,7 +574,10 @@ export async function completeReviewRun(
                 ? { refused: true, refusalNote: result.refusalNote ?? null }
                 : {}),
             }
-          : {}),
+          : {
+              ...(result.rating !== undefined ? { rating: result.rating } : {}),
+              outcome: null,
+            }),
       },
     });
   } catch (err) {
@@ -673,6 +691,8 @@ export async function getLatestCompletedReview(
         refusalNote: true,
         outcome: true,
         status: true,
+        terminalClass: true,
+        systemWarn: true,
         chunksTotal: true,
         chunksCompleted: true,
         chunksFailed: true,
@@ -797,6 +817,72 @@ export async function getLatestCompletedReview(
     stale,
     staleReason,
   };
+}
+
+const TERMINAL_RUN_SELECT = {
+  id: true,
+  commitHash: true,
+  diffHash: true,
+  reviewConfigHash: true,
+  completedAt: true,
+  rating: true,
+  model: true,
+  triggerReason: true,
+  reliability: true,
+  refused: true,
+  refusalNote: true,
+  outcome: true,
+  status: true,
+  terminalClass: true,
+  systemWarn: true,
+  chunksTotal: true,
+  chunksCompleted: true,
+  chunksFailed: true,
+  chunksSkipped: true,
+  tokensUsed: true,
+} as const;
+
+/**
+ * Latest terminal ReviewRun (completed OR failed) for status honesty.
+ *
+ * After a failed rescan, getLatestCompletedReview would still return the
+ * prior green completed run — masking the failure. Callers that drive
+ * Failed banners / `/dragnet` status should use this for outcome class.
+ */
+export async function getLatestTerminalReview(prId: string): Promise<{
+  reviewRun: LatestReviewResult["reviewRun"];
+  stale: boolean;
+  staleReason: ReviewStaleReason | null;
+}> {
+  const [latestRun, prRow] = await Promise.all([
+    prisma.reviewRun.findFirst({
+      where: { prId, status: { in: ["completed", "failed"] } },
+      orderBy: { completedAt: "desc" },
+      select: TERMINAL_RUN_SELECT,
+    }),
+    prisma.pullRequest.findUnique({
+      where: { id: prId },
+      select: { commitHash: true },
+    }),
+  ]);
+
+  if (!latestRun) {
+    return { reviewRun: null, stale: false, staleReason: null };
+  }
+
+  const prFiles = await prisma.prFile.findMany({
+    where: { prId },
+    select: { filename: true, diff: true },
+  });
+  const currentDiffHash = computeDiffHash(prFiles, prRow?.commitHash ?? "");
+  const { stale, reason: staleReason } = evaluateReviewStale({
+    runCommitHash: latestRun.commitHash,
+    tipCommitHash: prRow?.commitHash,
+    runDiffHash: latestRun.diffHash,
+    currentDiffHash,
+  });
+
+  return { reviewRun: latestRun, stale, staleReason };
 }
 
 /**
