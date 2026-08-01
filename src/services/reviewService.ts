@@ -2237,9 +2237,13 @@ ${diffPayload}${deterministicPayload}`;
     confidence: typeof finding.confidence === "number" ? finding.confidence : null,
   }));
   const repoPathForVerifier = repo?.localPath || repo?.path;
-  const verification = repoPathForVerifier
-    ? await verifyFindings(candidates, repoPathForVerifier, prId)
-    : new Map();
+  const reviewTree = options?.reviewTree;
+  const verification =
+    reviewTree || repoPathForVerifier
+      ? await verifyFindings(candidates, repoPathForVerifier ?? "", prId, {
+          ...(reviewTree ? { reviewTree } : {}),
+        })
+      : new Map();
   const rejectedCount = Array.from(verification.values()).filter(v => v.status === "rejected").length;
   if (rejectedCount > 0) {
     console.log(`[scan] runPrScan: verifier rejected ${rejectedCount}/${candidates.length} finding(s)`);
@@ -2276,6 +2280,7 @@ ${diffPayload}${deterministicPayload}`;
         prId,
         skepticSettings,
         onSkepticLog,
+        reviewTree ? { reviewTree } : undefined,
       );
       skepticMap = skepticResult.verdicts;
       const t = skepticResult.telemetry;
