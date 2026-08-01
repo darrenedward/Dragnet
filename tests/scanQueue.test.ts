@@ -286,4 +286,47 @@ describe("scan queue", () => {
       data: expect.objectContaining({ forced: true, priority: 10 }),
     }));
   });
+
+  it("classifyQueueWorkerHttpResult marks soft-fail HTTP 200 as failed", async () => {
+    const { classifyQueueWorkerHttpResult } = await import("@/src/services/scanQueue");
+    expect(
+      classifyQueueWorkerHttpResult(true, {
+        success: false,
+        systemWarn: "quality failure",
+        runId: "run-1",
+        terminalOutcome: { isFailed: true, reason: "quality failure" },
+      }),
+    ).toMatchObject({ state: "failed", reviewRunId: "run-1", errorMessage: "quality failure" });
+    expect(
+      classifyQueueWorkerHttpResult(true, { success: true, runId: "run-2" }),
+    ).toMatchObject({ state: "completed", reviewRunId: "run-2" });
+    expect(
+      classifyQueueWorkerHttpResult(true, { interrupted: true, runId: "run-3" }),
+    ).toMatchObject({ state: "interrupted", reviewRunId: "run-3" });
+  });
+
+  it("getScanJobForPr hides running jobs with expired leases", async () => {
+    scanJob.updateMany.mockResolvedValue({ count: 0 });
+    scanJob.findFirst.mockResolvedValue({
+      id: "job-dead",
+      prId: "pr-1",
+      commitHash: "abc",
+      state: "running",
+      claimedAt: new Date("2026-07-18T00:00:00Z"),
+      leaseExpiresAt: new Date("2020-01-01T00:00:00Z"),
+      createdAt: new Date("2026-07-18T00:00:00Z"),
+      forced: false,
+      resumeRequested: false,
+      freshRequested: false,
+      priority: 0,
+      triggerReason: "manual",
+      completedAt: null,
+      errorMessage: null,
+      repository: { name: "demo" },
+      pullRequest: { title: "t", sourceBranch: "feat" },
+    });
+    const { getScanJobForPr } = await import("@/src/services/scanQueue");
+    await expect(getScanJobForPr("pr-1")).resolves.toBeNull();
+  });
+
 });
