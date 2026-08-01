@@ -11,6 +11,7 @@ import {
   type CommitIdentity,
 } from "./reviewTree";
 import { ensureMergeBase } from "./tipAlignedChecks";
+import { dragnetLog } from "./logVerbosity";
 
 /**
  * Postgres TEXT columns reject NUL bytes (0x00) — git can produce them
@@ -203,7 +204,10 @@ function localPathExists(repo: RepoLike): boolean {
  */
 export async function getRealPrs(repo: RepoLike) {
   const repoId = repo.id;
-  console.log(`[scan] getRealPrs: repoId=${repoId} mode=${repo.path ? "local-path" : "remote-volume"}`);
+  // Routine poll entry — Debug only so User stays readable on Dokploy.
+  dragnetLog.debug(
+    `[scan] getRealPrs: repoId=${repoId} mode=${repo.path ? "local-path" : "remote-volume"}`,
+  );
 
   // For GitHub repos with credentials, fetch live PRs from the API so the
   // DB always reflects GitHub's current state (new PRs appear, merged
@@ -281,7 +285,9 @@ export async function getRealPrs(repo: RepoLike) {
         .map((p) => p.id);
       if (staleIds.length > 0) {
         await prisma.pullRequest.deleteMany({ where: { id: { in: staleIds } } });
-        console.log(`[scan] getRealPrs: removed ${staleIds.length} stale PR(s) for ${repoId}`);
+        dragnetLog.debug(
+          `[scan] getRealPrs: removed ${staleIds.length} stale PR(s) for ${repoId}`,
+        );
       }
 
       return livePrs.open.map((p) => ({
@@ -301,7 +307,9 @@ export async function getRealPrs(repo: RepoLike) {
 
   try {
     if (repo.path && !localPathExists(repo)) {
-      console.log(`[scan] getRealPrs: local path not found or not a directory: ${repo.path}`);
+      dragnetLog.debug(
+        `[scan] getRealPrs: local path not found or not a directory: ${repo.path}`,
+      );
       return null;
     }
 
@@ -368,7 +376,7 @@ export async function getRealPrs(repo: RepoLike) {
               where: { id: prId },
               data: { status: "Merged", commitHash: branch.hash },
             });
-            console.log(`[scan] getRealPrs: marked ${prId} as Merged`);
+            dragnetLog.debug(`[scan] getRealPrs: marked ${prId} as Merged`);
           }
           continue;
         }
