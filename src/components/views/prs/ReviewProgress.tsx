@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { Bot, ChevronDown, ChevronRight, Cpu, Loader2, Search, Siren, XCircle } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Bot, ChevronDown, ChevronRight, Copy, Cpu, Loader2, Search, Siren, XCircle } from "lucide-react";
 import { fetchJson } from "../../../lib/http";
+import { formatScanLogText } from "../../../lib/scanLogText";
 
 interface LogEntry {
   id: string;
@@ -32,9 +33,25 @@ const LEVEL_COLORS: Record<string, string> = {
   error: "text-rose-300",
 };
 
+function copyText(text: string): void {
+  try {
+    void navigator.clipboard.writeText(text);
+  } catch {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand("copy");
+    document.body.removeChild(ta);
+  }
+}
+
 export default function ReviewProgress({ prId, reviewRunId, isScanning }: Props) {
   const [expanded, setExpanded] = useState(true);
   const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [copied, setCopied] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const logSignatureRef = useRef("");
@@ -85,30 +102,59 @@ export default function ReviewProgress({ prId, reviewRunId, isScanning }: Props)
     logCountRef.current = logs.length;
   }, [logs.length, expanded]);
 
+  const handleCopyLog = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      e.preventDefault();
+      const text = formatScanLogText(logs);
+      if (!text) return;
+      copyText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    },
+    [logs],
+  );
+
   if (!reviewRunId || !prId) return null;
 
   return (
     <div className="mt-3 border border-white/10 rounded-lg overflow-hidden bg-slate-950/50">
-      <button
-        onClick={() => setExpanded(!expanded)}
-        className="w-full px-3 py-2 bg-slate-900/60 flex items-center justify-between gap-2 text-xs font-mono cursor-pointer hover:bg-slate-900/80 transition-colors"
-      >
-        <div className="flex items-center gap-2">
+      <div className="w-full px-3 py-2 bg-slate-900/60 flex items-center justify-between gap-2 text-xs font-mono select-none">
+        <button
+          type="button"
+          onClick={() => setExpanded(!expanded)}
+          className="flex items-center gap-2 min-w-0 flex-1 text-left cursor-pointer hover:opacity-90 transition-opacity"
+        >
           {isScanning ? (
-            <Loader2 size={12} className="text-cyan-400 animate-spin" />
+            <Loader2 size={12} className="text-cyan-400 animate-spin shrink-0" />
           ) : (
-            <Cpu size={12} className="text-slate-400" />
+            <Cpu size={12} className="text-slate-400 shrink-0" />
           )}
           <span className="text-cyan-400 font-bold uppercase tracking-wider text-[10px]">
             {isScanning ? "Review Progress" : "Last Scan Log"}
           </span>
           <span className="text-slate-500 text-[10px]">({logs.length} events)</span>
-        </div>
-        {expanded ? <ChevronDown size={14} className="text-slate-400" /> : <ChevronRight size={14} className="text-slate-400" />}
-      </button>
+          {expanded ? (
+            <ChevronDown size={14} className="text-slate-400 ml-auto shrink-0" />
+          ) : (
+            <ChevronRight size={14} className="text-slate-400 ml-auto shrink-0" />
+          )}
+        </button>
+        <button
+          type="button"
+          onClick={handleCopyLog}
+          disabled={logs.length === 0}
+          title="Copy scan log to clipboard"
+          aria-label="Copy log"
+          className="inline-flex items-center gap-1 shrink-0 px-2 py-1 rounded border border-white/10 text-[10px] font-mono font-bold uppercase tracking-wider text-slate-300 hover:text-white hover:bg-white/5 disabled:opacity-40 disabled:hover:bg-transparent disabled:cursor-not-allowed cursor-pointer transition-colors"
+        >
+          <Copy size={11} />
+          <span>{copied ? "Copied!" : "Copy log"}</span>
+        </button>
+      </div>
 
       {expanded && (
-        <div className="h-44 overflow-y-auto p-2 space-y-0.5">
+        <div className="h-44 overflow-y-auto p-2 space-y-0.5 select-text">
           {logs.length === 0 ? (
             <div className="text-[10px] text-slate-600 font-mono text-center py-4 italic">
               Waiting for AI review loop to start...
@@ -117,7 +163,7 @@ export default function ReviewProgress({ prId, reviewRunId, isScanning }: Props)
             <>
               {logs.map((log) => (
                 <div key={log.id} className="flex gap-1.5 text-[10px] font-mono leading-relaxed px-1 py-0.5 rounded hover:bg-white/[0.02]">
-                  <span className="shrink-0 mt-0.5">{LEVEL_ICONS[log.level] || <Cpu size={11} className="text-slate-500" />}</span>
+                  <span className="shrink-0 mt-0.5 select-none">{LEVEL_ICONS[log.level] || <Cpu size={11} className="text-slate-500" />}</span>
                   <span className={`${LEVEL_COLORS[log.level] || "text-slate-300"} flex-1 min-w-0`}>{log.message}</span>
                 </div>
               ))}
