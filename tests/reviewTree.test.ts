@@ -151,6 +151,19 @@ describe("resolveCommitIdentity", () => {
     );
     expect(id.baseSha).toBe(baseSha);
   });
+
+  it("does not fall back to main when explicit target branch is missing from clone", async () => {
+    await expect(
+      resolveCommitIdentity(
+        { id: "r1", path: root, baseBranch: "main" },
+        {
+          commitHash: tipSha,
+          sourceBranch: "feature/tip",
+          targetBranch: "parent-stack-missing",
+        },
+      ),
+    ).rejects.toThrow(/targetBranch=parent-stack-missing not found/);
+  });
 });
 
 describe("ensureReviewTree + tip-bound readFile", () => {

@@ -92,7 +92,8 @@ async function revParse(
  * otherwise trusted as-is so a missing object never substitutes a different
  * source-branch tip). When provider head is empty/non-SHA, rev-parse source
  * branch.
- * baseSha = tip of PR target branch, else repo default base branch tip.
+ * baseSha = tip of PR target branch when named (must resolve — no silent
+ * main fallback). When target is empty, repo default base / main / master.
  */
 export async function resolveCommitIdentity(
   repo: ReviewTreeRepo,
@@ -122,23 +123,33 @@ export async function resolveCommitIdentity(
     );
   }
 
+  // When the PR names an explicit target, that ref must resolve. Falling
+  // through to repo default / main would reintroduce stacked-PR "entire
+  // stack vs main" diffs (#122). Only omit-target falls back.
   let baseSha: string | null = null;
-  if (pr.targetBranch) {
-    baseSha = await revParse(repo, pr.targetBranch, runGit);
-  }
-  if (!baseSha && repo.baseBranch) {
-    baseSha = await revParse(repo, repo.baseBranch, runGit);
-  }
-  if (!baseSha) {
-    baseSha = await revParse(repo, "main", runGit);
-  }
-  if (!baseSha) {
-    baseSha = await revParse(repo, "master", runGit);
-  }
-  if (!baseSha) {
-    throw new Error(
-      `Cannot resolve PR base SHA (targetBranch=${pr.targetBranch || "(empty)"}, baseBranch=${repo.baseBranch || "(empty)"})`,
-    );
+  const target = (pr.targetBranch || "").trim();
+  if (target) {
+    baseSha = await revParse(repo, target, runGit);
+    if (!baseSha) {
+      throw new Error(
+        `Cannot resolve PR base SHA (targetBranch=${target} not found in clone)`,
+      );
+    }
+  } else {
+    if (repo.baseBranch) {
+      baseSha = await revParse(repo, repo.baseBranch, runGit);
+    }
+    if (!baseSha) {
+      baseSha = await revParse(repo, "main", runGit);
+    }
+    if (!baseSha) {
+      baseSha = await revParse(repo, "master", runGit);
+    }
+    if (!baseSha) {
+      throw new Error(
+        `Cannot resolve PR base SHA (targetBranch=(empty), baseBranch=${repo.baseBranch || "(empty)"})`,
+      );
+    }
   }
 
   return { headSha, baseSha };
