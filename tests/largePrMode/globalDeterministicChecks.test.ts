@@ -16,6 +16,38 @@ vi.mock("../../src/services/deterministicChecks", () => ({
   DEFAULT_TEST_COMMAND: "npm run typecheck && npm run lint",
 }));
 
+// Tip-aligned plans: local path runs Tier 1 on that path; remote syncs Tier 2.
+vi.mock("../../src/lib/tipAlignedChecks", async () => {
+  const actual = await vi.importActual<typeof import("../../src/lib/tipAlignedChecks")>(
+    "../../src/lib/tipAlignedChecks",
+  );
+  return {
+    ...actual,
+    planHostTier1: (
+      repo: { path?: string | null; cloneUrl?: string | null; localPath?: string | null } | null,
+      headSha: string,
+    ) => {
+      const host =
+        Boolean(repo?.path) && !repo?.cloneUrl && repo?.localPath !== "/workspace";
+      if (!host || !repo?.path) {
+        return {
+          action: "skip" as const,
+          headSha,
+          reason: repo?.cloneUrl || repo?.localPath === "/workspace"
+            ? "remote/volume-backed repo uses container Tier 2 only"
+            : "no meaningful local checkout for host Tier 1",
+        };
+      }
+      return {
+        action: "run" as const,
+        rootPath: repo.path,
+        headSha,
+        source: "ambient-tip" as const,
+      };
+    },
+  };
+});
+
 vi.mock("../../src/lib/buildsystemDetect", () => ({
   detectBuildSystem: vi.fn().mockResolvedValue({ buildSystem: "node", image: "node:20-alpine", warn: null }),
 }));
@@ -63,7 +95,12 @@ vi.mock("../../src/lib/prisma", () => ({
     symbol: { findMany: vi.fn().mockResolvedValue([]) },
     edge: { findMany: vi.fn().mockResolvedValue([]) },
     reviewRun: {
-      findUnique: vi.fn().mockResolvedValue({ id: "run-1", status: "in_progress", repoId: "repo-1" }),
+      findUnique: vi.fn().mockResolvedValue({
+        id: "run-1",
+        status: "in_progress",
+        repoId: "repo-1",
+        commitHash: "abc123",
+      }),
       update: vi.fn().mockResolvedValue({}),
     },
     reviewLog: { create: vi.fn().mockResolvedValue({}) },

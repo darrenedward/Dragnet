@@ -6,6 +6,7 @@ import { runGitInRepo, syncCloneForPr, type RepoLike } from "./repoAccess";
 import { getInstallationToken } from "@/src/lib/githubApp";
 import { decryptSecret, hasMasterKey } from "@/src/lib/crypto";
 import { statusForRevision } from "./prRevisionStatus";
+import { ensureMergeBase } from "./tipAlignedChecks";
 
 /**
  * Postgres TEXT columns reject NUL bytes (0x00) — git can produce them
@@ -598,6 +599,26 @@ async function collectBranchFiles(
       if (failOnUnavailable) throw new Error(msg);
       return files;
     }
+  }
+
+  // Three-dot diff needs merge-base. Shallow clones often hide it — deepen
+  // or fail closed with a clear gate (never silent wrong/empty diff).
+  const mb = await ensureMergeBase({
+    repo,
+    baseRef: baseBranch,
+    headRef: branchName,
+  });
+  if (mb.ok === false) {
+    console.warn(`[scan] collectBranchFiles: ${mb.message}`);
+    if (failOnUnavailable) {
+      throw new Error(`Blocked at merge-base: ${mb.message}`);
+    }
+    return files;
+  }
+  if (mb.deepened) {
+    console.log(
+      `[scan] collectBranchFiles: deepened shallow history; merge-base=${mb.mergeBase.slice(0, 12)}`,
+    );
   }
 
   let changedFilesLines: string[] = [];

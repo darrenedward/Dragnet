@@ -15,6 +15,11 @@ import { completeReviewRun, setReviewRunTokens, setReviewRunLastCheckpointAt, se
 import { safeReadFileSync, resolveSafePath } from "@/src/lib/pathSafety";
 import type { ReviewTree } from "@/src/lib/reviewTree";
 import {
+  planHostTier1,
+  planTier2,
+  resolveCheckHeadSha,
+} from "@/src/lib/tipAlignedChecks";
+import {
   runDeterministicChecks,
   runContainerizedChecks,
   logReview,
@@ -1098,22 +1103,37 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
   const diffPayload = codePayload +
     (contextPayload ? `\n\n=== CONTEXT FILES (NOT REVIEWABLE — DO NOT CITE IN FINDINGS) ===\n${contextPayload}\n` : "");
 
-  // 5a. Build system detection — host checkout only. Remote/volume repos
-  //     skip host probes (stale/empty mirrors would report "unknown" and
-  //     incorrectly disable Tier 2). They use repo.runnerImage + container Tier 2.
+  // Tip head SHA shared by tools, Tier 1, and Tier 2 (commit identity).
+  const checkHeadSha = resolveCheckHeadSha({
+    tipHeadSha: options?.reviewTree?.headSha,
+    reviewRunCommitHash: options?.checkpointMetadata?.commitHash,
+    prCommitHash: pr.commitHash,
+  });
+
+  // Materialize tip tree for host Tier 1 (or skip with explicit reason).
+  // Never lint ambient main while reviewing another tip.
+  const tier1Plan = planHostTier1(repo, checkHeadSha);
+  let tipRootForTier2: string | null =
+    tier1Plan.action === "run" ? tier1Plan.rootPath : null;
+  const cleanupTier1Tree =
+    tier1Plan.action === "run" ? tier1Plan.cleanup : undefined;
+
+  // 5a. Build system detection — tip tree only when host Tier 1 is planned.
+  //     Remote/volume repos skip host probes (stale/empty mirrors would report
+  //     "unknown" and incorrectly disable Tier 2). They use repo.runnerImage.
   let runnerImage = repo.runnerImage ?? "node:20-alpine";
   let buildSystemWarn: string | null = null;
   let tier2Supported = true;
-  if (shouldRunHostTier1(repo) && repo?.path) {
+  if (tier1Plan.action === "run") {
     try {
-      const detected = await detectBuildSystem(repo.path);
+      const detected = await detectBuildSystem(tier1Plan.rootPath);
       runnerImage = detected.image;
       buildSystemWarn = detected.warn;
       if (detected.buildSystem !== "node") {
         tier2Supported = false;
       }
       void logReview(
-        prId, `Build system: ${detected.buildSystem} → ${detected.image}${detected.warn ? ` (${detected.warn})` : ""}`,
+        prId, `Build system: ${detected.buildSystem} → ${detected.image}${detected.warn ? ` (${detected.warn})` : ""} [tip=${tier1Plan.source}]`,
         "info", reviewRunId, reviewChunkId,
       );
     } catch (err: any) {
@@ -1135,6 +1155,7 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
       reviewRunId,
       reviewChunkId,
     );
+    cleanupTier1Tree?.();
   } else {
     // 5b-c. Tier 1 + Tier 2 via StepPipeline with retry-on-infrastructure-error.
     //       Critical: false means code errors collect as findings and continue.
@@ -1142,26 +1163,25 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
     //       the LLM is ever called, matching the "no rating written" invariant.
     const pipeline = new StepPipeline();
 
-    // Tier 1: host tsc/eslint. Skipped for remote/volume-backed repos (Tier 2 only).
+    // Tier 1: host tsc/eslint on tip tree only (never ambient wrong branch).
     pipeline.addStep({
       name: "Tier1: tsc/eslint",
       critical: false,
       maxRetries: 2,
       fn: async () => {
-        if (!shouldRunHostTier1(repo)) {
-          if (repo?.cloneUrl || repo?.localPath === "/workspace") {
-            void logReview(
-              prId,
-              "Tier 1 skipped: remote/volume-backed repo uses container Tier 2 only",
-              "info",
-              reviewRunId,
-              reviewChunkId,
-            );
-          }
+        if (tier1Plan.action === "skip") {
+          void logReview(
+            prId,
+            `Tier 1 skipped: ${tier1Plan.reason}`,
+            "info",
+            reviewRunId,
+            reviewChunkId,
+          );
+          console.log(`[scan] runPrScan: Tier 1 skipped — ${tier1Plan.reason}`);
           return { ok: true, data: [] as DeterministicFinding[] };
         }
         try {
-          const findings = await runDeterministicChecks(repo!.path!);
+          const findings = await runDeterministicChecks(tier1Plan.rootPath);
           tier1HadErrors = findings.some((f) => f.severity === "error");
           const counts = findings.reduce((acc, f) => {
             acc[f.source] = (acc[f.source] ?? 0) + 1; return acc;
@@ -1169,8 +1189,14 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
           const summary = Object.keys(counts).length === 0
             ? "clean (no tsc/eslint findings)"
             : Object.entries(counts).map(([k, v]) => `${v} ${k}`).join(", ");
-          void logReview(prId, `Tier 1 deterministic checks: ${summary}`, "info", reviewRunId, reviewChunkId);
-          console.log(`[scan] runPrScan: Tier 1 deterministic checks → ${findings.length} finding(s)`);
+          void logReview(
+            prId,
+            `Tier 1 deterministic checks (${tier1Plan.source} @ ${checkHeadSha.slice(0, 12)}): ${summary}`,
+            "info",
+            reviewRunId,
+            reviewChunkId,
+          );
+          console.log(`[scan] runPrScan: Tier 1 deterministic checks → ${findings.length} finding(s) source=${tier1Plan.source}`);
           return { ok: true, data: findings };
         } catch (err: any) {
           console.warn(`[scan] runPrScan: Tier 1 deterministic checks crashed:`, err);
@@ -1183,29 +1209,25 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
       },
     });
 
-    // Tier 2: containerized checks (install + test/lint in ephemeral container).
-    //         Gated: skipped when Tier 1 found errors (uncompilable code), when
-    //         the per-repo "Skip Tier 2" toggle is enabled, or when the build
-    //         system is not Node.js (only node images ship with working commands).
+    // Tier 2: containerized checks at the same head SHA tools use.
+    //         Local-only: bind-mount tip tree or skip clearly (no empty URL sync).
     pipeline.addStep({
       name: "Tier2: container checks",
       critical: false,
       maxRetries: 2,
       fn: async () => {
-        const skipTier2 = repo?.skipTier2 ?? false;
-        const tier2ShouldRun =
-          (Boolean(repo?.path) || Boolean(repo?.cloneUrl)) &&
-          !skipTier2 && !tier1HadErrors && tier2Supported;
-        if (!tier2ShouldRun) {
-          const reason = skipTier2
-            ? "per-repo toggle"
-            : tier1HadErrors
-              ? "Tier 1 found errors"
-              : !tier2Supported
-                ? "unsupported build system (non-Node.js)"
-                : "no repo path or clone URL";
-          void logReview(prId, `Tier 2 skipped: ${reason}`, "info", reviewRunId, reviewChunkId);
-          console.log(`[scan] runPrScan: Tier 2 skipped — ${reason}`);
+        const tier2Plan = planTier2({
+          headSha: checkHeadSha,
+          cloneUrl: repo?.cloneUrl,
+          tipRootPath: tipRootForTier2,
+          skipTier2: repo?.skipTier2 ?? false,
+          tier1HadErrors,
+          tier2Supported,
+          hasPathOrClone: Boolean(repo?.path) || Boolean(repo?.cloneUrl),
+        });
+        if (tier2Plan.action === "skip") {
+          void logReview(prId, `Tier 2 skipped: ${tier2Plan.reason}`, "info", reviewRunId, reviewChunkId);
+          console.log(`[scan] runPrScan: Tier 2 skipped — ${tier2Plan.reason}`);
           return { ok: true, data: [] as DeterministicFinding[] };
         }
         try {
@@ -1218,13 +1240,14 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
           if (repo?.patCipher && repo?.patIv && repo?.patTag && hasMasterKey()) {
             pat = decryptSecret(repo.patCipher, repo.patIv, repo.patTag);
           }
-          const tier2Image = shouldRunHostTier1(repo) && repo.path
+          const tier2Image = shouldRunHostTier1(repo) && tipRootForTier2
             ? runnerImage
             : (repo.runnerImage ?? "node:20-alpine");
           const tier2Findings = await runContainerizedChecks({
             repoId: repo.id,
-            cloneUrl: repo.cloneUrl ?? "",
-            commitHash: pr.commitHash,
+            cloneUrl: tier2Plan.action === "sync" ? tier2Plan.cloneUrl : "",
+            commitHash: tier2Plan.commitHash,
+            hostBindPath: tier2Plan.action === "bind" ? tier2Plan.hostPath : undefined,
             deployKey,
             pat,
             runnerImage: tier2Image,
@@ -1234,7 +1257,7 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
             reviewRunId,
             reviewChunkId,
           });
-          console.log(`[scan] runPrScan: Tier 2 containerized checks → ${tier2Findings.length} finding(s)`);
+          console.log(`[scan] runPrScan: Tier 2 containerized checks → ${tier2Findings.length} finding(s) head=${tier2Plan.commitHash.slice(0, 12)} mode=${tier2Plan.action}`);
           return { ok: true, data: tier2Findings };
         } catch (err: any) {
           console.warn(`[scan] runPrScan: Tier 2 containerized checks crashed:`, err);
@@ -1247,33 +1270,39 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
     // Run the pipeline — retries on infrastructure errors, aborts if they
     // persist (infrastructure_failure), collects findings from code errors
     // and continues for non-critical steps.
-    const pipelineResult = await pipeline.run();
-    deterministicFindings = pipelineResult.findings;
+    try {
+      const pipelineResult = await pipeline.run();
+      deterministicFindings = pipelineResult.findings;
 
-    if (pipelineResult.aborted) {
-      const isInfra = pipelineResult.infrastructureFailure;
-      const stepName = pipelineResult.lastStepName ?? "unknown";
-      void logReview(
-        prId, `Pipeline aborted at step "${stepName}"${isInfra ? " (infrastructure failure)" : ""} — aborting scan`,
-        "error", reviewRunId, reviewChunkId,
-      );
-      console.log(`[scan] runPrScan: pipeline aborted at step "${stepName}" (infrastructure=${isInfra})`);
-      if (reviewRunId && !reviewChunkId) {
-        await completeReviewRun(reviewRunId, { status: "failed" });
+      if (pipelineResult.aborted) {
+        const isInfra = pipelineResult.infrastructureFailure;
+        const stepName = pipelineResult.lastStepName ?? "unknown";
+        void logReview(
+          prId, `Pipeline aborted at step "${stepName}"${isInfra ? " (infrastructure failure)" : ""} — aborting scan`,
+          "error", reviewRunId, reviewChunkId,
+        );
+        console.log(`[scan] runPrScan: pipeline aborted at step "${stepName}" (infrastructure=${isInfra})`);
+        if (reviewRunId && !reviewChunkId) {
+          await completeReviewRun(reviewRunId, { status: "failed" });
+        }
+        if (!reviewChunkId) {
+          await prisma.pullRequest.updateMany({ where: { id: prId }, data: { status: "Failed" } });
+        }
+        return {
+          success: false,
+          rating: null,
+          findings: deterministicFindings,
+          usedModel: "none",
+          systemWarn: isInfra
+            ? `Infrastructure failure in step "${stepName}". Check server logs and try again.`
+            : `Scan aborted at step "${stepName}".`,
+          infrastructureFailure: isInfra,
+        };
       }
-      if (!reviewChunkId) {
-        await prisma.pullRequest.updateMany({ where: { id: prId }, data: { status: "Failed" } });
-      }
-      return {
-        success: false,
-        rating: null,
-        findings: deterministicFindings,
-        usedModel: "none",
-        systemWarn: isInfra
-          ? `Infrastructure failure in step "${stepName}". Check server logs and try again.`
-          : `Scan aborted at step "${stepName}".`,
-        infrastructureFailure: isInfra,
-      };
+    } finally {
+      // Drop tip worktree after Tier 1+2 (bind path no longer needed).
+      cleanupTier1Tree?.();
+      tipRootForTier2 = null;
     }
   }
 
