@@ -255,7 +255,8 @@ export async function pollHostedRepos(): Promise<PollResult> {
       if (items === null) continue;
 
       for (const item of items) {
-        if (item.baseBranch !== repo.baseBranch) continue;
+        // Keep stacked PRs whose target is not the repo default base.
+        // Diff base is the PR target branch; filtering here dropped stacks.
         if (!matchBranchPattern(item.headBranch, repo.branchPattern)) continue;
 
         const proc = await syncPr(repo.id, item);

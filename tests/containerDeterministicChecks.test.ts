@@ -76,6 +76,48 @@ describe("runContainerizedChecks", () => {
     );
   });
 
+  it("never empty-URL pretend-syncs for local-only without bind path", async () => {
+    const findings = await runContainerizedChecks({
+      ...baseOpts,
+      cloneUrl: "",
+    });
+    expect(mockSyncToCommit).not.toHaveBeenCalled();
+    expect(mockRunRunner).not.toHaveBeenCalled();
+    expect(findings.length).toBeGreaterThanOrEqual(1);
+    expect(findings[0].explanation).toMatch(/local-only|no clone URL/i);
+  });
+
+  it("bind-mounts tip tree for local-only instead of git sync", async () => {
+    mockRunRunner
+      .mockResolvedValueOnce({ exitCode: 0, stdout: "", stderr: "", timedOut: false })
+      .mockResolvedValueOnce({ exitCode: 0, stdout: "", stderr: "", timedOut: false });
+
+    await runContainerizedChecks({
+      ...baseOpts,
+      cloneUrl: "",
+      hostBindPath: "/tmp/tip-worktree",
+      commitHash: "tipsha123456",
+    });
+    expect(mockSyncToCommit).not.toHaveBeenCalled();
+    expect(mockRunRunner).toHaveBeenCalledWith(
+      expect.objectContaining({
+        hostBindPath: "/tmp/tip-worktree",
+      }),
+    );
+  });
+
+  it("uses the same tip head SHA for container sync as tools", async () => {
+    mockRunRunner
+      .mockResolvedValueOnce({ exitCode: 0, stdout: "", stderr: "", timedOut: false })
+      .mockResolvedValueOnce({ exitCode: 0, stdout: "", stderr: "", timedOut: false });
+
+    const tip = "deadbeefcafebabe0123456789abcdef01234567";
+    await runContainerizedChecks({ ...baseOpts, commitHash: tip });
+    expect(mockSyncToCommit).toHaveBeenCalledWith(
+      expect.objectContaining({ commitHash: tip }),
+    );
+  });
+
   it("passes deployKey and pat to git sync when provided", async () => {
     mockRunRunner
       .mockResolvedValueOnce({ exitCode: 0, stdout: "", stderr: "", timedOut: false })

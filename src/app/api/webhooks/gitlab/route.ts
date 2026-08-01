@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { verifyGitlabToken, findRepoByCloneUrl, gitFetch, scanRepoPrs, getOpenPrIds } from "../../../../lib/webhook";
 import { enqueue } from "@/src/services/remoteFetchWorker";
 import { checkDelivery } from "../../../../lib/webhookReplay";
-import { admitAfkScanJobForPr } from "@/src/services/scanQueue";
+import { admitAfkAfterTipReady, type EventPrHint } from "@/src/lib/tipReadyAfk";
 import { triggerHostedScan } from "@/src/services/hostedScan/orchestrator";
 import { createDeliveryLog, updateDeliveryStatus } from "../../../../lib/webhookDelivery";
 import type { HostedPrData } from "@/src/services/hostedScan/orchestrator";
@@ -54,20 +54,51 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Duplicate delivery UUID — replay rejected" }, { status: 429 });
   }
 
-  const triggerAfkScans = async (prIds: string[]): Promise<{ admitted: number; error?: string }> => {
-    let admitted = 0;
-    const errors: string[] = [];
-    for (const prId of prIds) {
-      try {
-        // Policy-gated AFK admit — disabled auto-rescan returns null (no queue work).
-        if (await admitAfkScanJobForPr({ prId, triggerReason: "webhook" })) admitted++;
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        console.error(`[webhook] AFK scan failed for ${prId}:`, err);
-        errors.push(`${prId}: ${msg}`);
-      }
+  const triggerAfkScans = async (
+    prIds: string[],
+    event?: EventPrHint,
+    repoForTip?: { path?: string | null; cloneUrl?: string | null },
+  ): Promise<{ admitted: number; error?: string; preferredPrId?: string | null }> => {
+    try {
+      return await admitAfkAfterTipReady({
+        repoId: matched.id,
+        prIds,
+        triggerReason: "webhook",
+        event,
+        repo: {
+          id: matched.id,
+          path: repoForTip?.path ?? matched.path,
+          cloneUrl: repoForTip?.cloneUrl ?? matched.cloneUrl,
+          cloneUrlHttps: matched.cloneUrlHttps,
+          deployKeyCipher: matched.deployKeyCipher,
+          deployKeyIv: matched.deployKeyIv,
+          deployKeyTag: matched.deployKeyTag,
+          patCipher: matched.patCipher,
+          patIv: matched.patIv,
+          patTag: matched.patTag,
+        },
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[webhook] tip-ready AFK admit failed for ${matched.id}:`, err);
+      return { admitted: 0, error: msg };
     }
-    return { admitted, error: errors.length > 0 ? errors.join("; ") : undefined };
+  };
+
+  const eventHintFromMr = (mr: {
+    iid?: number;
+    source_branch?: string;
+    target_branch?: string;
+    last_commit?: { id?: string };
+  } | null | undefined): EventPrHint | undefined => {
+    if (!mr) return undefined;
+    return {
+      githubPrNumber: typeof mr.iid === "number" ? mr.iid : undefined,
+      sourceBranch: mr.source_branch,
+      headSha: mr.last_commit?.id,
+      headRef: mr.source_branch,
+      baseRef: mr.target_branch,
+    };
   };
 
   const logDelivery = deliveryGuid
@@ -89,13 +120,17 @@ export async function POST(request: Request) {
     return NextResponse.json(body);
   };
 
-  const refreshCloneAndPrs = async (): Promise<{ prIds: string[]; cloneError?: string }> => {
+  const refreshCloneAndPrs = async (): Promise<{
+    prIds: string[];
+    cloneError?: string;
+    repoPath?: string | null;
+  }> => {
     if (matched.path || matched.cloneUrl) {
       const ok = await gitFetch(matched);
       if (!ok) {
         return { prIds: [], cloneError: "git fetch failed" };
       }
-      return { prIds: await scanRepoPrs(matched) };
+      return { prIds: await scanRepoPrs(matched), repoPath: matched.path };
     }
     try {
       const localPath = await enqueue(matched.id);
@@ -106,7 +141,10 @@ export async function POST(request: Request) {
       if (!ok) {
         return { prIds: [], cloneError: "git fetch failed" };
       }
-      return { prIds: await scanRepoPrs({ ...matched, path: localPath }) };
+      return {
+        prIds: await scanRepoPrs({ ...matched, path: localPath }),
+        repoPath: localPath,
+      };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`[webhook] enqueue failed for ${matched.id}:`, err);
@@ -147,7 +185,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: true, repo: matched.id, mr: mr.iid, hosted: true, prId: result.prId });
     }
 
-    const { prIds, cloneError } = await refreshCloneAndPrs();
+    const { prIds, cloneError, repoPath } = await refreshCloneAndPrs();
     if (cloneError) {
       return finishOk(
         { ok: true, repo: matched.id, mr: mr.iid, afkScans: 0, error: cloneError },
@@ -155,15 +193,35 @@ export async function POST(request: Request) {
         `clone-failed: ${cloneError}`,
       );
     }
-    const { admitted: afkScans, error: afkError } = await triggerAfkScans(prIds);
+    const eventHint = eventHintFromMr(mr);
+    const { admitted: afkScans, error: afkError, preferredPrId } = await triggerAfkScans(
+      prIds,
+      eventHint,
+      { path: repoPath ?? matched.path, cloneUrl: matched.cloneUrl },
+    );
     if (afkError) {
       return finishOk(
-        { ok: true, repo: matched.id, mr: mr.iid, afkScans, error: afkError },
+        {
+          ok: true,
+          repo: matched.id,
+          mr: mr.iid,
+          preferredPrId: preferredPrId ?? undefined,
+          afkScans,
+          error: afkError,
+        },
         "failed",
-        `afk-admit-failed: ${afkError}`,
+        afkError.startsWith("tip-ready-failed")
+          ? afkError
+          : `afk-admit-failed: ${afkError}`,
       );
     }
-    return finishOk({ ok: true, repo: matched.id, mr: mr.iid, afkScans });
+    return finishOk({
+      ok: true,
+      repo: matched.id,
+      mr: mr.iid,
+      preferredPrId: preferredPrId ?? undefined,
+      afkScans,
+    });
   }
 
   if (event === "Push Hook") {
@@ -183,7 +241,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const { prIds, cloneError } = await refreshCloneAndPrs();
+    const { prIds, cloneError, repoPath } = await refreshCloneAndPrs();
     if (cloneError) {
       return finishOk(
         { ok: true, repo: matched.id, afkScans: 0, error: cloneError },
@@ -191,12 +249,17 @@ export async function POST(request: Request) {
         `clone-failed: ${cloneError}`,
       );
     }
-    const { admitted: afkScans, error: afkError } = await triggerAfkScans(prIds);
+    const { admitted: afkScans, error: afkError } = await triggerAfkScans(prIds, undefined, {
+      path: repoPath ?? matched.path,
+      cloneUrl: matched.cloneUrl,
+    });
     if (afkError) {
       return finishOk(
         { ok: true, repo: matched.id, afkScans, error: afkError },
         "failed",
-        `afk-admit-failed: ${afkError}`,
+        afkError.startsWith("tip-ready-failed")
+          ? afkError
+          : `afk-admit-failed: ${afkError}`,
       );
     }
     return finishOk({ ok: true, repo: matched.id, afkScans });

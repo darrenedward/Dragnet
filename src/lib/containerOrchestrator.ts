@@ -153,9 +153,15 @@ export class ContainerOrchestrator {
     const args = ["run", "--rm", "--network", networkMode];
     if (memoryLimit && memoryLimit !== "0") args.push("--memory", memoryLimit);
     if (cpuLimit && cpuLimit !== "0") args.push("--cpus", cpuLimit);
+    const mountSource = options.hostBindPath
+      ? options.hostBindPath
+      : options.volumeName;
+    if (!mountSource) {
+      throw new Error("runRunner requires volumeName or hostBindPath");
+    }
     args.push(
       "-v",
-      `${options.volumeName}:/workspace:rw`,
+      `${mountSource}:/workspace:rw`,
       "-w",
       "/workspace",
     );

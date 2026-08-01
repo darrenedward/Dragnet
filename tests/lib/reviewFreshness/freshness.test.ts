@@ -209,6 +209,26 @@ describe("reviewFreshness > freshness gate", () => {
         }),
       );
     });
+
+    it("persists baseCommitHash alongside head commitHash for tip identity", async () => {
+      prismaMocks.reviewRunCreate.mockResolvedValue({ id: "run-new" });
+      await createReviewRun({
+        prId: "pr-1",
+        repoId: "repo-1",
+        commitHash: "headsha123",
+        baseCommitHash: "basesha456",
+        diffHash: "def",
+        reviewConfigHash: "ghi",
+      });
+      expect(prismaMocks.reviewRunCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            commitHash: "headsha123",
+            baseCommitHash: "basesha456",
+          }),
+        }),
+      );
+    });
   });
 
   // ===== Issue #31: getLatestCompletedReview returns surviving priors =====

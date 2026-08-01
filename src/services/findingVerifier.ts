@@ -51,15 +51,18 @@
 import { prisma } from "@/src/lib/prisma";
 import { safeReadFileSync } from "@/src/lib/pathSafety";
 import { getChatClient, getChatModel } from "@/src/lib/llmClient";
+import type { ReviewTree } from "@/src/lib/reviewTree";
 import { checkAbsenceClaim, extractCitedSymbols } from "./findingVerifier/absenceClaim";
 import { isDocumentationFile } from "./findingVerifier/docsRules";
 import type { CandidateFinding, VerificationResult, VerifyOptions } from "./findingVerifier/types";
+import { STALE_CONTEXT_PREFIX } from "./findingVerifier/types";
 
 export type {
   CandidateFinding,
   VerificationResult,
   VerifyOptions,
 } from "./findingVerifier/types";
+export { STALE_CONTEXT_PREFIX } from "./findingVerifier/types";
 export { isDocumentationFile } from "./findingVerifier/docsRules";
 
 /**
@@ -128,14 +131,16 @@ async function verifyOne(
   }
 
   // ─── Stage A: line/file validation ─────────────────────────────────
-  const stageA = await validateLineAndFile(finding, repoPath, prId);
+  const stageA = await validateLineAndFile(finding, repoPath, prId, options);
   if (stageA) return stageA;
 
   // ─── Stage A.5: absence-claim verification ────────────────────────
   // Catches the failure mode where the LLM reviewer claims a file/route/
-  // import does not exist or is unused, but the filesystem contradicts
-  // it. Deterministic, no LLM call.
-  const stageA5 = checkAbsenceClaim(finding, repoPath);
+  // import does not exist or is unused, but tip/FS contradicts it.
+  // Deterministic, no LLM call.
+  const stageA5 = await checkAbsenceClaim(finding, repoPath, {
+    reviewTree: options.reviewTree,
+  });
   if (stageA5) {
     if (stageA5.status === "rejected") {
       console.warn(
@@ -151,7 +156,12 @@ async function verifyOne(
     return { status: "verified", note: "line/file validation passed" };
   }
 
-  const counterEvidence = retrieveCounterEvidence(finding, family, repoPath);
+  const counterEvidence = await retrieveCounterEvidence(
+    finding,
+    family,
+    repoPath,
+    options.reviewTree,
+  );
   if (counterEvidence.length === 0) {
     return { status: "verified", note: `${family}: no counter-evidence found` };
   }
@@ -161,16 +171,29 @@ async function verifyOne(
 
 // ─── Stage A ──────────────────────────────────────────────────────────
 
+function staleNote(tipBound: boolean, message: string): string {
+  return tipBound ? `${STALE_CONTEXT_PREFIX} ${message}` : message;
+}
+
 async function validateLineAndFile(
   finding: CandidateFinding,
   repoPath: string,
   prId: string,
+  options: VerifyOptions,
 ): Promise<VerificationResult | null> {
-  const content = await loadFileContent(finding.filename, repoPath, prId);
+  const tipBound = Boolean(options.reviewTree);
+  const content = await loadFileContent(finding.filename, repoPath, prId, {
+    reviewTree: options.reviewTree,
+  });
   if (content === null) {
     return {
       status: "rejected",
-      note: `cited file "${finding.filename}" does not exist`,
+      note: staleNote(
+        tipBound,
+        tipBound
+          ? `cited file "${finding.filename}" does not exist on tip`
+          : `cited file "${finding.filename}" does not exist`,
+      ),
     };
   }
 
@@ -182,7 +205,12 @@ async function validateLineAndFile(
   if (finding.line > lines.length) {
     return {
       status: "rejected",
-      note: `cited line ${finding.line} is outside file (1..${lines.length})`,
+      note: staleNote(
+        tipBound,
+        tipBound
+          ? `cited line ${finding.line} is outside tip file (1..${lines.length})`
+          : `cited line ${finding.line} is outside file (1..${lines.length})`,
+      ),
     };
   }
 
@@ -200,26 +228,57 @@ async function validateLineAndFile(
   if (missing.length === symbols.length) {
     return {
       status: "rejected",
-      note: `cited symbols ${missing.join(", ")} not found anywhere in "${finding.filename}"`,
+      note: staleNote(
+        tipBound,
+        tipBound
+          ? `cited symbols ${missing.join(", ")} not found in tip content of "${finding.filename}"`
+          : `cited symbols ${missing.join(", ")} not found anywhere in "${finding.filename}"`,
+      ),
     };
   }
 
   return null;
 }
 
+export interface LoadFileContentOptions {
+  reviewTree?: ReviewTree;
+}
+
+/**
+ * Load cited file bytes for verifier / skeptic.
+ *
+ * When `reviewTree` is set, tip content is the only source — ambient
+ * host checkout is never consulted (avoids main-vs-tip split-brain).
+ * Without a tree: disk first, then PrFile fallback (legacy path).
+ */
 export async function loadFileContent(
   filename: string,
   repoPath: string,
   prId: string,
+  options: LoadFileContentOptions = {},
 ): Promise<string | null> {
+  if (options.reviewTree) {
+    try {
+      return await options.reviewTree.readFile(filename);
+    } catch (err) {
+      console.warn(
+        `[verifier] tip readFile failed for ${filename}:`,
+        (err as Error).message,
+      );
+      return null;
+    }
+  }
+
   // 1) Preferred: disk read. Works for local-path repos and any other
   //    case where repoPath actually points at a directory the host can
   //    open. filename is LLM-cited via submitReview — untrusted.
   //    safeReadFileSync resolves + opens + reads in one step with
   //    O_NOFOLLOW, closing the TOCTOU window that resolveSafePath +
   //    readFileSync would leave open.
-  const fromDisk = safeReadFileSync(repoPath, filename);
-  if (fromDisk !== null) return fromDisk;
+  if (repoPath) {
+    const fromDisk = safeReadFileSync(repoPath, filename);
+    if (fromDisk !== null) return fromDisk;
+  }
 
   // 2) Fallback: read modifiedContent from the PrFile table.
   //    Necessary for remote-volume repos where the cloned code only
@@ -282,17 +341,18 @@ function classifyFamily(finding: CandidateFinding): Family | null {
   return null;
 }
 
-function retrieveCounterEvidence(
+async function retrieveCounterEvidence(
   finding: CandidateFinding,
   family: Family,
   repoPath: string,
-): string[] {
+  reviewTree?: ReviewTree,
+): Promise<string[]> {
   const patterns = COUNTER_EVIDENCE_PATTERNS[family].map((p) => new RegExp(p, "i"));
   const candidates = candidateCounterEvidenceFiles(finding, family);
   const hits: string[] = [];
 
   for (const file of candidates) {
-    const content = loadRelativeFile(repoPath, file);
+    const content = await loadRelativeFile(repoPath, file, reviewTree);
     if (!content) continue;
 
     const lines = content.split("\n");
@@ -342,14 +402,22 @@ function candidateCounterEvidenceFiles(finding: CandidateFinding, family: Family
   return [...files];
 }
 
-function loadRelativeFile(repoPath: string, relativePath: string): string | null {
-  // Counter-evidence file paths come from candidateCounterEvidenceFiles
-  // (repo-relative, hardcoded) — but delegate to safeReadFileSync anyway
-  // for consistency with loadFileContent above. The previous
-  // `startsWith(resolvedRepoPath + path.sep)` check was the lexical-prefix
-  // anti-pattern pathSafety.ts:18 warns against (sibling-directory escape
-  // like /home/u/myrepo-vs-/home/u/myrepo-secrets), and also broke on
-  // Windows path.sep and case-insensitive filesystems.
+async function loadRelativeFile(
+  repoPath: string,
+  relativePath: string,
+  reviewTree?: ReviewTree,
+): Promise<string | null> {
+  // Counter-evidence paths are repo-relative (hardcoded product paths +
+  // the cited file). Prefer tip tree when present so Stage B cannot load
+  // ambient main while tools reviewed tip.
+  if (reviewTree) {
+    try {
+      return await reviewTree.readFile(relativePath);
+    } catch {
+      return null;
+    }
+  }
+  if (!repoPath) return null;
   return safeReadFileSync(repoPath, relativePath);
 }
 

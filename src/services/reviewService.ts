@@ -13,6 +13,13 @@ import { rerateWithSurvivors } from "@/src/services/findingVerifier/skepticRerat
 import { reasoningOptions, supportsJsonResponseFormat } from "@/src/lib/llmResponseFormat";
 import { completeReviewRun, setReviewRunTokens, setReviewRunLastCheckpointAt, setReviewChunkLastCheckpointAt } from "@/src/lib/reviewFreshness";
 import { safeReadFileSync, resolveSafePath } from "@/src/lib/pathSafety";
+import type { ReviewTree } from "@/src/lib/reviewTree";
+import {
+  planHostTier1,
+  planTier2,
+  planTier2BindRoot,
+  resolveCheckHeadSha,
+} from "@/src/lib/tipAlignedChecks";
 import {
   runDeterministicChecks,
   runContainerizedChecks,
@@ -873,6 +880,12 @@ export interface RunPrScanOptions {
    * running tsc/eslint/container-tests once per chunk.
    */
   precomputedFindings?: DeterministicFinding[];
+  /**
+   * Tip-bound review tree from ensureReviewTree. When set, the agent
+   * readFile tool reads tip content via this seam instead of ambient
+   * repo.path / localPath / fake container host paths.
+   */
+  reviewTree?: ReviewTree;
 }
 
 /**
@@ -1091,35 +1104,22 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
   const diffPayload = codePayload +
     (contextPayload ? `\n\n=== CONTEXT FILES (NOT REVIEWABLE — DO NOT CITE IN FINDINGS) ===\n${contextPayload}\n` : "");
 
-  // 5a. Build system detection — host checkout only. Remote/volume repos
-  //     skip host probes (stale/empty mirrors would report "unknown" and
-  //     incorrectly disable Tier 2). They use repo.runnerImage + container Tier 2.
-  let runnerImage = repo.runnerImage ?? "node:20-alpine";
-  let buildSystemWarn: string | null = null;
-  let tier2Supported = true;
-  if (shouldRunHostTier1(repo) && repo?.path) {
-    try {
-      const detected = await detectBuildSystem(repo.path);
-      runnerImage = detected.image;
-      buildSystemWarn = detected.warn;
-      if (detected.buildSystem !== "node") {
-        tier2Supported = false;
-      }
-      void logReview(
-        prId, `Build system: ${detected.buildSystem} → ${detected.image}${detected.warn ? ` (${detected.warn})` : ""}`,
-        "info", reviewRunId, reviewChunkId,
-      );
-    } catch (err: any) {
-      console.warn(`[scan] runPrScan: build system detection crashed:`, err);
-    }
-  }
+  // Tip head SHA shared by tools, Tier 1, and Tier 2 (commit identity).
+  const checkHeadSha = resolveCheckHeadSha({
+    tipHeadSha: options?.reviewTree?.headSha,
+    reviewRunCommitHash: options?.checkpointMetadata?.commitHash,
+    prCommitHash: pr.commitHash,
+  });
 
   let deterministicFindings: DeterministicFinding[] = [];
   let tier1HadErrors = false;
+  let runnerImage = repo.runnerImage ?? "node:20-alpine";
+  let buildSystemWarn: string | null = null;
+  let tier2Supported = true;
 
   if (options?.precomputedFindings) {
     // Large-PR mode: Tier 1+2 already ran globally before the chunk loop.
-    // Use those findings directly; skip the Tier 1+2 pipeline entirely.
+    // Skip planHostTier1 entirely — do not materialize per-chunk worktrees.
     deterministicFindings = options.precomputedFindings;
     void logReview(
       prId,
@@ -1129,32 +1129,68 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
       reviewChunkId,
     );
   } else {
+    // Materialize tip tree for host Tier 1 (or skip with explicit reason).
+    // Never lint ambient main while reviewing another tip.
+    const tier1Plan = planHostTier1(repo, checkHeadSha);
+    // Tier 2 bind must never be ambient checkout (container rw install).
+    const tier2Bind = planTier2BindRoot(tier1Plan, {
+      cloneUrl: repo?.cloneUrl,
+      repoPath: repo?.path,
+    });
+    let tipRootForTier2: string | null = tier2Bind.path;
+    const cleanupTipTrees = () => {
+      try {
+        tier2Bind.cleanup?.();
+      } finally {
+        if (tier1Plan.action === "run") tier1Plan.cleanup?.();
+      }
+    };
+
+    // 5a. Build system detection — tip tree only when host Tier 1 is planned.
+    //     Remote/volume repos skip host probes (stale/empty mirrors would report
+    //     "unknown" and incorrectly disable Tier 2). They use repo.runnerImage.
+    if (tier1Plan.action === "run") {
+      try {
+        const detected = await detectBuildSystem(tier1Plan.rootPath);
+        runnerImage = detected.image;
+        buildSystemWarn = detected.warn;
+        if (detected.buildSystem !== "node") {
+          tier2Supported = false;
+        }
+        void logReview(
+          prId, `Build system: ${detected.buildSystem} → ${detected.image}${detected.warn ? ` (${detected.warn})` : ""} [tip=${tier1Plan.source}]`,
+          "info", reviewRunId, reviewChunkId,
+        );
+      } catch (err: any) {
+        console.warn(`[scan] runPrScan: build system detection crashed:`, err);
+      }
+    }
+
     // 5b-c. Tier 1 + Tier 2 via StepPipeline with retry-on-infrastructure-error.
     //       Critical: false means code errors collect as findings and continue.
     //       Infrastructure errors that exhaust retries cause a hard abort before
     //       the LLM is ever called, matching the "no rating written" invariant.
     const pipeline = new StepPipeline();
 
-    // Tier 1: host tsc/eslint. Skipped for remote/volume-backed repos (Tier 2 only).
+    // Tier 1: host tsc/eslint on tip tree only (never ambient wrong branch).
     pipeline.addStep({
       name: "Tier1: tsc/eslint",
       critical: false,
       maxRetries: 2,
       fn: async () => {
-        if (!shouldRunHostTier1(repo)) {
-          if (repo?.cloneUrl || repo?.localPath === "/workspace") {
-            void logReview(
-              prId,
-              "Tier 1 skipped: remote/volume-backed repo uses container Tier 2 only",
-              "info",
-              reviewRunId,
-              reviewChunkId,
-            );
-          }
+        if (tier1Plan.action === "skip") {
+          void logReview(
+            prId,
+            `Tier 1 skipped: ${tier1Plan.reason}`,
+            "info",
+            reviewRunId,
+            reviewChunkId,
+          );
+          console.log(`[scan] runPrScan: Tier 1 skipped — ${tier1Plan.reason}`);
           return { ok: true, data: [] as DeterministicFinding[] };
         }
         try {
-          const findings = await runDeterministicChecks(repo!.path!);
+          const findings = await runDeterministicChecks(tier1Plan.rootPath);
           tier1HadErrors = findings.some((f) => f.severity === "error");
           const counts = findings.reduce((acc, f) => {
             acc[f.source] = (acc[f.source] ?? 0) + 1; return acc;
@@ -1162,8 +1198,14 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
           const summary = Object.keys(counts).length === 0
             ? "clean (no tsc/eslint findings)"
             : Object.entries(counts).map(([k, v]) => `${v} ${k}`).join(", ");
-          void logReview(prId, `Tier 1 deterministic checks: ${summary}`, "info", reviewRunId, reviewChunkId);
-          console.log(`[scan] runPrScan: Tier 1 deterministic checks → ${findings.length} finding(s)`);
+          void logReview(
+            prId,
+            `Tier 1 deterministic checks (${tier1Plan.source} @ ${checkHeadSha.slice(0, 12)}): ${summary}`,
+            "info",
+            reviewRunId,
+            reviewChunkId,
+          );
+          console.log(`[scan] runPrScan: Tier 1 deterministic checks → ${findings.length} finding(s) source=${tier1Plan.source}`);
           return { ok: true, data: findings };
         } catch (err: any) {
           console.warn(`[scan] runPrScan: Tier 1 deterministic checks crashed:`, err);
@@ -1176,29 +1218,25 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
       },
     });
 
-    // Tier 2: containerized checks (install + test/lint in ephemeral container).
-    //         Gated: skipped when Tier 1 found errors (uncompilable code), when
-    //         the per-repo "Skip Tier 2" toggle is enabled, or when the build
-    //         system is not Node.js (only node images ship with working commands).
+    // Tier 2: containerized checks at the same head SHA tools use.
+    //         Local-only: bind-mount tip tree or skip clearly (no empty URL sync).
     pipeline.addStep({
       name: "Tier2: container checks",
       critical: false,
       maxRetries: 2,
       fn: async () => {
-        const skipTier2 = repo?.skipTier2 ?? false;
-        const tier2ShouldRun =
-          (Boolean(repo?.path) || Boolean(repo?.cloneUrl)) &&
-          !skipTier2 && !tier1HadErrors && tier2Supported;
-        if (!tier2ShouldRun) {
-          const reason = skipTier2
-            ? "per-repo toggle"
-            : tier1HadErrors
-              ? "Tier 1 found errors"
-              : !tier2Supported
-                ? "unsupported build system (non-Node.js)"
-                : "no repo path or clone URL";
-          void logReview(prId, `Tier 2 skipped: ${reason}`, "info", reviewRunId, reviewChunkId);
-          console.log(`[scan] runPrScan: Tier 2 skipped — ${reason}`);
+        const tier2Plan = planTier2({
+          headSha: checkHeadSha,
+          cloneUrl: repo?.cloneUrl,
+          tipRootPath: tipRootForTier2,
+          skipTier2: repo?.skipTier2 ?? false,
+          tier1HadErrors,
+          tier2Supported,
+          hasPathOrClone: Boolean(repo?.path) || Boolean(repo?.cloneUrl),
+        });
+        if (tier2Plan.action === "skip") {
+          void logReview(prId, `Tier 2 skipped: ${tier2Plan.reason}`, "info", reviewRunId, reviewChunkId);
+          console.log(`[scan] runPrScan: Tier 2 skipped — ${tier2Plan.reason}`);
           return { ok: true, data: [] as DeterministicFinding[] };
         }
         try {
@@ -1211,13 +1249,14 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
           if (repo?.patCipher && repo?.patIv && repo?.patTag && hasMasterKey()) {
             pat = decryptSecret(repo.patCipher, repo.patIv, repo.patTag);
           }
-          const tier2Image = shouldRunHostTier1(repo) && repo.path
+          const tier2Image = shouldRunHostTier1(repo) && tipRootForTier2
             ? runnerImage
             : (repo.runnerImage ?? "node:20-alpine");
           const tier2Findings = await runContainerizedChecks({
             repoId: repo.id,
-            cloneUrl: repo.cloneUrl ?? "",
-            commitHash: pr.commitHash,
+            cloneUrl: tier2Plan.action === "sync" ? tier2Plan.cloneUrl : "",
+            commitHash: tier2Plan.commitHash,
+            hostBindPath: tier2Plan.action === "bind" ? tier2Plan.hostPath : undefined,
             deployKey,
             pat,
             runnerImage: tier2Image,
@@ -1227,7 +1266,7 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
             reviewRunId,
             reviewChunkId,
           });
-          console.log(`[scan] runPrScan: Tier 2 containerized checks → ${tier2Findings.length} finding(s)`);
+          console.log(`[scan] runPrScan: Tier 2 containerized checks → ${tier2Findings.length} finding(s) head=${tier2Plan.commitHash.slice(0, 12)} mode=${tier2Plan.action}`);
           return { ok: true, data: tier2Findings };
         } catch (err: any) {
           console.warn(`[scan] runPrScan: Tier 2 containerized checks crashed:`, err);
@@ -1240,33 +1279,39 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
     // Run the pipeline — retries on infrastructure errors, aborts if they
     // persist (infrastructure_failure), collects findings from code errors
     // and continues for non-critical steps.
-    const pipelineResult = await pipeline.run();
-    deterministicFindings = pipelineResult.findings;
+    try {
+      const pipelineResult = await pipeline.run();
+      deterministicFindings = pipelineResult.findings;
 
-    if (pipelineResult.aborted) {
-      const isInfra = pipelineResult.infrastructureFailure;
-      const stepName = pipelineResult.lastStepName ?? "unknown";
-      void logReview(
-        prId, `Pipeline aborted at step "${stepName}"${isInfra ? " (infrastructure failure)" : ""} — aborting scan`,
-        "error", reviewRunId, reviewChunkId,
-      );
-      console.log(`[scan] runPrScan: pipeline aborted at step "${stepName}" (infrastructure=${isInfra})`);
-      if (reviewRunId && !reviewChunkId) {
-        await completeReviewRun(reviewRunId, { status: "failed" });
+      if (pipelineResult.aborted) {
+        const isInfra = pipelineResult.infrastructureFailure;
+        const stepName = pipelineResult.lastStepName ?? "unknown";
+        void logReview(
+          prId, `Pipeline aborted at step "${stepName}"${isInfra ? " (infrastructure failure)" : ""} — aborting scan`,
+          "error", reviewRunId, reviewChunkId,
+        );
+        console.log(`[scan] runPrScan: pipeline aborted at step "${stepName}" (infrastructure=${isInfra})`);
+        if (reviewRunId && !reviewChunkId) {
+          await completeReviewRun(reviewRunId, { status: "failed" });
+        }
+        if (!reviewChunkId) {
+          await prisma.pullRequest.updateMany({ where: { id: prId }, data: { status: "Failed" } });
+        }
+        return {
+          success: false,
+          rating: null,
+          findings: deterministicFindings,
+          usedModel: "none",
+          systemWarn: isInfra
+            ? `Infrastructure failure in step "${stepName}". Check server logs and try again.`
+            : `Scan aborted at step "${stepName}".`,
+          infrastructureFailure: isInfra,
+        };
       }
-      if (!reviewChunkId) {
-        await prisma.pullRequest.updateMany({ where: { id: prId }, data: { status: "Failed" } });
-      }
-      return {
-        success: false,
-        rating: null,
-        findings: deterministicFindings,
-        usedModel: "none",
-        systemWarn: isInfra
-          ? `Infrastructure failure in step "${stepName}". Check server logs and try again.`
-          : `Scan aborted at step "${stepName}".`,
-        infrastructureFailure: isInfra,
-      };
+    } finally {
+      // Drop tip worktree(s) after Tier 1+2 (bind path no longer needed).
+      cleanupTipTrees();
+      tipRootForTier2 = null;
     }
   }
 
@@ -1532,35 +1577,56 @@ ${diffPayload}${deterministicPayload}`;
                       resultSummary = `${scored.length} results`;
                     }
                   } else if (fnName === "readFile") {
-                    if (repo) {
-                      const repoPath = repo.localPath || repo.path;
-                      if (repoPath) {
-                        if (typeof fnArgs.filePath !== "string" || fnArgs.filePath.trim() === "") {
-                          toolResult = "Error: readFile requires a non-empty 'filePath' string argument (repo-relative). Call readFile again with {\"filePath\": \"src/path/to/file.ts\"}.";
-                          resultSummary = "blocked: missing filePath";
+                    if (typeof fnArgs.filePath !== "string" || fnArgs.filePath.trim() === "") {
+                      toolResult = "Error: readFile requires a non-empty 'filePath' string argument (repo-relative). Call readFile again with {\"filePath\": \"src/path/to/file.ts\"}.";
+                      resultSummary = "blocked: missing filePath";
+                    } else {
+                      // Prefer tip-bound review tree (ensureReviewTree seam).
+                      // Ambient repo.path / localPath / /workspace must not
+                      // supply tip content without that seam.
+                      let content: string | null = null;
+                      let pathEscaped = false;
+                      let readBlocked: string | null = null;
+                      const tree = options?.reviewTree;
+                      if (tree) {
+                        content = await tree.readFile(fnArgs.filePath);
+                      } else if (repo) {
+                        // Legacy fallback only when scan did not pin a tree
+                        // (tests / older entry points). Still path-sandboxed.
+                        const repoPath = repo.localPath || repo.path;
+                        if (repoPath && repoPath !== "/workspace") {
+                          content = safeReadFileSync(repoPath, fnArgs.filePath);
+                          pathEscaped = content === null && resolveSafePath(repoPath, fnArgs.filePath) === null;
+                        } else if (repoPath === "/workspace") {
+                          readBlocked = "Error: Container path /workspace is not a host tip tree. Scan must pin ensureReviewTree before readFile.";
+                          resultSummary = "blocked: no review tree";
                         } else {
-                          const content = safeReadFileSync(repoPath, fnArgs.filePath);
-                          if (content === null) {
-                            const escaped = resolveSafePath(repoPath, fnArgs.filePath) === null;
-                            toolResult = escaped
-                              ? "Error: Path traversal detected. Access to paths outside the repository is strictly forbidden."
-                              : "Error: File not found.";
-                          } else {
-                            readfileCharsThisScan += content.length;
-                            if (readfileCharsThisScan > READFILE_BUDGET_CHARS) {
-                              toolResult = `Error: Cumulative readFile budget (${READFILE_BUDGET_CHARS} chars) exceeded for this review. Use searchCodebase or grep for further exploration.`;
-                              resultSummary = `blocked: budget exceeded`;
-                            } else {
-                              const addLineNumbers = (text: string) => text.split("\n").map((line, i) => `${i + 1}: ${line}`).join("\n");
-                              const lines = content.split("\n");
-                              const truncLines = lines.slice(0, 1000);
-                              toolResult = addLineNumbers(truncLines.join("\n")) + (lines.length > 1000 ? "\n...[TRUNCATED]" : "");
-                              resultSummary = `Read ${truncLines.length} lines from ${fnArgs.filePath}`;
-                            }
-                          }
+                          readBlocked = "Error: Repository path not configured.";
+                          resultSummary = "blocked: no path";
                         }
                       } else {
-                        toolResult = "Error: Repository path not configured.";
+                        readBlocked = "Error: Repository path not configured.";
+                        resultSummary = "blocked: no repo";
+                      }
+                      if (readBlocked) {
+                        toolResult = readBlocked;
+                      } else if (content === null) {
+                        toolResult = pathEscaped
+                          ? "Error: Path traversal detected. Access to paths outside the repository is strictly forbidden."
+                          : "Error: File not found.";
+                        resultSummary = pathEscaped ? "blocked: traversal" : "not found";
+                      } else {
+                        readfileCharsThisScan += content.length;
+                        if (readfileCharsThisScan > READFILE_BUDGET_CHARS) {
+                          toolResult = `Error: Cumulative readFile budget (${READFILE_BUDGET_CHARS} chars) exceeded for this review. Use searchCodebase or grep for further exploration.`;
+                          resultSummary = `blocked: budget exceeded`;
+                        } else {
+                          const addLineNumbers = (text: string) => text.split("\n").map((line, i) => `${i + 1}: ${line}`).join("\n");
+                          const lines = content.split("\n");
+                          const truncLines = lines.slice(0, 1000);
+                          toolResult = addLineNumbers(truncLines.join("\n")) + (lines.length > 1000 ? "\n...[TRUNCATED]" : "");
+                          resultSummary = `Read ${truncLines.length} lines from ${fnArgs.filePath}`;
+                        }
                       }
                     }
                   } else {

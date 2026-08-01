@@ -1,5 +1,14 @@
 export interface RunOptions {
-  volumeName: string;
+  /**
+   * Named Docker volume mounted at /workspace. Required unless hostBindPath
+   * is set (local-only tip tree bind-mount).
+   */
+  volumeName?: string;
+  /**
+   * Host path bind-mounted at /workspace (local-only tip worktree). When set,
+   * volumeName is ignored for the mount.
+   */
+  hostBindPath?: string;
   image: string;
   commands: string[]; // e.g. ["npm install", "npm test"]
   timeoutMs?: number;

@@ -8,6 +8,7 @@ import { logReview } from "./logging";
 export interface ContainerizedCheckOptions {
   repoId: string;
   cloneUrl: string;
+  /** Tip head SHA — must match commit identity / tools. */
   commitHash: string;
   deployKey?: string;
   pat?: string;
@@ -17,6 +18,11 @@ export interface ContainerizedCheckOptions {
   prId: string;
   reviewRunId?: string;
   reviewChunkId?: string;
+  /**
+   * Local-only tip tree host path. When set, bind-mounts instead of
+   * git sync (avoids empty clone URL pretend-sync).
+   */
+  hostBindPath?: string;
 }
 
 function volumeName(repoId: string): string {
@@ -49,36 +55,59 @@ export async function runContainerizedChecks(
   const vn = volumeName(opts.repoId);
   const findings: DeterministicFinding[] = [];
   const logs: string[] = [];
+  const hostBindPath = (opts.hostBindPath ?? "").trim() || undefined;
+  const cloneUrl = (opts.cloneUrl ?? "").trim();
 
-  void logReview(
-    opts.prId,
-    `Containerized checks: syncing repository to commit ${opts.commitHash.slice(0, 12)}...`,
-    "info",
-    opts.reviewRunId,
-    opts.reviewChunkId,
-  );
+  // Local-only without bind path: never pretend-sync with empty clone URL.
+  if (!hostBindPath && !cloneUrl) {
+    const msg =
+      "Tier 2 skipped: local-only repo has no clone URL and no tip bind path (not empty-URL pretend-sync)";
+    void logReview(opts.prId, msg, "info", opts.reviewRunId, opts.reviewChunkId);
+    return [skippedFinding("runner", msg)];
+  }
 
-  try {
-    await gitService.syncToCommit({
-      repoId: opts.repoId,
-      volumeName: vn,
-      cloneUrl: opts.cloneUrl,
-      commitHash: opts.commitHash,
-      deployKey: opts.deployKey,
-      pat: opts.pat,
-    });
-  } catch (err: any) {
+  if (hostBindPath) {
     void logReview(
       opts.prId,
-      `Containerized checks: git sync failed — ${err.message}`,
-      "warn",
+      `Containerized checks: bind-mount tip tree at ${hostBindPath} (head ${opts.commitHash.slice(0, 12)})...`,
+      "info",
       opts.reviewRunId,
       opts.reviewChunkId,
     );
-    return [skippedFinding("tsc", `Git sync failed: ${err.message}`)];
+  } else {
+    void logReview(
+      opts.prId,
+      `Containerized checks: syncing repository to commit ${opts.commitHash.slice(0, 12)}...`,
+      "info",
+      opts.reviewRunId,
+      opts.reviewChunkId,
+    );
+
+    try {
+      await gitService.syncToCommit({
+        repoId: opts.repoId,
+        volumeName: vn,
+        cloneUrl,
+        commitHash: opts.commitHash,
+        deployKey: opts.deployKey,
+        pat: opts.pat,
+      });
+    } catch (err: any) {
+      void logReview(
+        opts.prId,
+        `Containerized checks: git sync failed — ${err.message}`,
+        "warn",
+        opts.reviewRunId,
+        opts.reviewChunkId,
+      );
+      return [skippedFinding("tsc", `Git sync failed: ${err.message}`)];
+    }
   }
 
   const orchestrator = ContainerOrchestrator.getInstance();
+  const mountOpts = hostBindPath
+    ? { hostBindPath }
+    : { volumeName: vn };
 
   const runInstall = async (): Promise<void> => {
     const cmd = opts.installCommand.trim();
@@ -93,7 +122,7 @@ export async function runContainerizedChecks(
     // Do not pass cpuLimit/memoryLimit — orchestrator applies DRAGNET_RUNNER_*
     // env (or no cap). Hardcoding --cpus 2 breaks 1-vCPU Dokploy hosts (exit 125).
     const result = await orchestrator.runRunner({
-      volumeName: vn,
+      ...mountOpts,
       image: opts.runnerImage,
       commands: [cmd],
       timeoutMs: 300_000,
@@ -123,7 +152,7 @@ export async function runContainerizedChecks(
       opts.reviewChunkId,
     );
     const result = await orchestrator.runRunner({
-      volumeName: vn,
+      ...mountOpts,
       image: opts.runnerImage,
       commands: [cmd],
       timeoutMs: 300_000,

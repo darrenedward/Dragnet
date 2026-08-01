@@ -31,12 +31,22 @@ vi.mock("../src/lib/prisma", () => ({
         repoId: "repo-infra",
         title: "Infrastructure Abort PR",
         description: "test",
+        commitHash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       }),
       updateMany,
       update: vi.fn().mockResolvedValue({}),
     },
     repository: {
-      findUnique: vi.fn().mockResolvedValue({ id: "repo-infra", path: "/tmp/repo", localPath: null }),
+      findUnique: vi.fn().mockResolvedValue({
+        id: "repo-infra",
+        path: "/tmp/repo",
+        localPath: null,
+        cloneUrl: null,
+        skipTier2: false,
+        runnerImage: "node:20-alpine",
+        installCommand: "npm install",
+        testCommand: "npm run typecheck && npm run lint",
+      }),
       updateMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
     prFile: { findMany: vi.fn().mockResolvedValue([]) },
@@ -61,6 +71,36 @@ vi.mock("../src/services/deterministicChecks", () => ({
   DEFAULT_INSTALL_COMMAND: "npm install",
   DEFAULT_TEST_COMMAND: "npm run typecheck && npm run lint",
 }));
+
+vi.mock("../src/lib/tipAlignedChecks", async () => {
+  const actual = await vi.importActual<typeof import("../src/lib/tipAlignedChecks")>(
+    "../src/lib/tipAlignedChecks",
+  );
+  return {
+    ...actual,
+    planHostTier1: (
+      repo: { path?: string | null; cloneUrl?: string | null; localPath?: string | null } | null,
+      headSha: string,
+    ) => {
+      const host =
+        Boolean(repo?.path) && !repo?.cloneUrl && repo?.localPath !== "/workspace";
+      if (!host || !repo?.path) {
+        return {
+          action: "skip" as const,
+          headSha,
+          reason: "remote/volume-backed repo uses container Tier 2 only",
+        };
+      }
+      // worktree source so Tier 2 bind reuses path (never ambient rw mount).
+      return {
+        action: "run" as const,
+        rootPath: repo.path,
+        headSha: headSha || "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        source: "worktree" as const,
+      };
+    },
+  };
+});
 
 vi.mock("../src/services/findingVerifier", () => ({
   verifyFindings: vi.fn().mockResolvedValue([]),

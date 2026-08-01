@@ -9,9 +9,16 @@ const mocks = vi.hoisted(() => ({
   mockEnqueue: vi.fn(),
   mockCheckDelivery: vi.fn(),
   mockRunPrScan: vi.fn(),
-  mockAdmitAfkScanJobForPr: vi.fn((input: { prId: string }) => {
-    mocks.mockRunPrScan(input.prId);
-    return Promise.resolve({ jobId: `job-${input.prId}`, prId: input.prId, state: "queued", queuePosition: 1 });
+  mockAdmitAfkAfterTipReady: vi.fn(async (raw: unknown) => {
+    const input = raw as {
+      prIds: string[];
+      event?: { headSha?: string; githubPrNumber?: number };
+    };
+    for (const prId of input.prIds) mocks.mockRunPrScan(prId);
+    return {
+      admitted: input.prIds.length,
+      preferredPrId: input.event?.githubPrNumber != null ? input.prIds[0] ?? null : null,
+    };
   }),
   mockTriggerHostedScan: vi.fn(),
   mockCreateDeliveryLog: vi.fn(),
@@ -40,8 +47,8 @@ vi.mock("@/src/services/reviewService", () => ({
   runPrScan: mocks.mockRunPrScan,
 }));
 
-vi.mock("@/src/services/scanQueue", () => ({
-  admitAfkScanJobForPr: mocks.mockAdmitAfkScanJobForPr,
+vi.mock("@/src/lib/tipReadyAfk", () => ({
+  admitAfkAfterTipReady: (input: unknown) => mocks.mockAdmitAfkAfterTipReady(input),
 }));
 
 vi.mock("@/src/lib/prisma", () => ({
@@ -115,10 +122,15 @@ describe("webhooks/github/route POST", () => {
     mocks.mockCheckDelivery.mockReturnValue(false);
     mocks.mockScanRepoPrs.mockResolvedValue(["pr-1"]);
     mocks.mockRunPrScan.mockResolvedValue(undefined);
-    mocks.mockAdmitAfkScanJobForPr.mockImplementation((input: { prId: string }) => {
-      mocks.mockRunPrScan(input.prId);
-      return Promise.resolve({ jobId: `job-${input.prId}`, prId: input.prId, state: "queued", queuePosition: 1 });
-    });
+    mocks.mockAdmitAfkAfterTipReady.mockImplementation(
+      async (input: { prIds: string[]; event?: { headSha?: string; githubPrNumber?: number } }) => {
+        for (const prId of input.prIds) mocks.mockRunPrScan(prId);
+        return {
+          admitted: input.prIds.length,
+          preferredPrId: input.event?.githubPrNumber != null ? input.prIds[0] ?? null : null,
+        };
+      },
+    );
     mocks.mockCreateDeliveryLog.mockResolvedValue("del-1");
     mocks.mockUpdateDeliveryStatus.mockResolvedValue(undefined);
     mocks.mockTriggerHostedScan.mockResolvedValue({ ok: true, prId: "pr-42" });
@@ -410,7 +422,7 @@ describe("webhooks/github/route POST", () => {
   });
 
   it("does not background-enqueue when AFK admit returns null (auto-rescan off)", async () => {
-    mocks.mockAdmitAfkScanJobForPr.mockResolvedValue(null);
+    mocks.mockAdmitAfkAfterTipReady.mockResolvedValue({ admitted: 0, preferredPrId: null });
     const req = buildRequest({
       event: "push",
       body: {
@@ -419,7 +431,7 @@ describe("webhooks/github/route POST", () => {
     });
     const res = await POST(req);
     expect(res.status).toBe(200);
-    expect(mocks.mockAdmitAfkScanJobForPr).toHaveBeenCalled();
+    expect(mocks.mockAdmitAfkAfterTipReady).toHaveBeenCalled();
     expect(mocks.mockRunPrScan).not.toHaveBeenCalled();
     const body = await res.json();
     expect(body.afkScans).toBe(0);
@@ -427,7 +439,7 @@ describe("webhooks/github/route POST", () => {
 
   it("marks delivery failed when AFK admit throws", async () => {
     mocks.mockCreateDeliveryLog.mockResolvedValue("delivery-afk");
-    mocks.mockAdmitAfkScanJobForPr.mockRejectedValue(new Error("queue down"));
+    mocks.mockAdmitAfkAfterTipReady.mockRejectedValue(new Error("queue down"));
     const req = buildRequest({
       event: "push",
       body: {
@@ -444,6 +456,51 @@ describe("webhooks/github/route POST", () => {
       "failed",
       expect.stringContaining("afk-admit-failed"),
     );
+  });
+
+  it("passes event PR tip (number + head.sha) into tip-ready AFK admit", async () => {
+    const req = buildRequest({
+      event: "pull_request",
+      body: {
+        action: "synchronize",
+        repository: { clone_url: "https://github.com/owner/repo.git" },
+        pull_request: {
+          number: 42,
+          head: { ref: "feat/x", sha: "abc123def4567890abc123def4567890abc123de" },
+          base: { ref: "main" },
+        },
+      },
+    });
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+    expect(mocks.mockAdmitAfkAfterTipReady).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prIds: ["pr-1"],
+        triggerReason: "webhook",
+        event: expect.objectContaining({
+          githubPrNumber: 42,
+          headSha: "abc123def4567890abc123def4567890abc123de",
+          headRef: "feat/x",
+          baseRef: "main",
+        }),
+      }),
+    );
+  });
+
+  it("does not call tip-ready AFK admit when clone fails", async () => {
+    mocks.mockGitFetch.mockResolvedValue(false);
+    const req = buildRequest({
+      event: "pull_request",
+      body: {
+        action: "opened",
+        repository: { clone_url: "https://github.com/owner/repo.git" },
+        pull_request: { number: 1, head: { sha: "x", ref: "f" }, base: { ref: "main" } },
+      },
+    });
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+    expect(mocks.mockAdmitAfkAfterTipReady).not.toHaveBeenCalled();
+    expect(mocks.mockRunPrScan).not.toHaveBeenCalled();
   });
 
   it("returns ignored for unknown events", async () => {

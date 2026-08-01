@@ -200,7 +200,7 @@ describe("server polling PR discovery", () => {
     expect(triggerScan).not.toHaveBeenCalled();
   });
 
-  it("ignores open PRs targeting a branch other than the repository base", async () => {
+  it("discovers open PRs targeting a branch other than the repository base (stacked)", async () => {
     fetchSpy = vi.spyOn(global, "fetch").mockResolvedValueOnce(response([
       { number: 14, ref: "release-fix", sha: "release-sha", baseRef: "release" },
       { number: 15, ref: "main-fix", sha: "main-sha", baseRef: "main" },
@@ -208,11 +208,14 @@ describe("server polling PR discovery", () => {
 
     await pollOnce(triggerScan);
 
-    expect(mockCreate).toHaveBeenCalledTimes(1);
+    expect(mockCreate).toHaveBeenCalledTimes(2);
+    expect(mockCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({ githubPrNumber: 14, targetBranch: "release" }),
+    });
     expect(mockCreate).toHaveBeenCalledWith({
       data: expect.objectContaining({ githubPrNumber: 15, targetBranch: "main" }),
     });
-    expect(triggerScan).toHaveBeenCalledTimes(1);
+    expect(triggerScan).toHaveBeenCalledTimes(2);
   });
 
   it("retries queue admission for an unchanged revision after a transient failure", async () => {

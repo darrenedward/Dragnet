@@ -356,6 +356,8 @@ export async function createReviewRun(opts: {
   prId: string;
   repoId: string;
   commitHash: string;
+  /** PR target tip SHA pinned with head for this run. */
+  baseCommitHash?: string | null;
   diffHash: string;
   reviewConfigHash: string;
   model?: string | null;
@@ -370,6 +372,7 @@ export async function createReviewRun(opts: {
       prId: opts.prId,
       repoId: opts.repoId,
       commitHash: opts.commitHash,
+      baseCommitHash: opts.baseCommitHash ?? null,
       diffHash: opts.diffHash,
       reviewConfigHash: opts.reviewConfigHash,
       status: "in_progress",
