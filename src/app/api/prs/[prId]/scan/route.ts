@@ -204,15 +204,21 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
     // Refresh PR files BEFORE cache check — diffHash needs the files
     // whether we hit cache or run the scan. Sync failure is fail-closed
     // (DIFF_UNAVAILABLE / CLONE_FAILED), never empty-diff success.
-    // Clone sync also happens here (remote-volume), so commit identity
-    // resolve runs after this when objects are available.
+    // refreshPrFiles diffs against the PR target branch tip (not always
+    // the repo default base) and pins the file list to head/base SHAs.
     const repoPath = repo.path;
     const baseBranch = pr.targetBranch || repo.baseBranch || "main";
     let files: any[] = [];
+    let refreshIdentity: { headSha: string; baseSha: string } | null = null;
     if ((repo.path || repo.cloneUrl) && pr.sourceBranch) {
       console.log(`[scan] route: refreshing PR files from git`);
       try {
-        files = await refreshPrFiles(repo, pr.sourceBranch, prId, { failOnSyncError: true });
+        files = await refreshPrFiles(repo, pr.sourceBranch, prId, {
+          failOnSyncError: true,
+          onIdentity: (id) => {
+            refreshIdentity = id;
+          },
+        });
       } catch (syncErr: unknown) {
         const fail = diffUnavailableResult(syncErr, pr.repoId);
         console.log(`[scan] route: diff gate blocked gate=${fail.gate} message=${fail.message}`);
@@ -244,16 +250,22 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
       console.log(`[scan] route: no repoPath or sourceBranch - skipping file refresh`);
     }
 
-    // Pin commit identity (head + base) after clone sync, before LLM / tip reads.
-    let tipIdentity = { headSha: pr.commitHash, baseSha: "" };
+    // Pin commit identity (head + base) consistent with the SHAs used for
+    // the file list / diffs. Prefer identity from refresh when present.
+    let tipIdentity = {
+      headSha: refreshIdentity?.headSha || pr.commitHash,
+      baseSha: refreshIdentity?.baseSha || "",
+    };
     let reviewTree: ReviewTree | null = null;
     if (repo.path || repo.cloneUrl) {
       try {
-        tipIdentity = await resolveCommitIdentity(repo, {
-          commitHash: pr.commitHash,
-          sourceBranch: pr.sourceBranch,
-          targetBranch: pr.targetBranch || repo.baseBranch || "main",
-        });
+        if (!tipIdentity.baseSha || !tipIdentity.headSha) {
+          tipIdentity = await resolveCommitIdentity(repo, {
+            commitHash: pr.commitHash,
+            sourceBranch: pr.sourceBranch,
+            targetBranch: pr.targetBranch || repo.baseBranch || "main",
+          });
+        }
         if (tipIdentity.headSha && tipIdentity.headSha !== pr.commitHash) {
           await prisma.pullRequest.update({
             where: { id: prId },
