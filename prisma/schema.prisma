@@ -136,6 +136,8 @@ model ReviewRun {
   prId             String
   repoId           String
   commitHash       String
+  /// PR target / base tip SHA pinned for this run (tip-review commit identity).
+  baseCommitHash   String?
   diffHash         String
   reviewConfigHash String
   status           String // "in_progress" | "completed" | "failed"
