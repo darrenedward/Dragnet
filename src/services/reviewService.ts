@@ -56,6 +56,13 @@ import {
   writeCheckpoint,
   type CheckpointState,
 } from "@/src/services/checkpointStore";
+import {
+  shouldForceSubmitPath,
+  finishPathNudgeMessage,
+  finishPathToolChoice,
+  formatAttemptEndConsoleLog,
+  formatAttemptEndReviewLog,
+} from "@/src/lib/agenticFinish";
 
 export interface ScanResult {
   success: boolean;
@@ -1430,6 +1437,7 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
         let attemptIterations = 0;
         let attemptMalformedStreak = 0;
         let attemptError: unknown = null;
+        let finalizerAttempted = false;
         // Token accumulators — summed across every chat.completions.create
         // call this attempt makes (main loop + JSON finalizer + fallback
         // finalizer). `response.usage` is null on some OpenAI-compatible
@@ -1462,12 +1470,30 @@ ${diffPayload}${deterministicPayload}`;
           let consecutiveEmptyResponses = 0;
           // Iteration budget comes from the active chat preset (per-preset
           // maxIterations field, default 16). Strong models can be capped at
-          // 8 to save tokens; weaker models keep the full 16.
+          // 8 to save tokens; weaker models keep the full 16. Floor enforced
+          // by resolveMaxIterations / Settings validation (min 4).
           const ITERATION_BUDGET = maxIterations;
 
           while (loopCount < ITERATION_BUDGET && !finalReview) {
             loopCount++;
             attemptIterations = loopCount;
+            const forceFinish = shouldForceSubmitPath(loopCount, ITERATION_BUDGET, Boolean(finalReview));
+            if (forceFinish) {
+              console.log(
+                `[review] finish path: forcing submitReview iteration=${loopCount}/${ITERATION_BUDGET} provider=${name}`,
+              );
+              void logReview(
+                prId,
+                `Finish path: forcing submitReview (${loopCount}/${ITERATION_BUDGET}) — ${name}`,
+                "warn",
+                reviewRunId,
+                reviewChunkId,
+              );
+              messages.push({
+                role: "user",
+                content: finishPathNudgeMessage(),
+              });
+            }
             console.log(`[review] iteration ${loopCount}/${ITERATION_BUDGET} provider=${name}`);
             void logReview(prId, `Iteration ${loopCount}/${ITERATION_BUDGET} — ${name}`, "info", reviewRunId, reviewChunkId);
             const response = await withTimeout(
@@ -1475,7 +1501,7 @@ ${diffPayload}${deterministicPayload}`;
                 model,
                 messages,
                 tools,
-                tool_choice: "auto",
+                tool_choice: forceFinish ? finishPathToolChoice() : "auto",
                 temperature: 0,
                 ...reasoningOptions(model, 16_384),
               } as any, { signal: options?.signal }),
@@ -1712,6 +1738,7 @@ ${diffPayload}${deterministicPayload}`;
 
           if (!finalReview) {
             await assertReviewRunStillActive(reviewRunId);
+            finalizerAttempted = true;
             console.log(`[review] attempting JSON-only finalization provider=${name}`);
             void logReview(prId, `Attempting JSON-only finalization — ${name}`, "info", reviewRunId, reviewChunkId);
             const finalizerMessages = [
@@ -1844,10 +1871,28 @@ ${diffPayload}${deterministicPayload}`;
             completionTokens: attemptCompletionTokens,
             costUsd,
           });
-          console.log(
-            `[review] provider ${name} outcome=${outcome} iterations=${attemptIterations}/${maxIterations} submitReview=${successThisAttempt} malformed=${attemptMalformedStreak}` +
-              ` tokens=${attemptPromptTokens}+${attemptCompletionTokens} cost=$${costUsd.toFixed(6)}` +
-              (attemptError ? ` error=${(attemptError as any)?.message ?? String(attemptError)}` : ""),
+          const endFields = {
+            provider: name,
+            outcome,
+            iterationsUsed: attemptIterations,
+            maxIterations,
+            submitReview: successThisAttempt,
+            malformedCount: attemptMalformedStreak,
+            finalizerAttempted,
+            promptTokens: attemptPromptTokens,
+            completionTokens: attemptCompletionTokens,
+            costUsd,
+            errorMessage: attemptError
+              ? ((attemptError as any)?.message ?? String(attemptError))
+              : null,
+          };
+          console.log(formatAttemptEndConsoleLog(endFields));
+          void logReview(
+            prId,
+            formatAttemptEndReviewLog(endFields),
+            outcome === "success" ? "info" : "warn",
+            reviewRunId,
+            reviewChunkId,
           );
           if (outcome === "quality_failure") {
             recordProviderQualityFailure(breakerRepoPath, endpoint, model, name, pr.repoId);
