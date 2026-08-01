@@ -215,10 +215,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
     const repoPath = repo.path;
     const baseBranch = pr.targetBranch || repo.baseBranch || "main";
     let files: any[] = [];
+    let refreshIdentity: { headSha: string; baseSha: string } | null = null;
     if ((repo.path || repo.cloneUrl) && pr.sourceBranch) {
       console.log(`[scan] route: refreshing PR files from git`);
       try {
-        files = await refreshPrFiles(repo, pr.sourceBranch, prId, { failOnSyncError: true });
+        // Diff vs PR target tip; pin file list to head/base SHAs (stacked-safe).
+        files = await refreshPrFiles(repo, pr.sourceBranch, prId, {
+          failOnSyncError: true,
+          onIdentity: (id) => {
+            refreshIdentity = id;
+          },
+        });
       } catch (syncErr: unknown) {
         const fail = diffUnavailableResult(syncErr, pr.repoId);
         console.log(`[scan] route: diff gate blocked gate=${fail.gate} message=${fail.message}`);
@@ -252,16 +259,21 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
 
     // Pin commit identity (head + base) after clone sync, before LLM / tip reads.
     // Tip overlay is built next so graph tools match head (not volume-on-main).
-    let tipIdentity = { headSha: pr.commitHash, baseSha: "" };
+    let tipIdentity = {
+      headSha: refreshIdentity?.headSha || pr.commitHash,
+      baseSha: refreshIdentity?.baseSha || "",
+    };
     let reviewTree: ReviewTree | null = null;
     let tipOverlay: TipOverlay | null = null;
     if (repo.path || repo.cloneUrl) {
       try {
-        tipIdentity = await resolveCommitIdentity(repo, {
-          commitHash: pr.commitHash,
-          sourceBranch: pr.sourceBranch,
-          targetBranch: pr.targetBranch || repo.baseBranch || "main",
-        });
+        if (!tipIdentity.baseSha || !tipIdentity.headSha) {
+          tipIdentity = await resolveCommitIdentity(repo, {
+            commitHash: pr.commitHash,
+            sourceBranch: pr.sourceBranch,
+            targetBranch: pr.targetBranch || repo.baseBranch || "main",
+          });
+        }
         if (tipIdentity.headSha && tipIdentity.headSha !== pr.commitHash) {
           await prisma.pullRequest.update({
             where: { id: prId },

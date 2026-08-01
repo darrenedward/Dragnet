@@ -15,6 +15,16 @@ import { completeReviewRun, setReviewRunTokens, setReviewRunLastCheckpointAt, se
 import { safeReadFileSync, resolveSafePath } from "@/src/lib/pathSafety";
 import type { ReviewTree } from "@/src/lib/reviewTree";
 import {
+  searchTipOverlay,
+  getTipOverlayCallers,
+  findTipOverlaySimilar,
+  mergeSymbolSearchResults,
+  mergeCallerResults,
+  isTipOverlayFresh,
+  type TipOverlay,
+  type GraphSymbolHit,
+} from "@/src/lib/tipOverlay";
+import {
   planHostTier1,
   planTier2,
   planTier2BindRoot,
@@ -886,6 +896,11 @@ export interface RunPrScanOptions {
    * repo.path / localPath / fake container host paths.
    */
   reviewTree?: ReviewTree;
+  /**
+   * Scan-scoped tip overlay (changed files + neighbors at head). Graph
+   * tools prefer overlay symbols/edges over the base index.
+   */
+  tipOverlay?: TipOverlay;
 }
 
 /**

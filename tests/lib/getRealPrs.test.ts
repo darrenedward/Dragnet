@@ -110,16 +110,9 @@ describe("getRealPrs — local-path mode", () => {
           exitCode: 0,
         };
       }
-      if (args[0] === "merge-base" && args[1] === "--is-ancestor") {
+      if (args[0] === "merge-base") {
         // not merged
         return { stdout: "", stderr: "fatal: not a merge base", exitCode: 1 };
-      }
-      if (args[0] === "merge-base") {
-        return {
-          stdout: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n",
-          stderr: "",
-          exitCode: 0,
-        };
       }
       if (args[0] === "diff" && args[1] === "--name-status") {
         return { stdout: "M\tx.ts\n", stderr: "", exitCode: 0 };
@@ -175,15 +168,8 @@ describe("getRealPrs — remote-volume mode (uses runGitInRepo)", () => {
           exitCode: 0,
         };
       }
-      if (args[0] === "merge-base" && args[1] === "--is-ancestor") {
-        return { stdout: "", stderr: "not merged", exitCode: 1 };
-      }
       if (args[0] === "merge-base") {
-        return {
-          stdout: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n",
-          stderr: "",
-          exitCode: 0,
-        };
+        return { stdout: "", stderr: "not merged", exitCode: 1 };
       }
       if (args[0] === "diff" && args[1] === "--name-status") {
         return { stdout: "", stderr: "", exitCode: 0 }; // no files
@@ -237,15 +223,8 @@ describe("getRealPrs — remote-volume mode (uses runGitInRepo)", () => {
           exitCode: 0,
         };
       }
-      if (args[0] === "merge-base" && args[1] === "--is-ancestor") {
-        return { stdout: "", stderr: "not merged", exitCode: 1 }; // not merged
-      }
       if (args[0] === "merge-base") {
-        return {
-          stdout: "cccccccccccccccccccccccccccccccccccccccc\n",
-          stderr: "",
-          exitCode: 0,
-        };
+        return { stdout: "", stderr: "not merged", exitCode: 1 }; // not merged
       }
       if (args[0] === "diff" && args[1] === "--name-status") {
         return { stdout: "", stderr: "", exitCode: 0 }; // 0 files changed
@@ -392,16 +371,10 @@ describe("refreshPrFiles — concurrent call chaining (issue #13)", () => {
       if (args[0] === "show-ref" && args[2] === "refs/heads/main") {
         return { stdout: "", stderr: "", exitCode: 0 };
       }
-      // Plain merge-base (not --is-ancestor) must return a SHA so tip-aligned
-      // three-dot diffs are not fail-closed as merge-base-unavailable.
-      if (args[0] === "merge-base" && args[1] !== "--is-ancestor") {
-        return {
-          stdout: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n",
-          stderr: "",
-          exitCode: 0,
-        };
+      if (args[0] === "merge-base") {
+        return { stdout: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n", stderr: "", exitCode: 0 };
       }
-      if (args[0] === "rev-parse" && args[1] === "--is-shallow-repository") {
+      if (args[0] === "rev-parse" && args.includes("--is-shallow-repository")) {
         return { stdout: "false\n", stderr: "", exitCode: 0 };
       }
       if (args[0] === "diff" && args[1] === "--name-status") {
