@@ -91,11 +91,12 @@ vi.mock("../src/lib/tipAlignedChecks", async () => {
           reason: "remote/volume-backed repo uses container Tier 2 only",
         };
       }
+      // worktree source so Tier 2 bind reuses path (never ambient rw mount).
       return {
         action: "run" as const,
         rootPath: repo.path,
         headSha: headSha || "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        source: "ambient-tip" as const,
+        source: "worktree" as const,
       };
     },
   };

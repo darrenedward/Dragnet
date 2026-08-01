@@ -2,7 +2,6 @@ import {
   runDeterministicChecks,
   runContainerizedChecks,
   logReview,
-  shouldRunHostTier1,
   DEFAULT_INSTALL_COMMAND,
   DEFAULT_TEST_COMMAND,
   type DeterministicFinding,
@@ -10,6 +9,7 @@ import {
 import {
   planHostTier1,
   planTier2,
+  planTier2BindRoot,
   resolveCheckHeadSha,
 } from "@/src/lib/tipAlignedChecks";
 import { detectBuildSystem } from "@/src/lib/buildsystemDetect";
@@ -69,10 +69,19 @@ export async function runGlobalDeterministicChecks(
 
   const findings: DeterministicFinding[] = [];
   const tier1Plan = planHostTier1(repo, checkHeadSha);
-  let tipRootForTier2: string | null =
-    tier1Plan.action === "run" ? tier1Plan.rootPath : null;
-  const cleanupTier1Tree =
-    tier1Plan.action === "run" ? tier1Plan.cleanup : undefined;
+  // Never bind ambient checkout for Tier 2 (container rw install pollutes host).
+  const tier2Bind = planTier2BindRoot(tier1Plan, {
+    cloneUrl: repo.cloneUrl,
+    repoPath: repo.path,
+  });
+  let tipRootForTier2: string | null = tier2Bind.path;
+  const cleanupTipTrees = () => {
+    try {
+      tier2Bind.cleanup?.();
+    } finally {
+      if (tier1Plan.action === "run") tier1Plan.cleanup?.();
+    }
+  };
 
   try {
     // Tier 1: host tsc/eslint only on tip-aligned tree (never ambient wrong branch).
@@ -149,9 +158,7 @@ export async function runGlobalDeterministicChecks(
         if (repo.patCipher && repo.patIv && repo.patTag && hasMasterKey()) {
           pat = decryptSecret(repo.patCipher, repo.patIv, repo.patTag);
         }
-        const tier2Image = shouldRunHostTier1(repo) && tipRootForTier2
-          ? (repo.runnerImage ?? "node:20-alpine")
-          : (repo.runnerImage ?? "node:20-alpine");
+        const tier2Image = repo.runnerImage ?? "node:20-alpine";
 
         const tier2Result = await withRetry<DeterministicFinding[]>(
           async () => {
@@ -204,7 +211,7 @@ export async function runGlobalDeterministicChecks(
       findings,
     };
   } finally {
-    cleanupTier1Tree?.();
+    cleanupTipTrees();
     tipRootForTier2 = null;
   }
 }

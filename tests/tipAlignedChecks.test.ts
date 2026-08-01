@@ -7,6 +7,7 @@ import {
   resolveCheckHeadSha,
   planHostTier1,
   planTier2,
+  planTier2BindRoot,
   materializeTipWorktree,
   ensureMergeBase,
   readLocalHead,
@@ -137,6 +138,65 @@ describe("planHostTier1", () => {
       source: "worktree",
       headSha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     });
+  });
+});
+
+describe("planTier2BindRoot", () => {
+  const head = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+  it("reuses Tier 1 worktree path for bind", () => {
+    const bind = planTier2BindRoot(
+      {
+        action: "run",
+        rootPath: "/tmp/tip-wt",
+        headSha: head,
+        source: "worktree",
+      },
+      { cloneUrl: null },
+    );
+    expect(bind.path).toBe("/tmp/tip-wt");
+    expect(bind.cleanup).toBeUndefined();
+  });
+
+  it("never returns ambient checkout as bind path (isolates for rw install)", () => {
+    const bind = planTier2BindRoot(
+      {
+        action: "run",
+        rootPath: "/local/repo",
+        headSha: head,
+        source: "ambient-tip",
+      },
+      {
+        cloneUrl: null,
+        repoPath: "/local/repo",
+        materializeWorktree: (repoPath, sha) => {
+          expect(repoPath).toBe("/local/repo");
+          expect(sha).toBe(head);
+          return { path: "/tmp/isolated-tip-wt", cleanup: () => {} };
+        },
+      },
+    );
+    expect(bind.path).toBe("/tmp/isolated-tip-wt");
+    expect(bind.path).not.toBe("/local/repo");
+    expect(typeof bind.cleanup).toBe("function");
+  });
+
+  it("returns null bind path for remote (volume sync)", () => {
+    const bind = planTier2BindRoot(
+      {
+        action: "run",
+        rootPath: "/host/mirror",
+        headSha: head,
+        source: "ambient-tip",
+      },
+      {
+        cloneUrl: "https://github.com/acme/app.git",
+        materializeWorktree: () => {
+          throw new Error("must not materialize for remote");
+        },
+      },
+    );
+    expect(bind.path).toBeNull();
   });
 });
 

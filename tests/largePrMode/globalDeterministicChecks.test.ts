@@ -38,11 +38,12 @@ vi.mock("../../src/lib/tipAlignedChecks", async () => {
             : "no meaningful local checkout for host Tier 1",
         };
       }
+      // worktree source so Tier 2 bind reuses path without ambient pollution.
       return {
         action: "run" as const,
         rootPath: repo.path,
         headSha,
-        source: "ambient-tip" as const,
+        source: "worktree" as const,
       };
     },
   };

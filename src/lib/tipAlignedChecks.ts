@@ -232,13 +232,50 @@ export function planHostTier1(
 }
 
 /**
+ * Host path safe for Tier 2 container bind-mount (rw install/test).
+ *
+ * Never returns an ambient checkout — `npm install` would write node_modules
+ * into the user's working tree. Reuses a Tier 1 worktree when present;
+ * materializes a detached worktree when Tier 1 ran on ambient-tip.
+ * Remote repos (clone URL) do not need a bind path (volume sync).
+ */
+export function planTier2BindRoot(
+  tier1Plan: HostTier1Plan,
+  opts: {
+    cloneUrl?: string | null;
+    /** Git dir used to materialize a worktree when Tier 1 was ambient-tip. */
+    repoPath?: string | null;
+    materializeWorktree?: (
+      repoPath: string,
+      headSha: string,
+    ) => { path: string; cleanup: () => void } | null;
+  } = {},
+): { path: string | null; cleanup?: () => void } {
+  if ((opts.cloneUrl ?? "").trim()) {
+    return { path: null };
+  }
+  if (tier1Plan.action !== "run") {
+    return { path: null };
+  }
+  if (tier1Plan.source === "worktree") {
+    return { path: tier1Plan.rootPath };
+  }
+  // ambient-tip: isolate for container rw
+  const gitDir = (opts.repoPath ?? "").trim() || tier1Plan.rootPath;
+  const materialize = opts.materializeWorktree ?? materializeTipWorktree;
+  const wt = materialize(gitDir, tier1Plan.headSha);
+  if (!wt) return { path: null };
+  return { path: wt.path, cleanup: wt.cleanup };
+}
+
+/**
  * Plan Tier 2 container checks against the same head SHA tools use.
  * Local-only (no clone URL): bind-mount tip root when available, else skip.
  */
 export function planTier2(opts: {
   headSha: string;
   cloneUrl?: string | null;
-  /** Tip-aligned host path (ambient at tip or worktree) for bind-mount. */
+  /** Tip-aligned host path (worktree only — never ambient) for bind-mount. */
   tipRootPath?: string | null;
   skipTier2?: boolean;
   tier1HadErrors?: boolean;

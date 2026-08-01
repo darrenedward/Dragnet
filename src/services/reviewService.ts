@@ -17,6 +17,7 @@ import type { ReviewTree } from "@/src/lib/reviewTree";
 import {
   planHostTier1,
   planTier2,
+  planTier2BindRoot,
   resolveCheckHeadSha,
 } from "@/src/lib/tipAlignedChecks";
 import {
@@ -1110,43 +1111,15 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
     prCommitHash: pr.commitHash,
   });
 
-  // Materialize tip tree for host Tier 1 (or skip with explicit reason).
-  // Never lint ambient main while reviewing another tip.
-  const tier1Plan = planHostTier1(repo, checkHeadSha);
-  let tipRootForTier2: string | null =
-    tier1Plan.action === "run" ? tier1Plan.rootPath : null;
-  const cleanupTier1Tree =
-    tier1Plan.action === "run" ? tier1Plan.cleanup : undefined;
-
-  // 5a. Build system detection — tip tree only when host Tier 1 is planned.
-  //     Remote/volume repos skip host probes (stale/empty mirrors would report
-  //     "unknown" and incorrectly disable Tier 2). They use repo.runnerImage.
+  let deterministicFindings: DeterministicFinding[] = [];
+  let tier1HadErrors = false;
   let runnerImage = repo.runnerImage ?? "node:20-alpine";
   let buildSystemWarn: string | null = null;
   let tier2Supported = true;
-  if (tier1Plan.action === "run") {
-    try {
-      const detected = await detectBuildSystem(tier1Plan.rootPath);
-      runnerImage = detected.image;
-      buildSystemWarn = detected.warn;
-      if (detected.buildSystem !== "node") {
-        tier2Supported = false;
-      }
-      void logReview(
-        prId, `Build system: ${detected.buildSystem} → ${detected.image}${detected.warn ? ` (${detected.warn})` : ""} [tip=${tier1Plan.source}]`,
-        "info", reviewRunId, reviewChunkId,
-      );
-    } catch (err: any) {
-      console.warn(`[scan] runPrScan: build system detection crashed:`, err);
-    }
-  }
-
-  let deterministicFindings: DeterministicFinding[] = [];
-  let tier1HadErrors = false;
 
   if (options?.precomputedFindings) {
     // Large-PR mode: Tier 1+2 already ran globally before the chunk loop.
-    // Use those findings directly; skip the Tier 1+2 pipeline entirely.
+    // Skip planHostTier1 entirely — do not materialize per-chunk worktrees.
     deterministicFindings = options.precomputedFindings;
     void logReview(
       prId,
@@ -1155,8 +1128,44 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
       reviewRunId,
       reviewChunkId,
     );
-    cleanupTier1Tree?.();
   } else {
+    // Materialize tip tree for host Tier 1 (or skip with explicit reason).
+    // Never lint ambient main while reviewing another tip.
+    const tier1Plan = planHostTier1(repo, checkHeadSha);
+    // Tier 2 bind must never be ambient checkout (container rw install).
+    const tier2Bind = planTier2BindRoot(tier1Plan, {
+      cloneUrl: repo?.cloneUrl,
+      repoPath: repo?.path,
+    });
+    let tipRootForTier2: string | null = tier2Bind.path;
+    const cleanupTipTrees = () => {
+      try {
+        tier2Bind.cleanup?.();
+      } finally {
+        if (tier1Plan.action === "run") tier1Plan.cleanup?.();
+      }
+    };
+
+    // 5a. Build system detection — tip tree only when host Tier 1 is planned.
+    //     Remote/volume repos skip host probes (stale/empty mirrors would report
+    //     "unknown" and incorrectly disable Tier 2). They use repo.runnerImage.
+    if (tier1Plan.action === "run") {
+      try {
+        const detected = await detectBuildSystem(tier1Plan.rootPath);
+        runnerImage = detected.image;
+        buildSystemWarn = detected.warn;
+        if (detected.buildSystem !== "node") {
+          tier2Supported = false;
+        }
+        void logReview(
+          prId, `Build system: ${detected.buildSystem} → ${detected.image}${detected.warn ? ` (${detected.warn})` : ""} [tip=${tier1Plan.source}]`,
+          "info", reviewRunId, reviewChunkId,
+        );
+      } catch (err: any) {
+        console.warn(`[scan] runPrScan: build system detection crashed:`, err);
+      }
+    }
+
     // 5b-c. Tier 1 + Tier 2 via StepPipeline with retry-on-infrastructure-error.
     //       Critical: false means code errors collect as findings and continue.
     //       Infrastructure errors that exhaust retries cause a hard abort before
@@ -1300,8 +1309,8 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
         };
       }
     } finally {
-      // Drop tip worktree after Tier 1+2 (bind path no longer needed).
-      cleanupTier1Tree?.();
+      // Drop tip worktree(s) after Tier 1+2 (bind path no longer needed).
+      cleanupTipTrees();
       tipRootForTier2 = null;
     }
   }
