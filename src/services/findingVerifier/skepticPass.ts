@@ -24,6 +24,7 @@
 
 import type { CandidateFinding } from "../findingVerifier";
 import { loadFileContent } from "../findingVerifier";
+import type { ReviewTree } from "@/src/lib/reviewTree";
 import type { ChainEntry } from "@/src/lib/llmClient";
 import type { SkepticSettings } from "@/src/lib/skepticConfig";
 import { breakerKeyFor } from "@/src/lib/providerHealth";
@@ -178,6 +179,11 @@ Respond with JSON only, no markdown fences, no prose:
 
 "severity" is required ONLY on "downgraded" verdicts (the target severity); omit otherwise.`;
 
+export interface SkepticPassIo {
+  /** Tip-bound reader; preferred over ambient repoPath for code windows. */
+  reviewTree?: ReviewTree;
+}
+
 /**
  * Run a single batched adversarial pass through the fallback model.
  *
@@ -195,6 +201,8 @@ Respond with JSON only, no markdown fences, no prose:
  *   messages flow through it so the PR review log table can surface
  *   them. Existing callers without `onLog` continue to see the messages
  *   on stdout only — back-compat preserved.
+ * @param io Optional tip-bound IO (reviewTree). When set, cited code
+ *   windows load from tip rather than ambient checkout.
  * @returns `{ verdicts, telemetry }`. verdicts is a Map keyed by
  *   candidate.id (absent = skeptic didn't reach that finding). telemetry
  *   captures per-call token usage, per-verdict outcome counts, and the
@@ -207,6 +215,7 @@ export async function runSkepticPass(
   prId: string,
   settings: SkepticSettings,
   onLog?: SkepticLogFn,
+  io?: SkepticPassIo,
 ): Promise<SkepticPassResult> {
   const providerKey = breakerKeyFor(fallbackEntry.endpoint, fallbackEntry.model);
   const outcomes: SkepticOutcomeCounts = {
@@ -258,7 +267,7 @@ export async function runSkepticPass(
   }
 
   try {
-    const userPrompt = await buildUserPrompt(batch, repoPath, prId);
+    const userPrompt = await buildUserPrompt(batch, repoPath, prId, io?.reviewTree);
     const completion = await fallbackEntry.client.chat.completions.create({
       model: fallbackEntry.model,
       messages: [
@@ -408,6 +417,7 @@ async function buildUserPrompt(
   batch: CandidateFinding[],
   repoPath: string | null,
   prId: string,
+  reviewTree?: ReviewTree,
 ): Promise<string> {
   const findingsBlock: string[] = [];
   const codeBlock: string[] = [];
@@ -430,6 +440,9 @@ async function buildUserPrompt(
     let content: string | null;
     if (fileCache.has(cacheKey)) {
       content = fileCache.get(cacheKey) ?? null;
+    } else if (reviewTree) {
+      content = await loadFileContent(f.filename, repoPath ?? "", prId, { reviewTree });
+      fileCache.set(cacheKey, content);
     } else {
       content = repoPath ? await loadFileContent(f.filename, repoPath, prId) : null;
       fileCache.set(cacheKey, content);

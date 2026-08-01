@@ -1,7 +1,7 @@
 import { runGitInRepo, type RepoLike } from "./repoAccess";
 
 /**
- * Index freshness gate.
+ * Base-index freshness gate (repo-level).
  *
  * Two failure modes:
  *   - INDEX_REQUIRED: repo.indexedAt is null — the codebase has never been
@@ -9,8 +9,13 @@ import { runGitInRepo, type RepoLike } from "./repoAccess";
  *     guesses with no call-graph or semantic context.
  *   - STALE_INDEX: indexedAt is non-null but the working-tree HEAD has
  *     moved on since indexing (lastCommitHash differs from current HEAD).
- *     Reviews run against stale symbols/edges — findings may reference
- *     code that no longer exists.
+ *     The base index may lag ambient checkout; auto-reindex refreshes it.
+ *
+ * This gate is NOT tip-ready for PR graph tools. After webhook fetch the
+ * volume is often left on main, so lastCommitHash === volume HEAD while
+ * the PR tip differs. Tool freshness for a scan is tip-overlay-aware:
+ * see `assertTipOverlayFresh` / `isTipOverlayFresh` in tipOverlay.ts
+ * (overlay.headSha must match the scan head).
  *
  * `lastCommitHash` is populated by IndexingService on every successful
  * run. Existing repos indexed before this field was added have empty

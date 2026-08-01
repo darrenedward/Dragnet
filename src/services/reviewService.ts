@@ -13,6 +13,17 @@ import { rerateWithSurvivors } from "@/src/services/findingVerifier/skepticRerat
 import { reasoningOptions, supportsJsonResponseFormat } from "@/src/lib/llmResponseFormat";
 import { completeReviewRun, setReviewRunTokens, setReviewRunLastCheckpointAt, setReviewChunkLastCheckpointAt } from "@/src/lib/reviewFreshness";
 import { safeReadFileSync, resolveSafePath } from "@/src/lib/pathSafety";
+import type { ReviewTree } from "@/src/lib/reviewTree";
+import {
+  searchTipOverlay,
+  getTipOverlayCallers,
+  findTipOverlaySimilar,
+  mergeSymbolSearchResults,
+  mergeCallerResults,
+  isTipOverlayFresh,
+  type TipOverlay,
+  type GraphSymbolHit,
+} from "@/src/lib/tipOverlay";
 import {
   runDeterministicChecks,
   runContainerizedChecks,
@@ -873,6 +884,18 @@ export interface RunPrScanOptions {
    * running tsc/eslint/container-tests once per chunk.
    */
   precomputedFindings?: DeterministicFinding[];
+  /**
+   * Tip-bound review tree from ensureReviewTree. When set, the agent
+   * readFile tool reads tip content via this seam instead of ambient
+   * repo.path / localPath / fake container host paths.
+   */
+  reviewTree?: ReviewTree;
+  /**
+   * Tip overlay index (changed files + neighbors at head). When fresh for
+   * the scan head, searchCodebase / getCallers / findSimilar query it first
+   * so tip-only symbols are visible even if the base index is still main.
+   */
+  tipOverlay?: TipOverlay;
 }
 
 /**
@@ -997,42 +1020,113 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
   let usedModel = "unconfigured";
   let systemWarn: string | null = null;
 
-  // 4. Retrieve codebase-wide multi-hop context from indexed AST tables
+  // 4. Retrieve codebase-wide multi-hop context from indexed AST tables.
+  // Prefer tip overlay (scan head) over base index for changed-file symbols.
   void logReview(prId, "Building codebase context (AST symbols + call graph)...", "info", reviewRunId, reviewChunkId);
   let codebaseContext = "";
+  // Tools freshness: overlay must match scan head (not volume-on-main base index).
+  const expectedOverlayHead =
+    options?.reviewTree?.headSha ?? options?.tipOverlay?.headSha ?? "";
+  const tipOverlay =
+    options?.tipOverlay &&
+    expectedOverlayHead &&
+    isTipOverlayFresh(options.tipOverlay, expectedOverlayHead)
+      ? options.tipOverlay
+      : null;
   try {
-    const symbolList = await prisma.symbol.findMany({
-      where: { repoId: pr.repoId, filePath: { in: files.map((f) => f.filename) } },
+    const fileNames = files.map((f) => f.filename);
+    const overlaySyms = tipOverlay
+      ? tipOverlay.symbols.filter((s) => fileNames.includes(s.filePath))
+      : [];
+    const baseSymbolList = await prisma.symbol.findMany({
+      where: { repoId: pr.repoId, filePath: { in: fileNames } },
     });
-    if (symbolList && symbolList.length > 0) {
-      // Batch-fetch all caller edges + caller symbols in 2 round-trips,
-      // then group in memory. Previous code did N+M round-trips: per
-      // symbol a findMany(callers), then per-caller a findUnique for the
-      // caller's name. ~300 queries on a 50-file PR; now 3 total.
-      const symIds = symbolList.map(s => s.id);
+    // Overlay-first merge by path+name+kind for initial AST context.
+    const mergedForContext = mergeSymbolSearchResults(
+      overlaySyms.map((s) => ({
+        id: s.id,
+        name: s.name,
+        kind: s.kind,
+        filePath: s.filePath,
+        lineStart: s.lineStart,
+        lineEnd: s.lineEnd,
+        summary: s.summary ?? null,
+        source: "tip" as const,
+      })),
+      baseSymbolList.map((s) => ({
+        id: s.id,
+        name: s.name,
+        kind: s.kind,
+        filePath: s.filePath,
+        lineStart: s.lineStart,
+        lineEnd: s.lineEnd,
+        summary: s.summary,
+        source: "base" as const,
+      })),
+      500,
+    );
+    // Recover language from overlay or base for display.
+    const langByKey = new Map<string, string>();
+    for (const s of overlaySyms) langByKey.set(`${s.filePath}|${s.name}|${s.kind}`, s.language);
+    for (const s of baseSymbolList) {
+      const k = `${s.filePath}|${s.name}|${s.kind}`;
+      if (!langByKey.has(k)) langByKey.set(k, s.language);
+    }
+
+    if (mergedForContext.length > 0) {
+      // Tip ids can diverge from base when lineStart shifts; still fetch base
+      // edges for the same path|name|kind so external callers are not dropped.
+      const baseByKey = new Map(
+        baseSymbolList.map((s) => [`${s.filePath}|${s.name}|${s.kind}`, s] as const),
+      );
+      const edgeQueryIds = new Set<string>();
+      const toMergedCalleeId = new Map<string, string>();
+      for (const s of mergedForContext) {
+        edgeQueryIds.add(s.id);
+        toMergedCalleeId.set(s.id, s.id);
+        const base = baseByKey.get(`${s.filePath}|${s.name}|${s.kind}`);
+        if (base) {
+          edgeQueryIds.add(base.id);
+          toMergedCalleeId.set(base.id, s.id);
+        }
+      }
+      const symIds = [...edgeQueryIds];
       const [allCallerEdges, allCallerSyms] = await Promise.all([
         prisma.edge.findMany({ where: { repoId: pr.repoId, toId: { in: symIds } } }),
         prisma.symbol.findMany({ where: { repoId: pr.repoId, id: { in: symIds } }, select: { id: true, name: true } }),
       ]);
-      // Build a lookup of callerSymbol id → name for any fromId we see.
-      // Note: edges may originate from symbols outside the modified-file
-      // set, so we also fetch those names in one shot below if needed.
-      const callerIds = [...new Set(allCallerEdges.map(e => e.fromId))];
+      const callerIds = [...new Set(allCallerEdges.map((e) => e.fromId))];
       const externalCallerSyms = await prisma.symbol.findMany({
         where: { id: { in: callerIds } },
         select: { id: true, name: true },
       });
       const callerNameById = new Map<string, string>();
       for (const s of [...allCallerSyms, ...externalCallerSyms]) callerNameById.set(s.id, s.name);
-      const edgesByCallee = new Map<string, typeof allCallerEdges>();
+      if (tipOverlay) {
+        for (const s of tipOverlay.symbols) callerNameById.set(s.id, s.name);
+      }
+      const edgesByCallee = new Map<string, Array<{ fromId: string; filePath: string; line: number }>>();
+      const pushEdge = (calleeId: string, edge: { fromId: string; filePath: string; line: number }) => {
+        const arr = edgesByCallee.get(calleeId) || [];
+        arr.push(edge);
+        edgesByCallee.set(calleeId, arr);
+      };
       for (const e of allCallerEdges) {
-        const arr = edgesByCallee.get(e.toId!) || [];
-        arr.push(e);
-        edgesByCallee.set(e.toId!, arr);
+        if (!e.toId) continue;
+        const mergedId = toMergedCalleeId.get(e.toId) ?? e.toId;
+        pushEdge(mergedId, { fromId: e.fromId, filePath: e.filePath, line: e.line });
+      }
+      if (tipOverlay) {
+        for (const e of tipOverlay.edges) {
+          if (e.kind !== "CALLS" || !e.toId) continue;
+          const mergedId = toMergedCalleeId.get(e.toId) ?? e.toId;
+          pushEdge(mergedId, { fromId: e.fromId, filePath: e.filePath, line: e.line });
+        }
       }
       codebaseContext += "\n=== CODEBASE AST SYMBOLS DETECTED & MODIFIED IN PR ===\n";
-      for (const sym of symbolList) {
-        codebaseContext += `- Symbol: "${sym.name}" (${sym.kind}) defined at "${sym.filePath}" [lines ${sym.lineStart}-${sym.lineEnd}] in ${sym.language}\n`;
+      for (const sym of mergedForContext) {
+        const lang = langByKey.get(`${sym.filePath}|${sym.name}|${sym.kind}`) || "unknown";
+        codebaseContext += `- Symbol: "${sym.name}" (${sym.kind}) defined at "${sym.filePath}" [lines ${sym.lineStart}-${sym.lineEnd}] in ${lang}\n`;
         const callers = edgesByCallee.get(sym.id) || [];
         if (callers.length > 0) {
           codebaseContext += "  Codebase call reference linkages (Call graph propagation):\n";
@@ -1501,66 +1595,202 @@ ${diffPayload}${deterministicPayload}`;
                 let resultSummary = "no results";
                 try {
                   if (fnName === "searchCodebase") {
-                    const items = await prisma.symbol.findMany({
+                    // Overlay-first: tip symbols (including tip-only) then base index.
+                    const overlay = tipOverlay;
+                    const overlayHits: GraphSymbolHit[] = overlay
+                      ? searchTipOverlay(overlay, fnArgs.query, 10).map((s) => ({
+                          id: s.id,
+                          name: s.name,
+                          kind: s.kind,
+                          filePath: s.filePath,
+                          lineStart: s.lineStart,
+                          lineEnd: s.lineEnd,
+                          summary: s.summary ?? null,
+                          source: "tip" as const,
+                        }))
+                      : [];
+                    const baseItems = await prisma.symbol.findMany({
                       where: { repoId: pr.repoId, name: { contains: fnArgs.query } },
                       take: 10,
                       select: { id: true, name: true, kind: true, filePath: true, lineStart: true, lineEnd: true, summary: true },
                     });
-                    if (items && items.length > 0) {
+                    const baseHits: GraphSymbolHit[] = (baseItems || []).map((s) => ({
+                      ...s,
+                      source: "base" as const,
+                    }));
+                    const items = mergeSymbolSearchResults(overlayHits, baseHits, 10);
+                    if (items.length > 0) {
                       toolResult = JSON.stringify(items);
                       resultSummary = `${items.length} results`;
                     }
                   } else if (fnName === "getCallers") {
-                    const edges = await prisma.edge.findMany({ where: { repoId: pr.repoId, toId: fnArgs.symbolId, kind: "CALLS" } });
-                    if (edges && edges.length > 0) {
-                      const callers = await Promise.all(edges.map(async (e) => {
-                        const sym = await prisma.symbol.findUnique({ where: { id: e.fromId }, select: { name: true } });
+                    const overlay = tipOverlay;
+                    const symbolId = typeof fnArgs.symbolId === "string" ? fnArgs.symbolId : "";
+                    // Tip overlay edges may target tip ids; base edges use base ids.
+                    // When lineStart shifted they differ — query both + name aliases.
+                    const calleeIds = new Set<string>();
+                    if (symbolId) calleeIds.add(symbolId);
+                    const tipSym = overlay?.symbols.find((s) => s.id === symbolId);
+                    if (tipSym) {
+                      const baseAliases = await prisma.symbol.findMany({
+                        where: {
+                          repoId: pr.repoId,
+                          filePath: tipSym.filePath,
+                          name: tipSym.name,
+                        },
+                        select: { id: true },
+                      });
+                      for (const b of baseAliases) calleeIds.add(b.id);
+                    } else if (symbolId) {
+                      // Base id in: also pull tip-overlay callers for same path+name.
+                      const baseSym = await prisma.symbol.findUnique({
+                        where: { id: symbolId },
+                        select: { filePath: true, name: true },
+                      });
+                      if (baseSym && overlay) {
+                        for (const s of overlay.symbols) {
+                          if (s.filePath === baseSym.filePath && s.name === baseSym.name) {
+                            calleeIds.add(s.id);
+                          }
+                        }
+                      }
+                    }
+                    const overlayCallers = overlay
+                      ? [...calleeIds].flatMap((id) => getTipOverlayCallers(overlay, id))
+                      : [];
+                    const edges = await prisma.edge.findMany({
+                      where: {
+                        repoId: pr.repoId,
+                        toId: { in: [...calleeIds] },
+                        kind: "CALLS",
+                      },
+                    });
+                    const baseCallers = await Promise.all(
+                      (edges || []).map(async (e) => {
+                        const sym = await prisma.symbol.findUnique({
+                          where: { id: e.fromId },
+                          select: { name: true },
+                        });
                         return {
                           callerName: sym ? sym.name : e.fromId,
                           filePath: e.filePath,
-                          line: e.line
+                          line: e.line,
+                          fromId: e.fromId,
                         };
-                      }));
+                      }),
+                    );
+                    const callers = mergeCallerResults(overlayCallers, baseCallers).map(
+                      ({ callerName, filePath, line }) => ({ callerName, filePath, line }),
+                    );
+                    if (callers.length > 0) {
                       toolResult = JSON.stringify(callers);
-                      resultSummary = `${edges.length} results`;
+                      resultSummary = `${callers.length} results`;
                     }
                   } else if (fnName === "findSimilar") {
+                    // Prefer tip-generation name/signature matches for tip names,
+                    // then fall through to base semantic search.
+                    const overlay = tipOverlay;
+                    const tipSimilar = overlay
+                      ? findTipOverlaySimilar(overlay, fnArgs.query, 5).map((s) => ({
+                          id: s.id,
+                          name: s.name,
+                          kind: s.kind,
+                          filePath: s.filePath,
+                          lineStart: s.lineStart,
+                          lineEnd: s.lineEnd,
+                          signature: s.signature,
+                          summary: s.summary ?? null,
+                          source: "tip" as const,
+                          score: 1,
+                        }))
+                      : [];
                     const { IndexingService: idxSvc } = await import("@/src/services/indexingService");
-                    const scored = await idxSvc.semanticSearch(pr.repoId, fnArgs.query, 5);
-                    if (scored && scored.length > 0) {
+                    const baseScored = await idxSvc.semanticSearch(pr.repoId, fnArgs.query, 5);
+                    const baseHits = (baseScored || []).map((s: Record<string, unknown>) => ({
+                      ...s,
+                      source: "base" as const,
+                    }));
+                    const merged = mergeSymbolSearchResults(
+                      tipSimilar.map((s) => ({
+                        id: s.id,
+                        name: s.name,
+                        kind: s.kind,
+                        filePath: s.filePath,
+                        lineStart: s.lineStart,
+                        lineEnd: s.lineEnd,
+                        summary: s.summary,
+                        source: "tip" as const,
+                      })),
+                      baseHits.map((s: { id: string; name: string; kind: string; filePath: string; lineStart: number; lineEnd: number; summary?: string | null }) => ({
+                        id: s.id,
+                        name: s.name,
+                        kind: s.kind,
+                        filePath: s.filePath,
+                        lineStart: s.lineStart,
+                        lineEnd: s.lineEnd,
+                        summary: s.summary ?? null,
+                        source: "base" as const,
+                      })),
+                      5,
+                    );
+                    // Preserve tip score/signature fields when present.
+                    const tipById = new Map(tipSimilar.map((s) => [s.id, s]));
+                    const scored = merged.map((m) => tipById.get(m.id) || baseHits.find((b: { id: string }) => b.id === m.id) || m);
+                    if (scored.length > 0) {
                       toolResult = JSON.stringify(scored);
                       resultSummary = `${scored.length} results`;
                     }
                   } else if (fnName === "readFile") {
-                    if (repo) {
-                      const repoPath = repo.localPath || repo.path;
-                      if (repoPath) {
-                        if (typeof fnArgs.filePath !== "string" || fnArgs.filePath.trim() === "") {
-                          toolResult = "Error: readFile requires a non-empty 'filePath' string argument (repo-relative). Call readFile again with {\"filePath\": \"src/path/to/file.ts\"}.";
-                          resultSummary = "blocked: missing filePath";
+                    if (typeof fnArgs.filePath !== "string" || fnArgs.filePath.trim() === "") {
+                      toolResult = "Error: readFile requires a non-empty 'filePath' string argument (repo-relative). Call readFile again with {\"filePath\": \"src/path/to/file.ts\"}.";
+                      resultSummary = "blocked: missing filePath";
+                    } else {
+                      // Prefer tip-bound review tree (ensureReviewTree seam).
+                      // Ambient repo.path / localPath / /workspace must not
+                      // supply tip content without that seam.
+                      let content: string | null = null;
+                      let pathEscaped = false;
+                      let readBlocked: string | null = null;
+                      const tree = options?.reviewTree;
+                      if (tree) {
+                        content = await tree.readFile(fnArgs.filePath);
+                      } else if (repo) {
+                        // Legacy fallback only when scan did not pin a tree
+                        // (tests / older entry points). Still path-sandboxed.
+                        const repoPath = repo.localPath || repo.path;
+                        if (repoPath && repoPath !== "/workspace") {
+                          content = safeReadFileSync(repoPath, fnArgs.filePath);
+                          pathEscaped = content === null && resolveSafePath(repoPath, fnArgs.filePath) === null;
+                        } else if (repoPath === "/workspace") {
+                          readBlocked = "Error: Container path /workspace is not a host tip tree. Scan must pin ensureReviewTree before readFile.";
+                          resultSummary = "blocked: no review tree";
                         } else {
-                          const content = safeReadFileSync(repoPath, fnArgs.filePath);
-                          if (content === null) {
-                            const escaped = resolveSafePath(repoPath, fnArgs.filePath) === null;
-                            toolResult = escaped
-                              ? "Error: Path traversal detected. Access to paths outside the repository is strictly forbidden."
-                              : "Error: File not found.";
-                          } else {
-                            readfileCharsThisScan += content.length;
-                            if (readfileCharsThisScan > READFILE_BUDGET_CHARS) {
-                              toolResult = `Error: Cumulative readFile budget (${READFILE_BUDGET_CHARS} chars) exceeded for this review. Use searchCodebase or grep for further exploration.`;
-                              resultSummary = `blocked: budget exceeded`;
-                            } else {
-                              const addLineNumbers = (text: string) => text.split("\n").map((line, i) => `${i + 1}: ${line}`).join("\n");
-                              const lines = content.split("\n");
-                              const truncLines = lines.slice(0, 1000);
-                              toolResult = addLineNumbers(truncLines.join("\n")) + (lines.length > 1000 ? "\n...[TRUNCATED]" : "");
-                              resultSummary = `Read ${truncLines.length} lines from ${fnArgs.filePath}`;
-                            }
-                          }
+                          readBlocked = "Error: Repository path not configured.";
+                          resultSummary = "blocked: no path";
                         }
                       } else {
-                        toolResult = "Error: Repository path not configured.";
+                        readBlocked = "Error: Repository path not configured.";
+                        resultSummary = "blocked: no repo";
+                      }
+                      if (readBlocked) {
+                        toolResult = readBlocked;
+                      } else if (content === null) {
+                        toolResult = pathEscaped
+                          ? "Error: Path traversal detected. Access to paths outside the repository is strictly forbidden."
+                          : "Error: File not found.";
+                        resultSummary = pathEscaped ? "blocked: traversal" : "not found";
+                      } else {
+                        readfileCharsThisScan += content.length;
+                        if (readfileCharsThisScan > READFILE_BUDGET_CHARS) {
+                          toolResult = `Error: Cumulative readFile budget (${READFILE_BUDGET_CHARS} chars) exceeded for this review. Use searchCodebase or grep for further exploration.`;
+                          resultSummary = `blocked: budget exceeded`;
+                        } else {
+                          const addLineNumbers = (text: string) => text.split("\n").map((line, i) => `${i + 1}: ${line}`).join("\n");
+                          const lines = content.split("\n");
+                          const truncLines = lines.slice(0, 1000);
+                          toolResult = addLineNumbers(truncLines.join("\n")) + (lines.length > 1000 ? "\n...[TRUNCATED]" : "");
+                          resultSummary = `Read ${truncLines.length} lines from ${fnArgs.filePath}`;
+                        }
                       }
                     }
                   } else {
@@ -2007,9 +2237,13 @@ ${diffPayload}${deterministicPayload}`;
     confidence: typeof finding.confidence === "number" ? finding.confidence : null,
   }));
   const repoPathForVerifier = repo?.localPath || repo?.path;
-  const verification = repoPathForVerifier
-    ? await verifyFindings(candidates, repoPathForVerifier, prId)
-    : new Map();
+  const reviewTree = options?.reviewTree;
+  const verification =
+    reviewTree || repoPathForVerifier
+      ? await verifyFindings(candidates, repoPathForVerifier ?? "", prId, {
+          ...(reviewTree ? { reviewTree } : {}),
+        })
+      : new Map();
   const rejectedCount = Array.from(verification.values()).filter(v => v.status === "rejected").length;
   if (rejectedCount > 0) {
     console.log(`[scan] runPrScan: verifier rejected ${rejectedCount}/${candidates.length} finding(s)`);
@@ -2046,6 +2280,7 @@ ${diffPayload}${deterministicPayload}`;
         prId,
         skepticSettings,
         onSkepticLog,
+        reviewTree ? { reviewTree } : undefined,
       );
       skepticMap = skepticResult.verdicts;
       const t = skepticResult.telemetry;
