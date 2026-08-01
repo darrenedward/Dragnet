@@ -31,15 +31,21 @@ export interface PresetsFile {
 
 export const DEFAULT_MAX_ITERATIONS = 16;
 
-export const MAX_ITERATIONS_BOUNDS = { min: 1, max: 32 } as const;
+/**
+ * Chat agentic-loop cap bounds. Min is a floor so presets cannot silently
+ * run with absurdly low budgets (e.g. 2) that burn tools without room for
+ * submitReview. Keep in sync with llm-config UI `MAX_ITERATIONS_BOUNDS`.
+ */
+export const MAX_ITERATIONS_BOUNDS = { min: 4, max: 32 } as const;
 
 export function resolveMaxIterations(preset: Pick<Preset, "maxIterations">): number {
   const v = preset.maxIterations;
   if (typeof v !== "number" || !Number.isFinite(v)) return DEFAULT_MAX_ITERATIONS;
   const clamped = Math.floor(v);
-  if (clamped < MAX_ITERATIONS_BOUNDS.min || clamped > MAX_ITERATIONS_BOUNDS.max) {
-    return DEFAULT_MAX_ITERATIONS;
-  }
+  // Below floor: clamp up so legacy stored values still get a usable budget.
+  if (clamped < MAX_ITERATIONS_BOUNDS.min) return MAX_ITERATIONS_BOUNDS.min;
+  // Above ceiling: fall back to default (same as historical behavior).
+  if (clamped > MAX_ITERATIONS_BOUNDS.max) return DEFAULT_MAX_ITERATIONS;
   return clamped;
 }
 

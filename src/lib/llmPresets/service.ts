@@ -1,6 +1,6 @@
 import { prisma } from "@/src/lib/prisma";
 import type { Preset, PresetsFile, PresetView } from "./types";
-import { resolveMaxIterations } from "./types";
+import { MAX_ITERATIONS_BOUNDS, resolveMaxIterations } from "./types";
 import { encryptApiKey, decryptApiKey } from "./crypto";
 import { hasMasterKey } from "@/src/lib/crypto";
 
@@ -262,10 +262,12 @@ function validatePresetsArray(input: unknown): asserts input is {
       preset.maxIterations !== undefined &&
       (typeof preset.maxIterations !== "number" ||
         !Number.isFinite(preset.maxIterations) ||
-        preset.maxIterations < 1 ||
-        preset.maxIterations > 32)
+        preset.maxIterations < MAX_ITERATIONS_BOUNDS.min ||
+        preset.maxIterations > MAX_ITERATIONS_BOUNDS.max)
     ) {
-      throw new Error("preset.maxIterations must be between 1 and 32 when provided.");
+      throw new Error(
+        `preset.maxIterations must be between ${MAX_ITERATIONS_BOUNDS.min} and ${MAX_ITERATIONS_BOUNDS.max} when provided.`,
+      );
     }
   }
 

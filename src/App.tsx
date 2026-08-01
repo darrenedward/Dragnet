@@ -105,9 +105,9 @@ export default function App() {
 
   return (
     <ErrorBoundary>
-    <div className="flex flex-col h-screen w-full bg-[#0B0E14] text-slate-300 font-sans select-none overflow-hidden relative">
+    <div className="flex flex-col h-screen w-full bg-[#0B0E14] text-slate-300 font-sans overflow-hidden relative">
       {/* 1. Header Bar */}
-      <header className="flex items-center justify-between px-4 py-2 sm:px-6 sm:py-2 border-b border-white/10 bg-[#0B0E14] shrink-0">
+      <header className="flex items-center justify-between px-4 py-2 sm:px-6 sm:py-2 border-b border-white/10 bg-[#0B0E14] shrink-0 select-none">
         <div className="flex items-center gap-3">
           <button
             onClick={() => setIsSidebarOpen(!isSidebarOpen)}
