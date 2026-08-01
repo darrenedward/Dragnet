@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import {
   LOG_VERBOSITY_CHANGED_EVENT,
   type LogVerbosity,
-} from "@/src/lib/logVerbosity";
+} from "@/src/lib/logVerbosityCore";
 
 const OPTIONS: Array<{ value: LogVerbosity; label: string; help: string }> = [
   {

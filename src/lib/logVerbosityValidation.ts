@@ -2,7 +2,7 @@ import {
   coerceLogVerbosity,
   type LogVerbositySettings,
   LOG_VERBOSITY_LEVELS,
-} from "./logVerbosity";
+} from "./logVerbosityCore";
 
 /**
  * Validate PUT body for /api/llm/log-verbosity.

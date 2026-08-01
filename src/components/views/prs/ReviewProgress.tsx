@@ -7,7 +7,7 @@ import {
   isLogLineVisible,
   LOG_VERBOSITY_CHANGED_EVENT,
   type LogVerbosity,
-} from "../../../lib/logVerbosity";
+} from "../../../lib/logVerbosityCore";
 
 interface LogEntry {
   id: string;
@@ -150,9 +150,13 @@ export default function ReviewProgress({ prId, reviewRunId, isScanning }: Props)
 
       {expanded && (
         <div className="h-44 overflow-y-auto p-2 space-y-0.5">
-          {visibleLogs.length === 0 ? (
+          {logs.length === 0 ? (
             <div className="text-[10px] text-slate-600 font-mono text-center py-4 italic">
               Waiting for AI review loop to start...
+            </div>
+          ) : visibleLogs.length === 0 ? (
+            <div className="text-[10px] text-slate-600 font-mono text-center py-4 italic">
+              No events at current log verbosity.
             </div>
           ) : (
             <>
