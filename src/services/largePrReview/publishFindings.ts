@@ -1,0 +1,279 @@
+/**
+ * Post-aggregate findings publish pipeline.
+ *
+ * Fixed order before findings are exposed as the run result:
+ *   1. Fingerprint intra-run dedupe
+ *   2. Conservative root-cause cluster (multi-location merge)
+ *   3. Re-verify survivors when cluster changed evidence/locations
+ *   4. Cross-run reconcile
+ *   5. Load published set (non-rejected verifier/skeptic)
+ *
+ * Large-PR aggregate and single-shot completion both call this seam so
+ * published findings are fingerprint-clean (and optionally clustered).
+ */
+
+import { prisma } from "@/src/lib/prisma";
+import { verifyFindings, type CandidateFinding } from "@/src/services/findingVerifier";
+import {
+  clusterDuplicateIds,
+  planRootCauseClusters,
+  type ClusterFinding,
+} from "./cluster";
+import { dedupFindingsWithinRun, reconcileFindingsAcrossRuns } from "./reconcile";
+
+export const PUBLISH_ORDER = [
+  "fingerprint_dedupe",
+  "root_cause_cluster",
+  "reverify_survivors",
+  "cross_run_reconcile",
+  "load_published",
+] as const;
+
+export type PublishStep = (typeof PUBLISH_ORDER)[number];
+
+export interface PublishFindingsResult {
+  findings: Awaited<ReturnType<typeof loadPublishedFindings>>;
+  steps: {
+    fingerprintDupesRemoved: number;
+    clustersMerged: number;
+    clusterMembersRemoved: number;
+    reverified: number;
+  };
+  order: readonly PublishStep[];
+}
+
+export interface PublishFindingsOptions {
+  /** Skip cluster + re-verify (fingerprint + reconcile only). */
+  skipCluster?: boolean;
+  /** Repo filesystem path for re-verify. When absent, re-verify is skipped. */
+  repoPath?: string | null;
+  prId?: string;
+}
+
+async function loadPublishedFindings(reviewRunId: string) {
+  return prisma.reviewFinding.findMany({
+    where: {
+      reviewRunId,
+      OR: [
+        { verificationStatus: null },
+        { verificationStatus: { not: "rejected" } },
+      ],
+      AND: [
+        {
+          OR: [
+            { skepticVerdict: null },
+            { skepticVerdict: { not: "rejected" } },
+          ],
+        },
+      ],
+    },
+    orderBy: [{ filename: "asc" }, { line: "asc" }],
+  });
+}
+
+/**
+ * Apply conservative root-cause clusters: update survivor evidence/locations
+ * and delete sibling rows. Returns how many groups merged and members removed.
+ */
+export async function applyRootCauseClusters(reviewRunId: string): Promise<{
+  clustersMerged: number;
+  membersRemoved: number;
+  reverifyIds: string[];
+}> {
+  const rows = await prisma.reviewFinding.findMany({
+    where: {
+      reviewRunId,
+      OR: [
+        { verificationStatus: null },
+        { verificationStatus: { not: "rejected" } },
+      ],
+    },
+    select: {
+      id: true,
+      fingerprint: true,
+      category: true,
+      severity: true,
+      filename: true,
+      line: true,
+      explanation: true,
+      confidence: true,
+      evidenceChain: true,
+    },
+  });
+
+  const candidates: ClusterFinding[] = rows.map((r) => ({
+    id: r.id,
+    fingerprint: r.fingerprint ?? `id:${r.id}`,
+    category: r.category,
+    severity: r.severity,
+    filename: r.filename,
+    line: r.line,
+    explanation: r.explanation,
+    confidence: r.confidence,
+    evidenceChain: r.evidenceChain,
+  }));
+
+  const groups = planRootCauseClusters(candidates);
+  if (groups.length === 0) {
+    return { clustersMerged: 0, membersRemoved: 0, reverifyIds: [] };
+  }
+
+  const reverifyIds: string[] = [];
+  for (const group of groups) {
+    const keep = rows.find((r) => r.id === group.keepId);
+    if (!keep) continue;
+
+    const locationNote = group.multiLocation
+      .map((loc) => `${loc.file}${loc.line != null ? `:${loc.line}` : ""}`)
+      .join(", ");
+    const explanation =
+      keep.explanation.includes("Also at:")
+        ? keep.explanation
+        : `${keep.explanation.trim()} Also at: ${locationNote}`.slice(0, 4000);
+
+    await prisma.reviewFinding.update({
+      where: { id: group.keepId },
+      data: {
+        explanation,
+        evidenceChain: JSON.stringify(group.mergedEvidenceChain),
+      },
+    });
+
+    if (group.shouldReverify) reverifyIds.push(group.keepId);
+  }
+
+  const duplicateIds = clusterDuplicateIds(groups);
+  if (duplicateIds.length > 0) {
+    await prisma.reviewFinding.deleteMany({ where: { id: { in: duplicateIds } } });
+  }
+
+  return {
+    clustersMerged: groups.length,
+    membersRemoved: duplicateIds.length,
+    reverifyIds,
+  };
+}
+
+/**
+ * Re-run the structural verifier on cluster survivors whose evidence/locations changed.
+ */
+export async function reverifySurvivors(
+  findingIds: string[],
+  repoPath: string,
+  prId: string,
+): Promise<number> {
+  if (findingIds.length === 0) return 0;
+
+  const rows = await prisma.reviewFinding.findMany({
+    where: { id: { in: findingIds } },
+    select: {
+      id: true,
+      category: true,
+      severity: true,
+      filename: true,
+      line: true,
+      explanation: true,
+      source: true,
+      confidence: true,
+    },
+  });
+  if (rows.length === 0) return 0;
+
+  const candidates: CandidateFinding[] = rows.map((r) => ({
+    id: r.id,
+    category: r.category,
+    severity: r.severity,
+    filename: r.filename,
+    line: r.line,
+    explanation: r.explanation,
+    source: (r.source as CandidateFinding["source"]) ?? "llm",
+    confidence: r.confidence,
+  }));
+
+  const results = await verifyFindings(candidates, repoPath, prId);
+  let updated = 0;
+  for (const row of rows) {
+    const v = results.get(row.id);
+    if (!v) continue;
+    await prisma.reviewFinding.update({
+      where: { id: row.id },
+      data: {
+        verificationStatus: v.status,
+        verificationNote: v.note ?? null,
+      },
+    });
+    updated += 1;
+  }
+  return updated;
+}
+
+/**
+ * Run the full post-aggregate publish pipeline for a review run.
+ */
+export async function publishFindingsForRun(
+  reviewRunId: string,
+  options: PublishFindingsOptions = {},
+): Promise<PublishFindingsResult> {
+  let fingerprintDupesRemoved = 0;
+  let clustersMerged = 0;
+  let clusterMembersRemoved = 0;
+  let reverified = 0;
+
+  try {
+    fingerprintDupesRemoved = await dedupFindingsWithinRun(reviewRunId);
+  } catch (err) {
+    console.error(`[publish] fingerprint dedupe failed for run ${reviewRunId}:`, err);
+  }
+
+  if (!options.skipCluster) {
+    try {
+      const cluster = await applyRootCauseClusters(reviewRunId);
+      clustersMerged = cluster.clustersMerged;
+      clusterMembersRemoved = cluster.membersRemoved;
+
+      if (
+        cluster.reverifyIds.length > 0 &&
+        options.repoPath &&
+        options.prId
+      ) {
+        reverified = await reverifySurvivors(
+          cluster.reverifyIds,
+          options.repoPath,
+          options.prId,
+        );
+      }
+    } catch (err) {
+      console.error(`[publish] cluster/reverify failed for run ${reviewRunId}:`, err);
+    }
+  }
+
+  try {
+    const run = await prisma.reviewRun.findUnique({
+      where: { id: reviewRunId },
+      select: { prId: true },
+    });
+    if (run) {
+      await reconcileFindingsAcrossRuns(run.prId, reviewRunId);
+    }
+  } catch (err) {
+    console.error(`[publish] reconcile failed for run ${reviewRunId}:`, err);
+  }
+
+  let findings: Awaited<ReturnType<typeof loadPublishedFindings>> = [];
+  try {
+    findings = await loadPublishedFindings(reviewRunId);
+  } catch (err) {
+    console.error(`[publish] load published findings failed for run ${reviewRunId}:`, err);
+  }
+
+  return {
+    findings,
+    steps: {
+      fingerprintDupesRemoved,
+      clustersMerged,
+      clusterMembersRemoved,
+      reverified,
+    },
+    order: PUBLISH_ORDER,
+  };
+}
