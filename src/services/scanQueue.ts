@@ -346,6 +346,13 @@ export async function admitAfkScanJobForPr(input: {
  * Claims one queued job using a DB transaction. Expired leases are returned to
  * the queue first, so a restarted worker can recover durable work.
  */
+/**
+ * Claims one queued job. Intentionally avoids Prisma interactive
+ * `$transaction` + advisory locks: with `@prisma/adapter-pg` on small hosts
+ * that path fails at boot with P2028 ("Unable to start a transaction in the
+ * given time") even when the pool is idle. Optimistic `updateMany` on
+ * `state=queued` is the concurrency gate instead.
+ */
 export async function claimNextScanJob(options?: {
   workerId?: string;
   maxConcurrentScans?: number;
@@ -358,76 +365,59 @@ export async function claimNextScanJob(options?: {
   const maxConcurrent = Math.max(1, Math.floor(options?.maxConcurrentScans ?? readLimits().maxConcurrentScans));
   const leaseExpiresAt = new Date(now.getTime() + leaseMs);
 
-  return prisma.$transaction(
-    async (tx) => {
-      if (typeof (tx as typeof tx & { $executeRaw?: unknown }).$executeRaw === "function") {
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('dragnet:scan-queue'))`;
+  // Recover expired leases so a restarted worker can pick work up again.
+  await prisma.scanJob.updateMany({
+    where: { state: "running", leaseExpiresAt: { lt: now } },
+    data: { state: "queued", workerId: null, claimedAt: null, leaseExpiresAt: null },
+  });
+  await normalizeExplicitPriorities();
+
+  const active = await prisma.scanJob.count({
+    where: { state: "running", leaseExpiresAt: { gt: now } },
+  });
+  if (active >= maxConcurrent) return null;
+
+  const excludedJobIds: string[] = [];
+  while (true) {
+    const next = await prisma.scanJob.findFirst({
+      where: {
+        state: "queued",
+        ...(excludedJobIds.length > 0 ? { id: { notIn: excludedJobIds } } : {}),
+      },
+      orderBy: [{ priority: "desc" }, { createdAt: "asc" }, { id: "asc" }],
+      include: { repository: { select: { name: true, maxConcurrentScans: true } } },
+    });
+    if (!next) return null;
+
+    const repoLimit = next.repository?.maxConcurrentScans;
+    if (repoLimit != null) {
+      const effectiveRepoLimit = Math.min(maxConcurrent, Math.max(1, Math.floor(repoLimit)));
+      const activeInRepo = await prisma.scanJob.count({
+        where: { repoId: next.repoId, state: "running", leaseExpiresAt: { gt: now } },
+      });
+      if (activeInRepo >= effectiveRepoLimit) {
+        excludedJobIds.push(next.id);
+        continue;
       }
-      await tx.scanJob.updateMany({
-        where: { state: "running", leaseExpiresAt: { lt: now } },
-        data: { state: "queued", workerId: null, claimedAt: null, leaseExpiresAt: null },
-      });
-      await tx.scanJob.updateMany({
-        where: {
-          state: "queued",
-          priority: 0,
-          OR: [
-            { triggerReason: "manual" },
-            { triggerReason: { startsWith: "manual-" } },
-            { triggerReason: "prcheck" },
-            { triggerReason: "prepush" },
-            { triggerReason: "hosted" },
-          ],
-        },
-        data: { priority: 10 },
-      });
-      const active = await tx.scanJob.count({
-        where: { state: "running", leaseExpiresAt: { gt: now } },
-      });
-      if (active >= maxConcurrent) return null;
+    }
 
-      const excludedJobIds: string[] = [];
-      while (true) {
-        const next = await tx.scanJob.findFirst({
-          where: {
-            state: "queued",
-            ...(excludedJobIds.length > 0 ? { id: { notIn: excludedJobIds } } : {}),
-          },
-          orderBy: [{ priority: "desc" }, { createdAt: "asc" }, { id: "asc" }],
-          include: { repository: { select: { name: true, maxConcurrentScans: true } } },
-        });
-        if (!next) return null;
-
-        const repoLimit = next.repository?.maxConcurrentScans;
-        if (repoLimit != null) {
-          const effectiveRepoLimit = Math.min(maxConcurrent, Math.max(1, Math.floor(repoLimit)));
-          const activeInRepo = await tx.scanJob.count({
-            where: { repoId: next.repoId, state: "running", leaseExpiresAt: { gt: now } },
-          });
-          if (activeInRepo >= effectiveRepoLimit) {
-            excludedJobIds.push(next.id);
-            continue;
-          }
-        }
-
-        const claimed = await tx.scanJob.updateMany({
-          where: { id: next.id, state: "queued" },
-          data: { state: "running", workerId, claimedAt: now, leaseExpiresAt },
-        });
-        if (claimed.count !== 1) return null;
-        return view(
-          { ...next, state: "running", claimedAt: now, leaseExpiresAt },
-          null,
-          next.forced,
-          next.resumeRequested,
-          next.freshRequested,
-        );
-      }
-    },
-    // Interactive claim + advisory lock needs more than Prisma defaults
-    // (maxWait 2s / timeout 5s) or workers log P2028 on small hosts.
-    { maxWait: 15_000, timeout: 30_000 },
-  );
+    const claimed = await prisma.scanJob.updateMany({
+      where: { id: next.id, state: "queued" },
+      data: { state: "running", workerId, claimedAt: now, leaseExpiresAt },
+    });
+    if (claimed.count !== 1) {
+      // Lost the race — try another job.
+      excludedJobIds.push(next.id);
+      continue;
+    }
+    return view(
+      { ...next, state: "running", claimedAt: now, leaseExpiresAt },
+      null,
+      next.forced,
+      next.resumeRequested,
+      next.freshRequested,
+    );
+  }
 }
 
 export async function renewScanJobLease(jobId: string, workerId: string, leaseMs = DEFAULT_LEASE_MS): Promise<boolean> {
