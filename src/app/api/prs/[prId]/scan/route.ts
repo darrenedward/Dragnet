@@ -12,7 +12,7 @@ import { acquireReviewLock, endReview, checkPendingAbort, clearPendingAbort } fr
 import { computePrSizeProfile } from "@/src/lib/prSizeProfile";
 import { readPrCommitCount } from "@/src/lib/prSizeProfile.server";
 import { assertTier, buildDiffManifest, runLargePrReview } from "@/src/services/largePrReview";
-import { readLimits } from "@/src/lib/prSizeConfig";
+import { readLimits, tierThresholdsFromLimits } from "@/src/lib/prSizeConfig";
 import { authenticateSessionOrKey, enforcePrRepoScope, type AuthResult } from "@/src/lib/apiAuth";
 import {
   computeDiffHash,
@@ -346,13 +346,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
       await readPrCommitCount(repo, baseBranch, pr.sourceBranch),
     );
     const limits = readLimits();
-    const manifest = buildDiffManifest(files, sizeProfile.commitCount, {
-      normalMaxLines: limits.normalMaxLines,
-      normalMaxCodeFiles: limits.normalMaxCodeFiles,
-      oversizedLines: limits.oversizedLines,
-      oversizedCodeFiles: limits.oversizedCodeFiles,
-    });
-    const tier = assertTier(manifest);
+    const thresholds = tierThresholdsFromLimits(limits);
+    const manifest = buildDiffManifest(files, sizeProfile.commitCount, thresholds);
+    const tier = assertTier(manifest, thresholds);
     const tierLines = "codeLines" in manifest && typeof manifest.codeLines === "number" ? manifest.codeLines.toLocaleString() + " code lines" : "n/a";
     void logReview(
       prId,
