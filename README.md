@@ -63,6 +63,8 @@ Dragnet is developed with AI assistance and is intentionally transparent about i
 
 The in-app **DB Config** tab lets you re-test and re-save the database connection without editing `.env.local` by hand. The **LLM Settings** tab lets you point Dragnet at any OpenAI-compatible endpoint (OpenRouter, Ollama, LM Studio), browse the live model catalog, and configure a **primary + optional fallback** provider for each role (chat + embedding). When the primary fails, the fallback is tried automatically — if both fail, reviews return empty findings + null rating with an actionable banner, and embeddings trip a session circuit breaker to avoid log spam.
 
+**Review Limits** (same Settings area) own PR size tiers, chunk caps, and global `maxConcurrentScans`. Metrics are **PR diff lines + code-file counts**, not a 500 LOC authoring rule. Shipped defaults: normal under **800** lines / **40** code files; oversized over **3000** / **100**; chunk floor 600 (effective cap = max of chunk lines and normal max lines). Live installs may override via the UI (`.dragnet/review-limits.json`); the next scan picks them up without a process restart.
+
 ---
 
 ## Setup
