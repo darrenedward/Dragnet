@@ -144,4 +144,18 @@ describe("planRootCauseClusters", () => {
     expect(groups[0].memberIds).toContain("drop-me");
     expect(groups[0].mergedEvidenceChain.map((l) => l.file).sort()).toEqual(["a.ts", "b.ts"]);
   });
+
+  it("includes same-location losers in memberIds so they are deleted with the cluster", () => {
+    const stem = "Missing null guard before nested property access on optional user";
+    const findings = [
+      f({ id: "loc-a-best", filename: "a.ts", line: 1, confidence: 0.95, explanation: stem }),
+      f({ id: "loc-a-worse", filename: "a.ts", line: 1, confidence: 0.86, explanation: stem }),
+      f({ id: "loc-b", filename: "b.ts", line: 2, confidence: 0.9, explanation: stem }),
+    ];
+    const groups = planRootCauseClusters(findings);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].keepId).toBe("loc-a-best");
+    expect(groups[0].memberIds.sort()).toEqual(["loc-a-best", "loc-a-worse", "loc-b"].sort());
+    expect(clusterDuplicateIds(groups).sort()).toEqual(["loc-a-worse", "loc-b"].sort());
+  });
 });

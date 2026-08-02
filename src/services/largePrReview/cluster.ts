@@ -155,6 +155,10 @@ export function planRootCauseClusters(
 
     const sorted = [...distinct].sort(rankFinding);
     const keep = sorted[0];
+    // Collapse the whole bucket (including same-location losers that lost the
+    // per-location rank). Distinct locations only gate whether a merge is
+    // warranted; orphans must not remain as separate published findings.
+    const memberIds = members.map((m) => m.id);
     const multiLocation: ClusterLocation[] = sorted.map((m) => ({
       file: m.filename,
       line: m.line,
@@ -178,7 +182,7 @@ export function planRootCauseClusters(
 
     groups.push({
       keepId: keep.id,
-      memberIds: sorted.map((m) => m.id),
+      memberIds,
       multiLocation,
       mergedEvidenceChain: [...evidenceMap.values()],
       shouldReverify: true,

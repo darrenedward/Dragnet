@@ -80,12 +80,23 @@ export async function applyRootCauseClusters(reviewRunId: string): Promise<{
   membersRemoved: number;
   reverifyIds: string[];
 }> {
+  // Match published-set filters: never cluster verifier/skeptic rejects.
+  // A high-confidence skeptic reject winning the rank would delete good
+  // siblings, then drop out of loadPublishedFindings — silent loss.
   const rows = await prisma.reviewFinding.findMany({
     where: {
       reviewRunId,
       OR: [
         { verificationStatus: null },
         { verificationStatus: { not: "rejected" } },
+      ],
+      AND: [
+        {
+          OR: [
+            { skepticVerdict: null },
+            { skepticVerdict: { not: "rejected" } },
+          ],
+        },
       ],
     },
     select: {
@@ -119,33 +130,37 @@ export async function applyRootCauseClusters(reviewRunId: string): Promise<{
   }
 
   const reverifyIds: string[] = [];
-  for (const group of groups) {
-    const keep = rows.find((r) => r.id === group.keepId);
-    if (!keep) continue;
-
-    const locationNote = group.multiLocation
-      .map((loc) => `${loc.file}${loc.line != null ? `:${loc.line}` : ""}`)
-      .join(", ");
-    const explanation =
-      keep.explanation.includes("Also at:")
-        ? keep.explanation
-        : `${keep.explanation.trim()} Also at: ${locationNote}`.slice(0, 4000);
-
-    await prisma.reviewFinding.update({
-      where: { id: group.keepId },
-      data: {
-        explanation,
-        evidenceChain: JSON.stringify(group.mergedEvidenceChain),
-      },
-    });
-
-    if (group.shouldReverify) reverifyIds.push(group.keepId);
-  }
-
   const duplicateIds = clusterDuplicateIds(groups);
-  if (duplicateIds.length > 0) {
-    await prisma.reviewFinding.deleteMany({ where: { id: { in: duplicateIds } } });
-  }
+
+  await prisma.$transaction(async (tx) => {
+    for (const group of groups) {
+      const keep = rows.find((r) => r.id === group.keepId);
+      if (!keep) continue;
+
+      const siblingNote = group.multiLocation
+        .filter((loc) => !(loc.file === keep.filename && loc.line === keep.line))
+        .map((loc) => `${loc.file}${loc.line != null ? `:${loc.line}` : ""}`)
+        .join(", ");
+      const explanation =
+        !siblingNote || keep.explanation.includes("Also at:")
+          ? keep.explanation
+          : `${keep.explanation.trim()} Also at: ${siblingNote}`.slice(0, 4000);
+
+      await tx.reviewFinding.update({
+        where: { id: group.keepId },
+        data: {
+          explanation,
+          evidenceChain: JSON.stringify(group.mergedEvidenceChain),
+        },
+      });
+
+      if (group.shouldReverify) reverifyIds.push(group.keepId);
+    }
+
+    if (duplicateIds.length > 0) {
+      await tx.reviewFinding.deleteMany({ where: { id: { in: duplicateIds } } });
+    }
+  });
 
   return {
     clustersMerged: groups.length,
