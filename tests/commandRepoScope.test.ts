@@ -13,11 +13,13 @@ const mocks = vi.hoisted(() => ({
   repositoryFindUnique: vi.fn(),
 }));
 
-vi.mock("@/src/lib/apiAuth", () => ({
-  authenticateApiRequest: mocks.authenticateApiRequest,
-  enforceRepoScope: () => null,
-  enforcePrRepoScope: async () => null,
-}));
+vi.mock("@/src/lib/apiAuth", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/src/lib/apiAuth")>();
+  return {
+    ...actual,
+    authenticateApiRequest: mocks.authenticateApiRequest,
+  };
+});
 
 vi.mock("@/src/lib/prisma", () => ({
   prisma: {
@@ -128,5 +130,27 @@ describe("command route per-repo key default (#147)", () => {
     expect(res.status).toBe(400);
     const body = await res.json();
     expect(body.message).toMatch(/repoId/i);
+  });
+
+  it("prlist rejects body.repoId outside per-repo key scope", async () => {
+    mocks.authenticateApiRequest.mockResolvedValue({
+      ok: true,
+      repoId: "repo-from-key",
+      userId: "user-1",
+    });
+    const { POST } = await import("../src/app/api/command/[[...args]]/route");
+    const req = new Request("http://localhost:3300/api/command", {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer dr_testkey",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ command: "prlist", repoId: "other-repo" }),
+    });
+    const res = await POST(req, { params: Promise.resolve({}) });
+    expect(res.status).toBe(403);
+    const body = await res.json();
+    expect(body.message).toMatch(/access|repository/i);
+    expect(mocks.pullRequestFindMany).not.toHaveBeenCalled();
   });
 });

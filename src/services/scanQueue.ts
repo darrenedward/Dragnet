@@ -658,6 +658,8 @@ export function startScanQueueWorker(options: {
   const intervalMs = options.intervalMs ?? 1000;
   let stopped = false;
   let ticking = false;
+  /** Coalesce wakes that arrive while tick is in-flight (lost-wakeup safe). */
+  let wakePending = false;
   let active = 0;
   const executeJob = async (job: QueueJobView) => {
     const heartbeat = setInterval(() => {
@@ -690,20 +692,31 @@ export function startScanQueueWorker(options: {
     }
   };
   const tick = async () => {
-    if (stopped || ticking) return;
+    if (stopped) return;
+    if (ticking) {
+      wakePending = true;
+      return;
+    }
     ticking = true;
     try {
-      const maxConcurrent = Math.max(1, Math.floor(readLimits().maxConcurrentScans));
-      while (!stopped && active < maxConcurrent) {
-        const job = await claimNextScanJob({ workerId, maxConcurrentScans: maxConcurrent });
-        if (!job) break;
-        active += 1;
-        void executeJob(job);
-      }
-    } catch (error) {
-      console.warn("[scan-queue] worker tick failed:", error);
+      do {
+        wakePending = false;
+        try {
+          const maxConcurrent = Math.max(1, Math.floor(readLimits().maxConcurrentScans));
+          while (!stopped && active < maxConcurrent) {
+            const job = await claimNextScanJob({ workerId, maxConcurrentScans: maxConcurrent });
+            if (!job) break;
+            active += 1;
+            void executeJob(job);
+          }
+        } catch (error) {
+          console.warn("[scan-queue] worker tick failed:", error);
+        }
+      } while (wakePending && !stopped);
     } finally {
       ticking = false;
+      // Wake between last pending check and ticking=false — run again.
+      if (wakePending && !stopped) void tick();
     }
   };
   const unsubWake = registerScanQueueWakeListener(() => {

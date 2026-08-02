@@ -475,4 +475,65 @@ describe("scan queue", () => {
     expect(executed).toEqual(["job-wake-worker"]);
   });
 
+  it("coalesces wake that arrives while tick is in-flight (#147 lost-wakeup)", async () => {
+    scanJob.updateMany.mockResolvedValue({ count: 0 });
+    scanJob.count.mockResolvedValue(0);
+
+    let claimGate: (() => void) | null = null;
+    const blockClaim = () => new Promise<void>((resolve) => {
+      claimGate = resolve;
+    });
+    let phase: "block" | "job" | "done" = "block";
+
+    scanJob.findFirst.mockImplementation(async () => {
+      if (phase === "block") {
+        await blockClaim();
+        return null;
+      }
+      if (phase === "job") {
+        phase = "done";
+        return {
+          id: "job-coalesce", prId: "pr-c", repoId: "repo-1", commitHash: "c1", state: "queued",
+          claimedAt: null, leaseExpiresAt: null, createdAt: new Date(), priority: 10,
+          forced: false, resumeRequested: false, freshRequested: false, triggerReason: "manual",
+          repository: { name: "demo", maxConcurrentScans: null },
+        };
+      }
+      return null;
+    });
+    scanJob.updateMany.mockImplementation(async (args: { data?: { state?: string } }) => {
+      if (args?.data?.state === "running") return { count: 1 };
+      if (args?.data?.state === "completed") return { count: 1 };
+      return { count: 0 };
+    });
+
+    const executed: string[] = [];
+    const { startScanQueueWorker, notifyScanQueueWake } = await import("@/src/services/scanQueue");
+    const stop = startScanQueueWorker({
+      intervalMs: 60_000,
+      workerId: "worker-coalesce",
+      execute: async (job) => {
+        executed.push(job.jobId);
+        return { state: "completed" };
+      },
+    });
+
+    // Wait until initial tick is blocked inside claim
+    for (let i = 0; i < 40 && !claimGate; i++) {
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    expect(claimGate).toBeTruthy();
+
+    // Job appears + wake while tick still in-flight
+    phase = "job";
+    notifyScanQueueWake();
+    claimGate!();
+
+    for (let i = 0; i < 40 && executed.length < 1; i++) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    stop();
+    expect(executed).toEqual(["job-coalesce"]);
+  });
+
 });
