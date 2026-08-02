@@ -18,6 +18,16 @@ export interface PrSizeProfile {
   message: string | null;
 }
 
+/**
+ * UI advisory size chip thresholds (intentional residual vs engine tiers).
+ *
+ * Engine review routing (`largePrReview` normal / grouped / oversized) uses
+ * Review Limits SSOT: shipped defaults 800/40 lines·files and 3000/100, live
+ * via `readLimits()`. This profile is a separate glanceable chip that also
+ * factors commit count and uses four labels (small/medium/large/oversized)
+ * with fixed 500 / 1500 / 3000 line bands — not Settings-configurable and not
+ * the merge/chunk gate. Do not treat these numbers as Review Limits.
+ */
 export const PR_SIZE_THRESHOLDS = {
   mediumCodeLines: 500,
   largeCodeLines: 1500,

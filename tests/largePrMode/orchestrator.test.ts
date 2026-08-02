@@ -36,8 +36,8 @@ vi.mock("../../src/services/largePrReview/chunker", () => ({
   MIN_USEFUL_CHUNK_LINES: 50,
 }));
 
-vi.mock("../../src/lib/prSizeConfig", () => ({
-  readLimits: vi.fn().mockReturnValue({
+vi.mock("../../src/lib/prSizeConfig", () => {
+  const limits = {
     chunkLineCap: 600,
     minUsefulChunkLines: 50,
     normalMaxLines: 800,
@@ -45,9 +45,24 @@ vi.mock("../../src/lib/prSizeConfig", () => ({
     oversizedLines: 3000,
     oversizedCodeFiles: 100,
     maxFilesPerReview: 0,
-  }),
-  clearLimitsCache: vi.fn(),
-}));
+  };
+  return {
+    DEFAULT_LIMITS: limits,
+    readLimits: vi.fn().mockReturnValue(limits),
+    clearLimitsCache: vi.fn(),
+    tierThresholdsFromLimits: (l = limits) => ({
+      normalMaxLines: l.normalMaxLines,
+      normalMaxCodeFiles: l.normalMaxCodeFiles,
+      oversizedLines: l.oversizedLines,
+      oversizedCodeFiles: l.oversizedCodeFiles,
+    }),
+    effectiveChunkLineCap: (l = limits) => Math.max(l.chunkLineCap, l.normalMaxLines),
+    chunkOptionsFromLimits: (l = limits) => ({
+      chunkLineCap: Math.max(l.chunkLineCap, l.normalMaxLines),
+      minUsefulChunkLines: l.minUsefulChunkLines,
+    }),
+  };
+});
 
 vi.mock("../../src/services/largePrReview/globalDeterministicChecks", () => ({
   runGlobalDeterministicChecks: vi.fn().mockResolvedValue({

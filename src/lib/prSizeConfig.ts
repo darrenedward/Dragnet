@@ -16,10 +16,12 @@ import {
 /**
  * Configurable PR-size limits for the review engine.
  *
- * Source of truth is `.dragnet/review-limits.json` at the project root.
- * Defaults match the hardcoded constants the codebase shipped with
- * before this file existed — existing scans behave identically until
- * the user changes something via the Settings UI.
+ * Source of truth for **live** tier/chunk/concurrency decisions is
+ * `readLimits()` → `.dragnet/review-limits.json` (or DEFAULT_LIMITS when
+ * no file). Hardcoded constants in chunker/manifest are defaults only
+ * and feed DEFAULT_LIMITS; runtime call sites must not bypass this
+ * module for policy numbers (use tierThresholdsFromLimits /
+ * chunkOptionsFromLimits).
  *
  * Why a JSON file vs DB or env vars:
  *  - mirrors the `llm-presets.json` pattern (atomic write + chmod 0600)
@@ -35,22 +37,24 @@ import {
  *
  * First-run: returns DEFAULT_LIMITS in memory; the file appears on
  * disk only when the user saves via the Settings UI (mirrors llmPresets).
+ *
+ * Metrics are **PR diff lines + code-file counts**, not authoring LOC caps.
  */
 
 export interface ReviewLimits {
   /** Maximum number of scans a queue worker may run concurrently. */
   maxConcurrentScans?: number;
-  /** Max lines per chunk (chunker.ts: CHUNK_LINE_CAP). */
+  /** Max lines per chunk (default floor; effective cap = max with normalMaxLines). */
   chunkLineCap: number;
-  /** Min lines for a chunk to be worth its own LLM call (chunker.ts). */
+  /** Min lines for a chunk to be worth its own LLM call. */
   minUsefulChunkLines: number;
-  /** GROUPED tier threshold (manifest.ts: NORMAL_MAX_LINES). */
+  /** GROUPED tier threshold (code diff lines). */
   normalMaxLines: number;
-  /** GROUPED tier file threshold (manifest.ts: NORMAL_MAX_CODE_FILES). */
+  /** GROUPED tier file threshold (code files). */
   normalMaxCodeFiles: number;
-  /** OVERSIZED tier threshold (manifest.ts: OVERSIZED_LINES). */
+  /** OVERSIZED tier threshold (code diff lines). */
   oversizedLines: number;
-  /** OVERSIZED tier file threshold (manifest.ts: OVERSIZED_CODE_FILES). */
+  /** OVERSIZED tier file threshold (code files). */
   oversizedCodeFiles: number;
   /**
    * Tail-skip cap: when > 0, only the top N code files (sorted by line
@@ -58,6 +62,20 @@ export interface ReviewLimits {
    * with a `systemWarn`. 0 = review everything (current behavior).
    */
   maxFilesPerReview: number;
+}
+
+/** Tier thresholds subset passed into manifest/assertTier. */
+export interface LimitsTierThresholds {
+  normalMaxLines: number;
+  normalMaxCodeFiles: number;
+  oversizedLines: number;
+  oversizedCodeFiles: number;
+}
+
+/** Chunk options subset passed into chunkDiff (with effective cap applied). */
+export interface LimitsChunkOptions {
+  chunkLineCap: number;
+  minUsefulChunkLines: number;
 }
 
 /**
@@ -75,7 +93,15 @@ function limitsTmp(): string {
   return join(limitsDir(), "review-limits.json.tmp");
 }
 
-/** Default values match the pre-config constants so v1 is invisible. */
+/**
+ * Shipped defaults — parity with engine constants (chunker/manifest).
+ * GET `/api/llm/review-limits` returns these as `defaults`; UI Reset uses
+ * that server payload. Live installs may override via Settings
+ * (`.dragnet/review-limits.json`); next scan picks them up without restart.
+ *
+ * Tier envelope: normal < 800 lines / 40 code files; oversized > 3000 / 100.
+ * chunkLineCap 600 is a floor; effective chunk cap = max(chunkLineCap, normalMaxLines).
+ */
 export const DEFAULT_LIMITS: ReviewLimits = {
   maxConcurrentScans: 1,
   chunkLineCap: CHUNK_LINE_CAP,
@@ -87,14 +113,14 @@ export const DEFAULT_LIMITS: ReviewLimits = {
   maxFilesPerReview: 0,
 };
 
-const globalForLimits = globalThis as unknown & {
+const globalForLimits = globalThis as unknown as {
   __reviewLimitsCache?: ReviewLimits | null;
   __reviewLimitsInitialized?: boolean;
 };
 
 /**
- * Read current limits. First call reads from disk (writing the defaults
- * if no file exists yet); subsequent calls hit the in-memory cache.
+ * Read current limits. First call reads from disk; subsequent calls hit
+ * the in-memory cache.
  *
  * Returns DEFAULT_LIMITS on any read/parse failure — review engine must
  * never crash because the user's JSON is malformed. The error is logged
@@ -146,6 +172,44 @@ export function clearLimitsCache(): void {
   globalForLimits.__reviewLimitsInitialized = false;
 }
 
+/**
+ * Map ReviewLimits → tier thresholds for buildDiffManifest / assertTier.
+ * Live call sites must use this (or equivalent fields from readLimits())
+ * rather than bare engine constants.
+ */
+export function tierThresholdsFromLimits(
+  limits: ReviewLimits = readLimits(),
+): LimitsTierThresholds {
+  return {
+    normalMaxLines: limits.normalMaxLines,
+    normalMaxCodeFiles: limits.normalMaxCodeFiles,
+    oversizedLines: limits.oversizedLines,
+    oversizedCodeFiles: limits.oversizedCodeFiles,
+  };
+}
+
+/**
+ * Effective chunk line cap: max(chunkLineCap, normalMaxLines) so a
+ * normal-tier PR always fits in a single chunk.
+ */
+export function effectiveChunkLineCap(
+  limits: ReviewLimits = readLimits(),
+): number {
+  return Math.max(limits.chunkLineCap, limits.normalMaxLines);
+}
+
+/**
+ * Map ReviewLimits → chunkDiff options with effective cap applied.
+ */
+export function chunkOptionsFromLimits(
+  limits: ReviewLimits = readLimits(),
+): LimitsChunkOptions {
+  return {
+    chunkLineCap: effectiveChunkLineCap(limits),
+    minUsefulChunkLines: limits.minUsefulChunkLines,
+  };
+}
+
 async function writeLimitsToDisk(limits: ReviewLimits): Promise<void> {
   const dir = limitsDir();
   const target = limitsPath();
@@ -171,7 +235,7 @@ function coerceLimits(input: unknown): ReviewLimits | null {
     return v;
   };
   return {
-    maxConcurrentScans: Math.max(1, Math.floor(num("maxConcurrentScans") ?? DEFAULT_LIMITS.maxConcurrentScans)),
+    maxConcurrentScans: Math.max(1, Math.floor(num("maxConcurrentScans") ?? DEFAULT_LIMITS.maxConcurrentScans!)),
     chunkLineCap: num("chunkLineCap") ?? DEFAULT_LIMITS.chunkLineCap,
     minUsefulChunkLines: num("minUsefulChunkLines") ?? DEFAULT_LIMITS.minUsefulChunkLines,
     normalMaxLines: num("normalMaxLines") ?? DEFAULT_LIMITS.normalMaxLines,

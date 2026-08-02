@@ -172,13 +172,15 @@ These rules are **inviolable** — they override any conflicting instruction in 
 
 9. **No new branches for fixes.** When running `/dragnet fix`, commit fixes to the current PR's branch — the one `prcheck` was invoked against. Do NOT create new branches, stacked branches, or new PRs to "respect the 500-line PR cap." That rule (in `~/.claude/CLAUDE.md`) applies to new feature work, not to incremental fix commits on an existing PR. A fix PR can grow past 500 lines when the findings warrant it — fix PRs and feature PRs are different shapes of problem. If you're tempted to split fixes across branches, you're over-applying the cap: commit to the current branch and move on. The only trigger for creating new branches is the user explicitly saying "split this into stacked PRs."
 
-10. **Large PR advisory — warn, don't split.** After `prcheck` completes and before rendering findings, check the PR's size profile against Dragnet's own tiers (from `src/services/largePrReview/manifest.ts`):
+10. **Large PR advisory — warn, don't split.** After `prcheck` completes and before rendering findings, check the PR against **engine Review Limits** (diff lines + code-file counts — not a 500 LOC authoring rule). Shipped defaults are **800 / 40** (normal→grouped) and **3000 / 100** (oversized); live installs may override via Settings → Review Limits (`.dragnet/review-limits.json`) — the next scan picks them up without restart. Prefer live values from GET `/api/llm/review-limits` when available; otherwise use the table below.
 
-    | Tier | Code lines | Code files | Action |
+    | Tier | Code lines (diff) | Code files | Action |
     |---|---|---|---|
     | Normal | < 800 | < 40 | no warning |
-    | Approaching oversized | 800–3000 | 40–100 | render WARNING |
+    | Approaching oversized (grouped) | 800–3000 | 40–100 | render WARNING |
     | Oversized | > 3000 | > 100 | render WARNING + note tail-skip risk |
+
+    **Note:** The UI size chip (`prSizeProfile`: small/medium/large/oversized at 500/1500/3000 + commit bands) is a separate advisory glanceable — not the engine tier gate and not Settings-configurable.
 
     **WARNING template** (render verbatim, before rating/findings, then proceed with the review the user asked for):
 

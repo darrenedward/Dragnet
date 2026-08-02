@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assertTier, buildDiffManifest, classifyPath } from "../../src/services/largePrReview";
+import { assertTier, buildDiffManifest, classifyPath } from "../../src/services/largePrReview/manifest";
 
 describe("largePrReview manifest", () => {
   it("classifies docs, lockfiles, generated files, vendor, and code", () => {

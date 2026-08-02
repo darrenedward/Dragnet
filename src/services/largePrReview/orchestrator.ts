@@ -1,6 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { prisma } from "@/src/lib/prisma";
-import { readLimits } from "@/src/lib/prSizeConfig";
+import {
+  chunkOptionsFromLimits,
+  readLimits,
+  tierThresholdsFromLimits,
+} from "@/src/lib/prSizeConfig";
 import { runPrScan, type ScanResult, type PrManifestEntry, type RunPrScanOptions } from "@/src/services/reviewService";
 import type { DeterministicFinding } from "@/src/services/deterministicChecks";
 import type { ReviewTree } from "@/src/lib/reviewTree";
@@ -117,19 +121,9 @@ export async function runLargePrReview({
   const repoPath = repo?.path ?? "";
   const installationId = repo?.installationId;
   const limits = readLimits();
-  // Derive the effective chunk cap from the user's limits so a
-  // normal-tier PR (≤ normalMaxLines) fits in a single chunk. The
-  // raw chunkLineCap from the file is a floor — the engine never
-  // splits at a finer granularity than normalMaxLines, preventing
-  // the counter-intuitive outcome where a "normal" PR is already
-  // split across 2+ chunks.
-  const effectiveChunkLineCap = Math.max(limits.chunkLineCap, limits.normalMaxLines);
-  let manifest = buildDiffManifest(files, undefined, {
-    normalMaxLines: limits.normalMaxLines,
-    normalMaxCodeFiles: limits.normalMaxCodeFiles,
-    oversizedLines: limits.oversizedLines,
-    oversizedCodeFiles: limits.oversizedCodeFiles,
-  });
+  const thresholds = tierThresholdsFromLimits(limits);
+  const chunkOpts = chunkOptionsFromLimits(limits);
+  let manifest = buildDiffManifest(files, undefined, thresholds);
 
   // Greptile-style tail-skip: when maxFilesPerReview > 0 and the PR has
   // more code files than the cap, keep the largest N and drop the rest.
@@ -141,14 +135,15 @@ export async function runLargePrReview({
     ? composeTailSkipWarning(tailSkipResult.skipped, limits.maxFilesPerReview)
     : null;
 
-  const tierResult = assertTier(manifest);
+  // Re-assert with the same live thresholds (not bare engine constants).
+  const tierResult = assertTier(manifest, thresholds);
   const effectiveTier = tier ?? tierResult.tier;
   const baseWarning = warning ?? ("message" in tierResult ? tierResult.message : null);
   const effectiveWarning = [baseWarning, tailSkipWarning].filter(Boolean).join(" · ") || null;
   const plans = chunkDiff(
     manifest,
     repo?.securitySensitivePaths ?? [],
-    { chunkLineCap: effectiveChunkLineCap, minUsefulChunkLines: limits.minUsefulChunkLines },
+    chunkOpts,
   );
 
   await logRun(prId, reviewRunId, repoPath, `Large PR Mode activated: ${plans.length} chunk${plans.length === 1 ? "" : "s"} (${manifest.codeLines.toLocaleString()} code lines)`, "info");

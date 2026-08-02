@@ -1,6 +1,11 @@
 import { isSecuritySensitive } from "./securitySensitive";
 import type { ChunkPlan, DiffManifest, FileClassification } from "./types";
 
+/**
+ * Default chunk line cap. Hardcode is a default only — must match
+ * DEFAULT_LIMITS.chunkLineCap in prSizeConfig. Live scans pass options
+ * from readLimits() / chunkOptionsFromLimits().
+ */
 export const CHUNK_LINE_CAP = 600;
 /**
  * Minimum useful chunk size. Chunks smaller than this are wasteful —
@@ -10,14 +15,15 @@ export const CHUNK_LINE_CAP = 600;
  * Exception: the LAST chunk in a plan is allowed to be smaller
  * (it's the remainder after filling). Also exception: a single
  * file that exceeds CHUNK_LINE_CAP gets its own chunk regardless.
+ *
+ * Default only — must match DEFAULT_LIMITS.minUsefulChunkLines.
  */
 export const MIN_USEFUL_CHUNK_LINES = 100;
 
 /**
- * Runtime overrides for chunk sizing. Callers pass these when they
- * want to use values from `.dragnet/review-limits.json` instead of
- * the constants above. Omitted fields fall back to the constants —
- * so existing tests that don't pass options get the old behavior.
+ * Runtime overrides for chunk sizing. Live path always passes values
+ * from readLimits() / chunkOptionsFromLimits(). Omitted fields fall
+ * back to the constants above for unit tests.
  */
 export interface ChunkOptions {
   chunkLineCap?: number;
