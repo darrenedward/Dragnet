@@ -150,7 +150,7 @@ export default function ReviewLimitsPanel() {
     <div className="space-y-6">
       <SectionCard
         title="Scan queue"
-        subtitle="The maximum number of PR reviews that can run at once across the server."
+        subtitle="Max concurrent PR reviews server-wide. Queued jobs auto-start when a slot frees (any admit path — not gated by auto-rescan)."
       >
         <NumberInput
           label="Max concurrent scans"

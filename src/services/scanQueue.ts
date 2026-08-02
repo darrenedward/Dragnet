@@ -39,6 +39,40 @@ const DEFAULT_LEASE_MS = 5 * 60 * 1000;
 const AFK_TRIGGER_REASONS = new Set(["webhook", "auto", "polling"]);
 const TERMINAL_STATES = new Set(["completed", "failed", "interrupted", "cancelled"]);
 
+/**
+ * Wake hooks for the durable scan-queue worker.
+ *
+ * Admit only enqueues; the worker claims when a global/per-repo slot is free.
+ * Calling notify after a job becomes `queued` starts that claim immediately
+ * (instead of waiting up to the poll interval). Independent of auto-rescan:
+ * any admitted job (explicit prcheck/implement or AFK) drains the same way.
+ */
+type ScanQueueWakeListener = () => void;
+const scanQueueWakeListeners = new Set<ScanQueueWakeListener>();
+
+/** Register a wake listener; returns unsubscribe. Used by startScanQueueWorker. */
+export function registerScanQueueWakeListener(listener: ScanQueueWakeListener): () => void {
+  scanQueueWakeListeners.add(listener);
+  return () => {
+    scanQueueWakeListeners.delete(listener);
+  };
+}
+
+/** Nudge workers to claim if a concurrent slot is available. Safe no-op if none registered. */
+export function notifyScanQueueWake(): void {
+  for (const listener of scanQueueWakeListeners) {
+    try {
+      listener();
+    } catch (error) {
+      console.warn("[scan-queue] wake listener failed:", error);
+    }
+  }
+}
+
+function wakeIfQueued(state: string): void {
+  if (state === "queued") notifyScanQueueWake();
+}
+
 /** Resolve admit kind from an optional override or the trigger reason. */
 export function resolveAdmitKind(
   triggerReason?: string,
@@ -211,6 +245,7 @@ export async function admitScanJob(input: {
           leaseExpiresAt: null,
         },
       });
+      wakeIfQueued(requeued.state);
       return view(
         requeued,
         await positionFor(requeued),
@@ -244,8 +279,10 @@ export async function admitScanJob(input: {
         leaseExpiresAt: null,
       },
     });
+    wakeIfQueued(requeued.state);
     return view(requeued, await positionFor(requeued), requeued.forced, requeued.resumeRequested, requeued.freshRequested);
   }
+  wakeIfQueued(job.state);
   return view(job, await positionFor(job), job.forced, job.resumeRequested, job.freshRequested);
 }
 
@@ -600,7 +637,16 @@ export type ScanQueueExecutor = (job: QueueJobView) => Promise<{
   errorMessage?: string | null;
 }>;
 
-/** Starts the durable worker loop used by the Node runtime. */
+/**
+ * Starts the durable worker loop used by the Node runtime.
+ *
+ * Auto-start contract (independent of auto-rescan):
+ * - Any job in `queued` is eligible when a global (and per-repo) slot is free.
+ * - tick runs on an interval, after each job finishes, on wake-after-admit,
+ *   and after expired-lease recovery.
+ * Auto-rescan only controls whether AFK/webhook/poll *admits* jobs; once
+ * admitted (including explicit implement/prcheck), this worker starts them.
+ */
 export function startScanQueueWorker(options: {
   execute: ScanQueueExecutor;
   intervalMs?: number;
@@ -637,6 +683,7 @@ export function startScanQueueWorker(options: {
     } finally {
       clearInterval(heartbeat);
       active -= 1;
+      // Slot freed → claim the next queued PR immediately.
       void tick();
     }
   };
@@ -657,16 +704,23 @@ export function startScanQueueWorker(options: {
       ticking = false;
     }
   };
+  const unsubWake = registerScanQueueWakeListener(() => {
+    if (!stopped) void tick();
+  });
   const timer = setInterval(() => void tick(), intervalMs);
   timer.unref?.();
   void recoverExpiredScanJobs()
     .then((count) => {
-      if (count > 0) console.log(`[scan-queue] recovered ${count} expired lease(s)`);
+      if (count > 0) {
+        console.log(`[scan-queue] recovered ${count} expired lease(s)`);
+        notifyScanQueueWake();
+      }
     })
     .catch((error) => console.warn("[scan-queue] startup lease recovery failed:", error));
   void tick();
   return () => {
     stopped = true;
+    unsubWake();
     clearInterval(timer);
   };
 }

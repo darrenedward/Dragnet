@@ -9,6 +9,12 @@ export interface AutoRescanSettings {
   defaultEnabled: boolean;
 }
 
+/**
+ * Global default: OFF.
+ * Auto-rescan only gates AFK admit (webhook/poll on new PR tips).
+ * Explicit reviews (prcheck / implement / UI) always may queue.
+ * Queue auto-start when a slot frees is independent — see scanQueue worker.
+ */
 const DEFAULT_SETTINGS: AutoRescanSettings = { defaultEnabled: false };
 const globalCache = globalThis as typeof globalThis & {
   __autoRescanSettings?: AutoRescanSettings;

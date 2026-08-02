@@ -46,6 +46,45 @@ describe("scan queue", () => {
     }));
   });
 
+  it("wakes the queue worker when a job is admitted as queued (slot auto-start)", async () => {
+    const createdAt = new Date("2026-07-18T00:00:00Z");
+    scanJob.upsert.mockResolvedValue({
+      id: "job-wake", prId: "pr-1", commitHash: "abc", state: "queued",
+      claimedAt: null, leaseExpiresAt: null, createdAt, forced: false,
+      resumeRequested: false, freshRequested: false, priority: 10, triggerReason: "prcheck",
+    });
+    scanJob.count.mockResolvedValue(0);
+    const wake = vi.fn();
+    const { admitScanJob, registerScanQueueWakeListener } = await import("@/src/services/scanQueue");
+    const unsub = registerScanQueueWakeListener(wake);
+
+    await admitScanJob({
+      prId: "pr-1",
+      repoId: "repo-1",
+      commitHash: "abc",
+      triggerReason: "prcheck",
+      kind: "explicit",
+    });
+    expect(wake).toHaveBeenCalled();
+    unsub();
+  });
+
+  it("does not wake when admit returns an already-running job", async () => {
+    const job = {
+      id: "same-job", prId: "pr-1", commitHash: "abc", state: "running",
+      claimedAt: new Date(), leaseExpiresAt: new Date(), createdAt: new Date(),
+      forced: false, resumeRequested: false, freshRequested: false,
+    };
+    scanJob.upsert.mockResolvedValue(job);
+    const wake = vi.fn();
+    const { admitScanJob, registerScanQueueWakeListener } = await import("@/src/services/scanQueue");
+    const unsub = registerScanQueueWakeListener(wake);
+
+    await admitScanJob({ prId: "pr-1", repoId: "repo-1", commitHash: "abc" });
+    expect(wake).not.toHaveBeenCalled();
+    unsub();
+  });
+
   it("coalesces a duplicate revision through the unique upsert identity", async () => {
     const job = { id: "same-job", prId: "pr-1", commitHash: "abc", state: "running", claimedAt: new Date(), leaseExpiresAt: new Date(), createdAt: new Date() };
     scanJob.upsert.mockResolvedValue(job);
