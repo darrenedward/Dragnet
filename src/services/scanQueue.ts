@@ -358,65 +358,76 @@ export async function claimNextScanJob(options?: {
   const maxConcurrent = Math.max(1, Math.floor(options?.maxConcurrentScans ?? readLimits().maxConcurrentScans));
   const leaseExpiresAt = new Date(now.getTime() + leaseMs);
 
-  return prisma.$transaction(async (tx) => {
-    if (typeof (tx as typeof tx & { $executeRaw?: unknown }).$executeRaw === "function") {
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('dragnet:scan-queue'))`;
-    }
-    await tx.scanJob.updateMany({
-      where: { state: "running", leaseExpiresAt: { lt: now } },
-      data: { state: "queued", workerId: null, claimedAt: null, leaseExpiresAt: null },
-    });
-    await tx.scanJob.updateMany({
-      where: {
-        state: "queued",
-        priority: 0,
-        OR: [
-          { triggerReason: "manual" },
-          { triggerReason: { startsWith: "manual-" } },
-          { triggerReason: "prcheck" },
-          { triggerReason: "prepush" },
-          { triggerReason: "hosted" },
-        ],
-      },
-      data: { priority: 10 },
-    });
-    const active = await tx.scanJob.count({
-      where: { state: "running", leaseExpiresAt: { gt: now } },
-    });
-    if (active >= maxConcurrent) return null;
-
-    const excludedJobIds: string[] = [];
-    while (true) {
-      const next = await tx.scanJob.findFirst({
+  return prisma.$transaction(
+    async (tx) => {
+      if (typeof (tx as typeof tx & { $executeRaw?: unknown }).$executeRaw === "function") {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('dragnet:scan-queue'))`;
+      }
+      await tx.scanJob.updateMany({
+        where: { state: "running", leaseExpiresAt: { lt: now } },
+        data: { state: "queued", workerId: null, claimedAt: null, leaseExpiresAt: null },
+      });
+      await tx.scanJob.updateMany({
         where: {
           state: "queued",
-          ...(excludedJobIds.length > 0 ? { id: { notIn: excludedJobIds } } : {}),
+          priority: 0,
+          OR: [
+            { triggerReason: "manual" },
+            { triggerReason: { startsWith: "manual-" } },
+            { triggerReason: "prcheck" },
+            { triggerReason: "prepush" },
+            { triggerReason: "hosted" },
+          ],
         },
-        orderBy: [{ priority: "desc" }, { createdAt: "asc" }, { id: "asc" }],
-        include: { repository: { select: { name: true, maxConcurrentScans: true } } },
+        data: { priority: 10 },
       });
-      if (!next) return null;
+      const active = await tx.scanJob.count({
+        where: { state: "running", leaseExpiresAt: { gt: now } },
+      });
+      if (active >= maxConcurrent) return null;
 
-      const repoLimit = next.repository?.maxConcurrentScans;
-      if (repoLimit != null) {
-        const effectiveRepoLimit = Math.min(maxConcurrent, Math.max(1, Math.floor(repoLimit)));
-        const activeInRepo = await tx.scanJob.count({
-          where: { repoId: next.repoId, state: "running", leaseExpiresAt: { gt: now } },
+      const excludedJobIds: string[] = [];
+      while (true) {
+        const next = await tx.scanJob.findFirst({
+          where: {
+            state: "queued",
+            ...(excludedJobIds.length > 0 ? { id: { notIn: excludedJobIds } } : {}),
+          },
+          orderBy: [{ priority: "desc" }, { createdAt: "asc" }, { id: "asc" }],
+          include: { repository: { select: { name: true, maxConcurrentScans: true } } },
         });
-        if (activeInRepo >= effectiveRepoLimit) {
-          excludedJobIds.push(next.id);
-          continue;
-        }
-      }
+        if (!next) return null;
 
-      const claimed = await tx.scanJob.updateMany({
-        where: { id: next.id, state: "queued" },
-        data: { state: "running", workerId, claimedAt: now, leaseExpiresAt },
-      });
-      if (claimed.count !== 1) return null;
-      return view({ ...next, state: "running", claimedAt: now, leaseExpiresAt }, null, next.forced, next.resumeRequested, next.freshRequested);
-    }
-  });
+        const repoLimit = next.repository?.maxConcurrentScans;
+        if (repoLimit != null) {
+          const effectiveRepoLimit = Math.min(maxConcurrent, Math.max(1, Math.floor(repoLimit)));
+          const activeInRepo = await tx.scanJob.count({
+            where: { repoId: next.repoId, state: "running", leaseExpiresAt: { gt: now } },
+          });
+          if (activeInRepo >= effectiveRepoLimit) {
+            excludedJobIds.push(next.id);
+            continue;
+          }
+        }
+
+        const claimed = await tx.scanJob.updateMany({
+          where: { id: next.id, state: "queued" },
+          data: { state: "running", workerId, claimedAt: now, leaseExpiresAt },
+        });
+        if (claimed.count !== 1) return null;
+        return view(
+          { ...next, state: "running", claimedAt: now, leaseExpiresAt },
+          null,
+          next.forced,
+          next.resumeRequested,
+          next.freshRequested,
+        );
+      }
+    },
+    // Interactive claim + advisory lock needs more than Prisma defaults
+    // (maxWait 2s / timeout 5s) or workers log P2028 on small hosts.
+    { maxWait: 15_000, timeout: 30_000 },
+  );
 }
 
 export async function renewScanJobLease(jobId: string, workerId: string, leaseMs = DEFAULT_LEASE_MS): Promise<boolean> {

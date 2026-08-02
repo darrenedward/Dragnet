@@ -32,8 +32,17 @@ if (!globalForPrisma.__prismaPool) {
     .replace(/\?&/, "?")
     .replace(/\?$/, "")
     .replace(/&&/g, "&");
+  // Small VPS + scan queue interactive txs: default pg pool (10) + Prisma
+  // maxWait 2s is too tight when dashboard polls + worker claim race.
+  const poolMax = Math.max(
+    4,
+    Math.min(30, Number.parseInt(process.env.DRAGNET_PG_POOL_MAX ?? "20", 10) || 20),
+  );
   globalForPrisma.__prismaPool = new Pool({
     connectionString: stripped,
+    max: poolMax,
+    idleTimeoutMillis: 30_000,
+    connectionTimeoutMillis: 10_000,
     ssl: wantsNoSsl
       ? false
       : wantsStrictSsl
@@ -44,7 +53,15 @@ if (!globalForPrisma.__prismaPool) {
 
 if (!globalForPrisma.__prisma) {
   const adapter = new PrismaPg(globalForPrisma.__prismaPool);
-  globalForPrisma.__prisma = new PrismaClient({ adapter });
+  globalForPrisma.__prisma = new PrismaClient({
+    adapter,
+    // claimNextScanJob uses interactive tx + advisory lock; default maxWait
+    // 2s / timeout 5s surfaces as P2028 under load on 1–2GB hosts.
+    transactionOptions: {
+      maxWait: 15_000,
+      timeout: 30_000,
+    },
+  });
 }
 
 export const prisma = globalForPrisma.__prisma;
