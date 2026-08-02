@@ -2,14 +2,15 @@ import type { ReviewLimits } from "./prSizeConfig";
 
 /**
  * Validation bounds for review-limits PUT body. Sane envelope, not
- * tight clamps — mirrors plan §4.4.
+ * tight clamps. Shared with the Settings UI so client/server agree.
  */
-interface Bounds {
+export interface LimitsBounds {
   min: number;
   max: number;
 }
 
-const BOUNDS: Record<keyof ReviewLimits, Bounds> = {
+/** Single source of bounds for API validation and Review Limits panel. */
+export const LIMIT_BOUNDS: Record<keyof ReviewLimits, LimitsBounds> = {
   maxConcurrentScans: { min: 1, max: 32 },
   chunkLineCap: { min: 300, max: 3000 },
   minUsefulChunkLines: { min: 50, max: 500 },
@@ -19,6 +20,8 @@ const BOUNDS: Record<keyof ReviewLimits, Bounds> = {
   oversizedCodeFiles: { min: 20, max: 500 },
   maxFilesPerReview: { min: 0, max: 500 },
 };
+
+const BOUNDS = LIMIT_BOUNDS;
 
 const FIELDS: Array<keyof ReviewLimits> = [
   "maxConcurrentScans",

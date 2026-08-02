@@ -46,6 +46,9 @@ vi.mock("../../src/lib/prSizeConfig", () => ({
     oversizedCodeFiles: 100,
     maxFilesPerReview: 0,
   }),
+  effectiveChunkLineCap: vi.fn((limits: { chunkLineCap: number; normalMaxLines: number }) =>
+    Math.max(limits.chunkLineCap, limits.normalMaxLines),
+  ),
   clearLimitsCache: vi.fn(),
 }));
 

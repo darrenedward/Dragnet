@@ -18,6 +18,16 @@ export interface PrSizeProfile {
   message: string | null;
 }
 
+/**
+ * UI size-badge thresholds only (sidebar/header glance labels).
+ *
+ * **Intentional residual vs engine Review Limits:** these do NOT drive
+ * chunking or large-PR tier (`normal` / `grouped` / `oversized` in
+ * `largePrReview/manifest.ts`, owned by Settings → Review Limits:
+ * normalMaxLines/codeFiles, oversizedLines/codeFiles). Profile tiers
+ * also consider commit count for messaging; engine tiers use diff lines
+ * + code-file counts only. Do not treat PR_SIZE_THRESHOLDS as scan policy.
+ */
 export const PR_SIZE_THRESHOLDS = {
   mediumCodeLines: 500,
   largeCodeLines: 1500,

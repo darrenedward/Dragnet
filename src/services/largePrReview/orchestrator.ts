@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { prisma } from "@/src/lib/prisma";
-import { readLimits } from "@/src/lib/prSizeConfig";
+import { effectiveChunkLineCap, readLimits } from "@/src/lib/prSizeConfig";
 import { runPrScan, type ScanResult, type PrManifestEntry, type RunPrScanOptions } from "@/src/services/reviewService";
 import type { DeterministicFinding } from "@/src/services/deterministicChecks";
 import type { ReviewTree } from "@/src/lib/reviewTree";
@@ -117,13 +117,10 @@ export async function runLargePrReview({
   const repoPath = repo?.path ?? "";
   const installationId = repo?.installationId;
   const limits = readLimits();
-  // Derive the effective chunk cap from the user's limits so a
-  // normal-tier PR (≤ normalMaxLines) fits in a single chunk. The
-  // raw chunkLineCap from the file is a floor — the engine never
-  // splits at a finer granularity than normalMaxLines, preventing
-  // the counter-intuitive outcome where a "normal" PR is already
-  // split across 2+ chunks.
-  const effectiveChunkLineCap = Math.max(limits.chunkLineCap, limits.normalMaxLines);
+  // Effective cap from SSOT so a normal-tier PR (≤ normalMaxLines) fits
+  // in one chunk. chunkLineCap is a floor — never split finer than
+  // normalMaxLines.
+  const chunkCap = effectiveChunkLineCap(limits);
   let manifest = buildDiffManifest(files, undefined, {
     normalMaxLines: limits.normalMaxLines,
     normalMaxCodeFiles: limits.normalMaxCodeFiles,
@@ -148,7 +145,7 @@ export async function runLargePrReview({
   const plans = chunkDiff(
     manifest,
     repo?.securitySensitivePaths ?? [],
-    { chunkLineCap: effectiveChunkLineCap, minUsefulChunkLines: limits.minUsefulChunkLines },
+    { chunkLineCap: chunkCap, minUsefulChunkLines: limits.minUsefulChunkLines },
   );
 
   await logRun(prId, reviewRunId, repoPath, `Large PR Mode activated: ${plans.length} chunk${plans.length === 1 ? "" : "s"} (${manifest.codeLines.toLocaleString()} code lines)`, "info");

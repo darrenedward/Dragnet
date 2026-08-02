@@ -16,10 +16,12 @@ import {
 /**
  * Configurable PR-size limits for the review engine.
  *
- * Source of truth is `.dragnet/review-limits.json` at the project root.
- * Defaults match the hardcoded constants the codebase shipped with
- * before this file existed — existing scans behave identically until
- * the user changes something via the Settings UI.
+ * **SSOT:** Settings (`.dragnet/review-limits.json`) own live size +
+ * global `maxConcurrentScans`. Module constants in chunker/manifest are
+ * **defaults only** — live tier/chunk/concurrency decisions must go
+ * through `readLimits()` / `DEFAULT_LIMITS` (orchestrator, queue worker,
+ * scan routes). Limits measure **PR diff lines + code-file counts**, not
+ * authoring LOC caps (no 500 LOC enforcement here).
  *
  * Why a JSON file vs DB or env vars:
  *  - mirrors the `llm-presets.json` pattern (atomic write + chmod 0600)
@@ -35,6 +37,9 @@ import {
  *
  * First-run: returns DEFAULT_LIMITS in memory; the file appears on
  * disk only when the user saves via the Settings UI (mirrors llmPresets).
+ *
+ * Effective chunk cap = max(chunkLineCap, normalMaxLines) so a "normal"
+ * PR always fits in one chunk.
  */
 
 export interface ReviewLimits {
@@ -184,4 +189,9 @@ function coerceLimits(input: unknown): ReviewLimits | null {
 
 export function reviewLimitsPath(): string {
   return limitsPath();
+}
+
+/** Effective lines-per-chunk cap used by the large-PR orchestrator. */
+export function effectiveChunkLineCap(limits: ReviewLimits = readLimits()): number {
+  return Math.max(limits.chunkLineCap, limits.normalMaxLines);
 }
