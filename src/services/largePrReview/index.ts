@@ -4,6 +4,7 @@ export * from "./fingerprint";
 export * from "./globalDeterministicChecks";
 export * from "./manifest";
 export * from "./orchestrator";
+export * from "./publishFindings";
 export * from "./reconcile";
 export * from "./securitySensitive";
 export * from "./types";
