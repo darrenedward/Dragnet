@@ -89,11 +89,24 @@ async function loadPublishedFindings(reviewRunId: string) {
   });
 }
 
+export interface ApplyRootCauseClustersOptions {
+  /**
+   * When true, clear verificationStatus/Note on survivors so step 3 can
+   * re-stamp them. Only pass true when re-verify will actually run
+   * (repoPath + prId available) — otherwise prior structural marks stay.
+   * Skeptic fields are never cleared here: publish has no LLM skeptic chain.
+   */
+  clearVerificationForReverify?: boolean;
+}
+
 /**
  * Apply conservative root-cause clusters: update survivor evidence/locations
  * and delete sibling rows. Returns how many groups merged and members removed.
  */
-export async function applyRootCauseClusters(reviewRunId: string): Promise<{
+export async function applyRootCauseClusters(
+  reviewRunId: string,
+  options: ApplyRootCauseClustersOptions = {},
+): Promise<{
   clustersMerged: number;
   membersRemoved: number;
   reverifyIds: string[];
@@ -149,6 +162,7 @@ export async function applyRootCauseClusters(reviewRunId: string): Promise<{
 
   const reverifyIds: string[] = [];
   const duplicateIds = clusterDuplicateIds(groups);
+  const clearVerification = options.clearVerificationForReverify === true;
 
   await prisma.$transaction(async (tx) => {
     for (const group of groups) {
@@ -164,17 +178,15 @@ export async function applyRootCauseClusters(reviewRunId: string): Promise<{
           ? keep.explanation
           : `${keep.explanation.trim()} Also at: ${siblingNote}`.slice(0, 4000);
 
-      // Clear prior verifier/skeptic marks so survivors are re-checked once
-      // against the merged multi-location evidence (step 3).
       await tx.reviewFinding.update({
         where: { id: group.keepId },
         data: {
           explanation,
+          severity: group.mergedSeverity,
           evidenceChain: JSON.stringify(group.mergedEvidenceChain),
-          verificationStatus: null,
-          verificationNote: null,
-          skepticVerdict: null,
-          skepticNote: null,
+          ...(clearVerification
+            ? { verificationStatus: null, verificationNote: null }
+            : {}),
         },
       });
 
@@ -195,8 +207,8 @@ export async function applyRootCauseClusters(reviewRunId: string): Promise<{
 
 /**
  * Re-run the structural verifier on cluster survivors whose evidence/locations
- * changed. Skeptic fields were cleared at merge time; structural verify is the
- * deterministic re-check available without an LLM chain at publish time.
+ * changed. Structural verify is the deterministic re-check available without
+ * an LLM skeptic chain at publish time (skeptic marks on the keep row are kept).
  */
 export async function reverifySurvivors(
   findingIds: string[],
@@ -275,18 +287,21 @@ export async function publishFindingsForRun(
   // 2–3. Root-cause cluster + re-verify survivors
   if (!skipCluster) {
     try {
-      const cluster = await applyRootCauseClusters(reviewRunId);
-      clustersMerged = cluster.clustersMerged;
-      clusterMembersRemoved = cluster.membersRemoved;
-
       let prId = options.prId;
-      if (!prId && cluster.reverifyIds.length > 0) {
+      if (!prId) {
         const run = await prisma.reviewRun.findUnique({
           where: { id: reviewRunId },
           select: { prId: true },
         });
         prId = run?.prId;
       }
+      // Only clear structural verification when re-verify can re-stamp it.
+      const canReverify = Boolean(options.repoPath && prId);
+      const cluster = await applyRootCauseClusters(reviewRunId, {
+        clearVerificationForReverify: canReverify,
+      });
+      clustersMerged = cluster.clustersMerged;
+      clusterMembersRemoved = cluster.membersRemoved;
 
       if (cluster.reverifyIds.length > 0 && options.repoPath && prId) {
         reverified = await reverifySurvivors(

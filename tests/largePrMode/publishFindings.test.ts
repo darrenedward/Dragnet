@@ -50,6 +50,7 @@ describe("post-aggregate publish order", () => {
     const groups = planRootCauseClusters(findings);
     expect(groups).toHaveLength(1);
     expect(groups[0].shouldReverify).toBe(true);
+    expect(groups[0].mergedSeverity).toBe("blocker");
     const afterCluster = selectPublishedSurvivors(findings, clusterDuplicateIds(groups));
     expect(afterCluster.map((f) => f.id)).toEqual(["keep"]);
     expect(groups[0].multiLocation.map((l) => l.file).sort()).toEqual(["a.ts", "b.ts"]);

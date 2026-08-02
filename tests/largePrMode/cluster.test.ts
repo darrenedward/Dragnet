@@ -60,7 +60,35 @@ describe("planRootCauseClusters", () => {
     expect(groups[0].keepId).toBe("f1");
     expect(groups[0].multiLocation).toHaveLength(2);
     expect(groups[0].shouldReverify).toBe(true);
+    expect(groups[0].mergedSeverity).toBe("warning");
     expect(clusterDuplicateIds(groups)).toEqual(["f2"]);
+  });
+
+  it("elevates mergedSeverity to the highest member severity", () => {
+    const stem =
+      "Missing authorization check on admin endpoint before mutating protected resources";
+    const findings = [
+      f({
+        id: "f1",
+        filename: "auth/session.ts",
+        line: 40,
+        explanation: stem,
+        confidence: 0.95,
+        severity: "suggestion",
+      }),
+      f({
+        id: "f2",
+        filename: "auth/admin.ts",
+        line: 12,
+        explanation: stem,
+        confidence: 0.9,
+        severity: "blocker",
+      }),
+    ];
+    const groups = planRootCauseClusters(findings);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].keepId).toBe("f1");
+    expect(groups[0].mergedSeverity).toBe("blocker");
   });
 
   it("does not merge unrelated categories/stems", () => {
@@ -149,7 +177,15 @@ describe("planRootCauseClusters", () => {
     const stem = "Missing null guard before nested property access on optional user";
     const findings = [
       f({ id: "loc-a-best", filename: "a.ts", line: 1, confidence: 0.95, explanation: stem }),
-      f({ id: "loc-a-worse", filename: "a.ts", line: 1, confidence: 0.86, explanation: stem }),
+      f({
+        id: "loc-a-worse",
+        filename: "a.ts",
+        line: 1,
+        confidence: 0.86,
+        explanation: stem,
+        severity: "blocker",
+        evidenceChain: JSON.stringify([{ file: "c.ts", line: 9, text: "extra hop" }]),
+      }),
       f({ id: "loc-b", filename: "b.ts", line: 2, confidence: 0.9, explanation: stem }),
     ];
     const groups = planRootCauseClusters(findings);
@@ -157,5 +193,12 @@ describe("planRootCauseClusters", () => {
     expect(groups[0].keepId).toBe("loc-a-best");
     expect(groups[0].memberIds.sort()).toEqual(["loc-a-best", "loc-a-worse", "loc-b"].sort());
     expect(clusterDuplicateIds(groups).sort()).toEqual(["loc-a-worse", "loc-b"].sort());
+    // Same-location losers still contribute severity + evidence before delete.
+    expect(groups[0].mergedSeverity).toBe("blocker");
+    expect(groups[0].mergedEvidenceChain.map((l) => l.file).sort()).toEqual([
+      "a.ts",
+      "b.ts",
+      "c.ts",
+    ]);
   });
 });

@@ -39,6 +39,12 @@ export interface ClusterGroup {
   multiLocation: ClusterLocation[];
   /** JSON-serializable evidence chain for the survivor. */
   mergedEvidenceChain: ClusterLocation[];
+  /**
+   * Highest severity among members (blocker > warning > suggestion).
+   * Keep-row selection is confidence-first; severity is elevated on apply
+   * so a slightly-higher-confidence suggestion cannot bury a blocker sibling.
+   */
+  mergedSeverity: string;
   /** True when merge changed locations/evidence vs the keep row alone. */
   shouldReverify: boolean;
   rootCauseKey: string;
@@ -165,14 +171,26 @@ export function planRootCauseClusters(
       text: m.explanation.slice(0, 300),
     }));
 
+    // Max severity across the full bucket (including same-location losers).
+    let mergedSeverity = keep.severity;
+    for (const m of members) {
+      if ((SEVERITY_RANK[m.severity] ?? 0) > (SEVERITY_RANK[mergedSeverity] ?? 0)) {
+        mergedSeverity = m.severity;
+      }
+    }
+
+    // Evidence from every member — same-location losers still contribute
+    // chain hops before they are deleted.
     const evidenceMap = new Map<string, ClusterLocation>();
-    for (const m of sorted) {
+    for (const m of members) {
       const primary: ClusterLocation = {
         file: m.filename,
         line: m.line,
         text: m.explanation.slice(0, 300),
       };
-      evidenceMap.set(locationKey(primary), primary);
+      if (!evidenceMap.has(locationKey(primary))) {
+        evidenceMap.set(locationKey(primary), primary);
+      }
       for (const loc of parseEvidence(m.evidenceChain)) {
         if (!evidenceMap.has(locationKey(loc))) {
           evidenceMap.set(locationKey(loc), loc);
@@ -185,6 +203,7 @@ export function planRootCauseClusters(
       memberIds,
       multiLocation,
       mergedEvidenceChain: [...evidenceMap.values()],
+      mergedSeverity,
       shouldReverify: true,
       rootCauseKey: key,
     });
