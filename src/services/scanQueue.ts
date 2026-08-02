@@ -560,7 +560,9 @@ export async function retryFailedScanJob(jobId: string): Promise<QueueJobView | 
     where: { id: jobId },
     include: { repository: { select: { name: true } }, pullRequest: { select: { title: true, sourceBranch: true } } },
   });
-  return job ? view(job, await positionFor(job), job.forced, job.resumeRequested, job.freshRequested) : null;
+  if (!job) return null;
+  wakeIfQueued(job.state);
+  return view(job, await positionFor(job), job.forced, job.resumeRequested, job.freshRequested);
 }
 
 export async function prioritizeScanJob(jobId: string): Promise<boolean> {

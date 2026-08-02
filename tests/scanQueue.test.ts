@@ -368,4 +368,111 @@ describe("scan queue", () => {
     await expect(getScanJobForPr("pr-1")).resolves.toBeNull();
   });
 
+  it("wakes when a failed job is retried onto the queue", async () => {
+    scanJob.updateMany.mockResolvedValue({ count: 1 });
+    scanJob.findUnique.mockResolvedValue({
+      id: "job-retry", prId: "pr-2", commitHash: "def", state: "queued", priority: 0,
+      triggerReason: "manual", forced: false, resumeRequested: false, freshRequested: false,
+      claimedAt: null, leaseExpiresAt: null, createdAt: new Date(), completedAt: null,
+      repository: { name: "repo" }, pullRequest: { title: "PR", sourceBranch: "feat" },
+    });
+    const wake = vi.fn();
+    const { retryFailedScanJob, registerScanQueueWakeListener } = await import("@/src/services/scanQueue");
+    const unsub = registerScanQueueWakeListener(wake);
+
+    await expect(retryFailedScanJob("job-retry")).resolves.toMatchObject({ state: "queued", jobId: "job-retry" });
+    expect(wake).toHaveBeenCalled();
+    unsub();
+  });
+
+  it("worker auto-starts next queued job when a slot frees after finish (#147)", async () => {
+    const createdAt = new Date("2026-07-18T00:00:00Z");
+    const queued = (id: string, prId: string) => ({
+      id, prId, repoId: "repo-1", commitHash: id, state: "queued" as const,
+      claimedAt: null, leaseExpiresAt: null, createdAt, priority: 10,
+      forced: false, resumeRequested: false, freshRequested: false,
+      triggerReason: "prcheck", repository: { name: "demo", maxConcurrentScans: null },
+    });
+
+    // startup recoverExpiredScanJobs
+    scanJob.updateMany.mockResolvedValue({ count: 0 });
+    scanJob.count.mockResolvedValue(0);
+    const queue = [queued("job-a", "pr-a"), queued("job-b", "pr-b")];
+    scanJob.findFirst.mockImplementation(async () => queue.shift() ?? null);
+    // claim: expired recovery + priority normalize + claim update (per claim)
+    scanJob.updateMany.mockImplementation(async (args: { where?: { id?: string; state?: unknown }; data?: { state?: string } }) => {
+      if (args?.where && "id" in (args.where ?? {}) && args.data?.state === "running") {
+        return { count: 1 };
+      }
+      if (args?.data?.state && args.data.state !== "queued" && args.data.state !== "running") {
+        return { count: 1 }; // release
+      }
+      return { count: 0 };
+    });
+
+    const executed: string[] = [];
+    const { startScanQueueWorker } = await import("@/src/services/scanQueue");
+    const stop = startScanQueueWorker({
+      intervalMs: 60_000, // must not rely on poll interval
+      workerId: "worker-slot-free",
+      execute: async (job) => {
+        executed.push(job.jobId);
+        return { state: "completed" };
+      },
+    });
+
+    for (let i = 0; i < 40 && executed.length < 2; i++) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    stop();
+    expect(executed).toEqual(["job-a", "job-b"]);
+  });
+
+  it("worker wake registration fires tick when a job becomes queued (#147)", async () => {
+    scanJob.updateMany.mockResolvedValue({ count: 0 });
+    scanJob.count.mockResolvedValue(0);
+    let claimed = false;
+    scanJob.findFirst.mockImplementation(async () => {
+      if (claimed) return null;
+      claimed = true;
+      return {
+        id: "job-wake-worker", prId: "pr-w", repoId: "repo-1", commitHash: "w1", state: "queued",
+        claimedAt: null, leaseExpiresAt: null, createdAt: new Date(), priority: 10,
+        forced: false, resumeRequested: false, freshRequested: false, triggerReason: "manual",
+        repository: { name: "demo", maxConcurrentScans: null },
+      };
+    });
+    scanJob.updateMany.mockImplementation(async (args: { data?: { state?: string } }) => {
+      if (args?.data?.state === "running") return { count: 1 };
+      if (args?.data?.state === "completed") return { count: 1 };
+      return { count: 0 };
+    });
+
+    // First: recover returns 0, initial tick finds nothing (claimed stays false until we force)
+    claimed = true; // block initial tick
+    const executed: string[] = [];
+    const {
+      startScanQueueWorker,
+      notifyScanQueueWake,
+    } = await import("@/src/services/scanQueue");
+    const stop = startScanQueueWorker({
+      intervalMs: 60_000,
+      workerId: "worker-wake",
+      execute: async (job) => {
+        executed.push(job.jobId);
+        return { state: "completed" };
+      },
+    });
+    await new Promise((r) => setTimeout(r, 30));
+    expect(executed).toEqual([]);
+
+    claimed = false; // job becomes available
+    notifyScanQueueWake();
+    for (let i = 0; i < 40 && executed.length < 1; i++) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    stop();
+    expect(executed).toEqual(["job-wake-worker"]);
+  });
+
 });

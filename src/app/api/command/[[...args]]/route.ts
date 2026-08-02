@@ -466,7 +466,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ args?: 
   }
 
   const { args } = await params;
-  const defRepo = defaultRepoId(req.url, args);
+  // URL path / explicit args win; else per-repo API key scopes the project
+  // so DRAGNET_REPO_ID is optional when the Bearer key is already repo-scoped.
+  const defRepo = defaultRepoId(req.url, args) ?? auth.repoId ?? null;
   const body = await req.json().catch(() => null);
 
   if (body && body.jsonrpc && body.method) {
