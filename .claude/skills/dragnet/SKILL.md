@@ -201,6 +201,8 @@ These rules are **inviolable** — they override any conflicting instruction in 
 
 12. **Explicit review always queues.** `prcheck` is an explicit admit path — it must enqueue (or return the existing job). Do not tell the user “auto-rescan is disabled so review cannot run.” Auto-rescan only gates AFK webhook/poller enqueue. **Queue auto-start is separate:** any queued job claims when a global/per-repo concurrent slot frees (Review Limits `maxConcurrentScans`); wake-on-admit nudges the worker so start is not delayed only by the poll interval. Product default: auto-rescan **off**.
 
+13. **Golden confidence (chunk + queue).** Multi-chunk same-fingerprint reports publish once; Review Limits changes apply on the next scan; with auto-rescan off a second queued PR auto-starts when a slot frees. Automated fixtures + manual ops steps: `tests/largePrMode/GOLDEN_CHECKLIST.md` and `tests/largePrMode/goldenConfidence.test.ts`.
+
 ## Resolving the repoId
 
 The skill needs the Dragnet `repoId` for the current project when the API key is not already per-repo scoped. It's a string like `dragnet-1782121720477` (slug + timestamp).
