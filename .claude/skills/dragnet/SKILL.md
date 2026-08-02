@@ -65,14 +65,21 @@ Markdown in `message` also includes `**Merge ready:** yes|no (…)`. Prefer the 
 
 ### Step 1 — resolve repoId + API key (one block, runs both lookups)
 
+Load env from **`.env` then `.env.local`** (local wins). `DRAGNET_REPO_ID` is optional when the API key is a per-repo key that already scopes the project.
+
 ```bash
+# Prefer dotenv order: .env then .env.local (local overrides)
+set -a
+[ -f .env ] && . ./.env
+[ -f .env.local ] && . ./.env.local
+set +a
 REPO_ID="${DRAGNET_REPO_ID:-}"
 KEY="${DRAGNET_REPO_KEY:-${DRAGNET_API_KEY:-}}"
 URL="${DRAGNET_URL:-http://localhost:3300}"
 echo "repoId=$REPO_ID key=${KEY:0:10}... url=$URL"
 ```
 
-If `REPO_ID` or `KEY` is empty: **stop and tell the user** which is missing and how to fix (set `DRAGNET_REPO_ID` from the Dragnet UI project settings; or generate an API key from Settings → API Keys and set `DRAGNET_REPO_KEY` in your `.env` file). Do not continue to step 2.
+If `KEY` is empty: **stop and tell the user** (generate an API key from Settings → API Keys; set `DRAGNET_REPO_KEY` in `.env` / `.env.local`). If `REPO_ID` is empty and the key is not per-repo scoped, set `DRAGNET_REPO_ID` from the Dragnet UI project settings. Do not continue to step 2 without a usable key.
 
 ### Step 2 — POST to `/api/command`
 
@@ -162,9 +169,9 @@ These rules are **inviolable** — they override any conflicting instruction in 
 
 9. **No new branches for fixes.** When running `/dragnet fix`, commit fixes to the current PR's branch — the one `prcheck` was invoked against. Do NOT create new branches, stacked branches, or new PRs to "respect the 500-line PR cap." That rule (in `~/.claude/CLAUDE.md`) applies to new feature work, not to incremental fix commits on an existing PR. A fix PR can grow past 500 lines when the findings warrant it — fix PRs and feature PRs are different shapes of problem. If you're tempted to split fixes across branches, you're over-applying the cap: commit to the current branch and move on. The only trigger for creating new branches is the user explicitly saying "split this into stacked PRs."
 
-10. **Large PR advisory — warn, don't split.** After `prcheck` completes and before rendering findings, check the PR's size profile against Dragnet's own tiers (from `src/services/largePrReview/manifest.ts`):
+10. **Large PR advisory — warn, don't split.** After `prcheck` completes and before rendering findings, check the PR's size against engine Review Limits (Settings → Review Limits / `.dragnet/review-limits.json`). **Shipped defaults** (live installs may override): normal &lt; **800** diff lines / **40** code files; approaching oversized **800–3000** / **40–100**; oversized &gt; **3000** / **100**. These are **diff lines + code-file counts**, not authoring LOC (no 500 LOC rule). UI size badges (`prSizeProfile`) are a separate glance residual.
 
-    | Tier | Code lines | Code files | Action |
+    | Tier | Code lines (default) | Code files (default) | Action |
     |---|---|---|---|
     | Normal | < 800 | < 40 | no warning |
     | Approaching oversized | 800–3000 | 40–100 | render WARNING |
@@ -187,31 +194,33 @@ These rules are **inviolable** — they override any conflicting instruction in 
 
 11. **Verify before merging.** `/dragnet merge` is mutating. Dragnet merge eligibility is **`mergeReady === true`** from `prcheckstatus` / findings (shared `isMergeReady`) — not `productionScore` / rating alone and not `stability.readyToMerge`. A stale or tip-mismatched run is never merge-ready. Topology (`stackDepth`, `dependencies`, `unscannedDepsCount`) is advisory: DB `targetBranch` is re-synced when poller/API discovery runs, but can lag between syncs — always re-fetch live stack via `gh pr list --json baseRefName,headRefName`. Before any `gh pr merge`, re-fetch live state via `gh pr view --json mergeable,statusCheckRollup,reviewDecision,isDraft,baseRefName,headRefName`. `gh` is authoritative at execution time; refuse if state drifted. Hard gates (`CONFLICTING`, `isDraft`, `mergeReady: false` without `--force`) have no silent override; soft CI/review gates bypass with `--force` but still require AskUserQuestion approval.
 
-12. **Explicit review always queues.** `prcheck` is an explicit admit path — it must enqueue (or return the existing job). Do not tell the user “auto-rescan is disabled so review cannot run.” Auto-rescan only gates AFK webhook/poller enqueue.
+12. **Explicit review always queues.** `prcheck` is an explicit admit path — it must enqueue (or return the existing job). Do not tell the user “auto-rescan is disabled so review cannot run.” Auto-rescan only gates AFK webhook/poller enqueue. **Queue auto-start is separate:** any queued job claims when a global/per-repo concurrent slot frees (Review Limits `maxConcurrentScans`); wake-on-admit nudges the worker so start is not delayed only by the poll interval. Product default: auto-rescan **off**.
 
 ## Resolving the repoId
 
-The skill needs the Dragnet `repoId` for the current project. It's a string like `dragnet-1782121720477` (slug + timestamp).
+The skill needs the Dragnet `repoId` for the current project when the API key is not already per-repo scoped. It's a string like `dragnet-1782121720477` (slug + timestamp).
 
-Read it from the `DRAGNET_REPO_ID` env var. If it's not set, **stop and tell the user**: "Set `DRAGNET_REPO_ID` to the repo ID found in the Dragnet UI project settings." Do NOT call `/api/repos/resolve` — it requires a browser session cookie and 401s against an API key.
+Read it from the `DRAGNET_REPO_ID` env var (optional with a per-repo key). Load **`.env` then `.env.local`** so local overrides win. If repoId is required and unset, **stop and tell the user**: "Set `DRAGNET_REPO_ID` to the repo ID found in the Dragnet UI project settings." Do NOT call `/api/repos/resolve` — it requires a browser session cookie and 401s against an API key.
 
 ## Auth
 
 Every call needs `Authorization: Bearer dr_<key>`. Resolve the key in this order:
 
-1. `$DRAGNET_REPO_KEY` env var (set in `.env` or shell profile). **Primary method.**
+1. `$DRAGNET_REPO_KEY` env var (`.env` / `.env.local` or shell). **Primary method.**
 2. `$DRAGNET_API_KEY` env var as a fallback (legacy name, still supported).
 
-If neither yields a key, **stop and tell the user**: "No API key found. Set `DRAGNET_REPO_KEY` in your `.env` file (or `.env.local`), or generate a key from the Dragnet UI → Settings → API Keys."
+If neither yields a key, **stop and tell the user**: "No API key found. Set `DRAGNET_REPO_KEY` in your `.env` file (or `.env.local`, which wins), or generate a key from the Dragnet UI → Settings → API Keys."
 
 **Setting up `.env`:**
 ```bash
-# In your repo root (or add to ~/.zshrc)
+# In your repo root — `.env.local` overrides `.env` when both exist
 echo "DRAGNET_URL=http://localhost:3300" >> .env
 echo "DRAGNET_REPO_KEY=dr_your_key_here" >> .env
+# optional if key is not per-repo:
+# echo "DRAGNET_REPO_ID=dragnet-..." >> .env
 ```
 
-**Note for agents:** Claude Code's Bash tool runs commands in a non-interactive shell that does not source `~/.zshrc`, so `$DRAGNET_REPO_KEY` must be set in the repo's `.env` file or the command's environment.
+**Note for agents:** Claude Code's Bash tool runs commands in a non-interactive shell that does not source `~/.zshrc`, so `$DRAGNET_REPO_KEY` must be set in the repo's `.env` / `.env.local` or the command's environment.
 
 ## API shape (legacy command endpoint)
 
