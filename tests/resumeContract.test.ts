@@ -239,8 +239,8 @@ vi.mock("../src/services/largePrReview", () => ({
   buildDiffManifest: vi.fn().mockReturnValue({ codeLines: 1, codeFiles: 1 }),
 }));
 
-vi.mock("../src/lib/prSizeConfig", () => ({
-  readLimits: vi.fn().mockReturnValue({
+vi.mock("../src/lib/prSizeConfig", () => {
+  const limits = {
     chunkLineCap: 500,
     minUsefulChunkLines: 50,
     normalMaxLines: 1000,
@@ -248,8 +248,17 @@ vi.mock("../src/lib/prSizeConfig", () => ({
     oversizedLines: 2000,
     oversizedCodeFiles: 50,
     maxFilesPerReview: 0,
-  }),
-}));
+  };
+  return {
+    readLimits: vi.fn().mockReturnValue(limits),
+    tierThresholdsFromLimits: (l = limits) => ({
+      normalMaxLines: l.normalMaxLines,
+      normalMaxCodeFiles: l.normalMaxCodeFiles,
+      oversizedLines: l.oversizedLines,
+      oversizedCodeFiles: l.oversizedCodeFiles,
+    }),
+  };
+});
 
 beforeEach(() => {
   tmpRepo = fs.mkdtempSync(path.join(os.tmpdir(), "dragnet-resume-"));
