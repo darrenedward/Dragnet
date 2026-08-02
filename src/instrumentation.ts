@@ -49,13 +49,12 @@ export async function register(): Promise<void> {
             body: "{}",
           });
           const body = await res.json().catch(() => ({} as Record<string, unknown>));
+          const { classifyQueueWorkerHttpResult } = await import("./services/scanQueue");
           if (!res.ok) {
             const { parseScanGate } = await import("./lib/scanPrelude");
+            const classified = classifyQueueWorkerHttpResult(false, body, res.status);
             const rawError = typeof body.error === "string" ? body.error : null;
-            const message =
-              typeof body.message === "string"
-                ? body.message
-                : rawError || `scan route returned ${res.status}`;
+            const message = classified.errorMessage || `scan route returned ${res.status}`;
             // Only durable "Blocked at {gate}" for real prelude gates — never
             // prefix arbitrary 4xx/5xx errors (SCAN_IN_PROGRESS, 500s, etc.).
             const gateCode =
@@ -69,13 +68,11 @@ export async function register(): Promise<void> {
             return {
               state: "failed" as const,
               errorMessage,
-              reviewRunId: typeof body.runId === "string" ? body.runId : null,
+              reviewRunId: classified.reviewRunId,
             };
           }
-          return {
-            state: body.interrupted ? "interrupted" : "completed",
-            reviewRunId: typeof body.runId === "string" ? body.runId : null,
-          };
+          // Soft-fail (HTTP 200 + success:false) releases as failed — not completed.
+          return classifyQueueWorkerHttpResult(true, body, res.status);
         },
       });
     } catch (err: any) {

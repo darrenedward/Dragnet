@@ -39,6 +39,40 @@ const DEFAULT_LEASE_MS = 5 * 60 * 1000;
 const AFK_TRIGGER_REASONS = new Set(["webhook", "auto", "polling"]);
 const TERMINAL_STATES = new Set(["completed", "failed", "interrupted", "cancelled"]);
 
+/**
+ * Wake hooks for the durable scan-queue worker.
+ *
+ * Admit only enqueues; the worker claims when a global/per-repo slot is free.
+ * Calling notify after a job becomes `queued` starts that claim immediately
+ * (instead of waiting up to the poll interval). Independent of auto-rescan:
+ * any admitted job (explicit prcheck/implement or AFK) drains the same way.
+ */
+type ScanQueueWakeListener = () => void;
+const scanQueueWakeListeners = new Set<ScanQueueWakeListener>();
+
+/** Register a wake listener; returns unsubscribe. Used by startScanQueueWorker. */
+export function registerScanQueueWakeListener(listener: ScanQueueWakeListener): () => void {
+  scanQueueWakeListeners.add(listener);
+  return () => {
+    scanQueueWakeListeners.delete(listener);
+  };
+}
+
+/** Nudge workers to claim if a concurrent slot is available. Safe no-op if none registered. */
+export function notifyScanQueueWake(): void {
+  for (const listener of scanQueueWakeListeners) {
+    try {
+      listener();
+    } catch (error) {
+      console.warn("[scan-queue] wake listener failed:", error);
+    }
+  }
+}
+
+function wakeIfQueued(state: string): void {
+  if (state === "queued") notifyScanQueueWake();
+}
+
 /** Resolve admit kind from an optional override or the trigger reason. */
 export function resolveAdmitKind(
   triggerReason?: string,
@@ -211,6 +245,7 @@ export async function admitScanJob(input: {
           leaseExpiresAt: null,
         },
       });
+      wakeIfQueued(requeued.state);
       return view(
         requeued,
         await positionFor(requeued),
@@ -244,8 +279,10 @@ export async function admitScanJob(input: {
         leaseExpiresAt: null,
       },
     });
+    wakeIfQueued(requeued.state);
     return view(requeued, await positionFor(requeued), requeued.forced, requeued.resumeRequested, requeued.freshRequested);
   }
+  wakeIfQueued(job.state);
   return view(job, await positionFor(job), job.forced, job.resumeRequested, job.freshRequested);
 }
 
@@ -428,12 +465,25 @@ export async function releaseScanJob(input: {
 
 export async function getScanJobForPr(prId: string): Promise<QueueJobView | null> {
   if (typeof (prisma as typeof prisma & { scanJob?: unknown }).scanJob === "undefined") return null;
+  // Requeue expired running leases so a dead worker cannot pin the PR as
+  // "scanning" forever in the findings payload / isScanning gate.
+  await recoverExpiredScanJobs();
   const job = await prisma.scanJob.findFirst({
     where: { prId, state: { in: ["queued", "running"] } },
     orderBy: { createdAt: "desc" },
     include: { repository: { select: { name: true } }, pullRequest: { select: { title: true, sourceBranch: true } } },
   });
-  return job ? view(job, await positionFor(job), job.forced, job.resumeRequested, job.freshRequested) : null;
+  if (!job) return null;
+  // Belt-and-suspenders: never surface a running job whose lease already
+  // expired (requeue race or clock skew). Treat as not active for UI.
+  if (
+    job.state === "running" &&
+    job.leaseExpiresAt &&
+    job.leaseExpiresAt.getTime() <= Date.now()
+  ) {
+    return null;
+  }
+  return view(job, await positionFor(job), job.forced, job.resumeRequested, job.freshRequested);
 }
 
 /** Most recent job for a PR (any state) — used to surface terminal gate failures. */
@@ -510,7 +560,9 @@ export async function retryFailedScanJob(jobId: string): Promise<QueueJobView | 
     where: { id: jobId },
     include: { repository: { select: { name: true } }, pullRequest: { select: { title: true, sourceBranch: true } } },
   });
-  return job ? view(job, await positionFor(job), job.forced, job.resumeRequested, job.freshRequested) : null;
+  if (!job) return null;
+  wakeIfQueued(job.state);
+  return view(job, await positionFor(job), job.forced, job.resumeRequested, job.freshRequested);
 }
 
 export async function prioritizeScanJob(jobId: string): Promise<boolean> {
@@ -533,13 +585,70 @@ export async function listScanJobs(): Promise<QueueJobView[]> {
   return jobs.map((job) => view(job, positions.get(job.id) ?? null, job.forced, job.resumeRequested, job.freshRequested));
 }
 
+/** Map a scan-route HTTP response into the durable queue release state. */
+export function classifyQueueWorkerHttpResult(
+  resOk: boolean,
+  body: Record<string, unknown>,
+  httpStatus?: number,
+): {
+  state: "completed" | "failed" | "interrupted";
+  reviewRunId: string | null;
+  errorMessage?: string | null;
+} {
+  const reviewRunId = typeof body.runId === "string" ? body.runId : null;
+  if (!resOk) {
+    return {
+      state: "failed",
+      reviewRunId,
+      errorMessage:
+        typeof body.message === "string"
+          ? body.message
+          : typeof body.error === "string"
+            ? body.error
+            : httpStatus != null
+              ? `scan route returned ${httpStatus}`
+              : "scan route failed",
+    };
+  }
+  if (body.interrupted === true) {
+    return { state: "interrupted", reviewRunId };
+  }
+  const terminal = body.terminalOutcome;
+  const terminalFailed =
+    body.success === false ||
+    (terminal != null &&
+      typeof terminal === "object" &&
+      (terminal as { isFailed?: unknown }).isFailed === true);
+  if (terminalFailed) {
+    const reason =
+      typeof body.systemWarn === "string"
+        ? body.systemWarn
+        : terminal != null &&
+            typeof terminal === "object" &&
+            typeof (terminal as { reason?: unknown }).reason === "string"
+          ? String((terminal as { reason: string }).reason)
+          : "Scan failed without an earned AI pass.";
+    return { state: "failed", reviewRunId, errorMessage: reason };
+  }
+  return { state: "completed", reviewRunId };
+}
+
 export type ScanQueueExecutor = (job: QueueJobView) => Promise<{
   state?: "completed" | "failed" | "cancelled" | "interrupted";
   reviewRunId?: string | null;
   errorMessage?: string | null;
 }>;
 
-/** Starts the durable worker loop used by the Node runtime. */
+/**
+ * Starts the durable worker loop used by the Node runtime.
+ *
+ * Auto-start contract (independent of auto-rescan):
+ * - Any job in `queued` is eligible when a global (and per-repo) slot is free.
+ * - tick runs on an interval, after each job finishes, on wake-after-admit,
+ *   and after expired-lease recovery.
+ * Auto-rescan only controls whether AFK/webhook/poll *admits* jobs; once
+ * admitted (including explicit implement/prcheck), this worker starts them.
+ */
 export function startScanQueueWorker(options: {
   execute: ScanQueueExecutor;
   intervalMs?: number;
@@ -549,6 +658,8 @@ export function startScanQueueWorker(options: {
   const intervalMs = options.intervalMs ?? 1000;
   let stopped = false;
   let ticking = false;
+  /** Coalesce wakes that arrive while tick is in-flight (lost-wakeup safe). */
+  let wakePending = false;
   let active = 0;
   const executeJob = async (job: QueueJobView) => {
     const heartbeat = setInterval(() => {
@@ -576,36 +687,55 @@ export function startScanQueueWorker(options: {
     } finally {
       clearInterval(heartbeat);
       active -= 1;
+      // Slot freed → claim the next queued PR immediately.
       void tick();
     }
   };
   const tick = async () => {
-    if (stopped || ticking) return;
+    if (stopped) return;
+    if (ticking) {
+      wakePending = true;
+      return;
+    }
     ticking = true;
     try {
-      const maxConcurrent = Math.max(1, Math.floor(readLimits().maxConcurrentScans));
-      while (!stopped && active < maxConcurrent) {
-        const job = await claimNextScanJob({ workerId, maxConcurrentScans: maxConcurrent });
-        if (!job) break;
-        active += 1;
-        void executeJob(job);
-      }
-    } catch (error) {
-      console.warn("[scan-queue] worker tick failed:", error);
+      do {
+        wakePending = false;
+        try {
+          const maxConcurrent = Math.max(1, Math.floor(readLimits().maxConcurrentScans));
+          while (!stopped && active < maxConcurrent) {
+            const job = await claimNextScanJob({ workerId, maxConcurrentScans: maxConcurrent });
+            if (!job) break;
+            active += 1;
+            void executeJob(job);
+          }
+        } catch (error) {
+          console.warn("[scan-queue] worker tick failed:", error);
+        }
+      } while (wakePending && !stopped);
     } finally {
       ticking = false;
+      // Wake between last pending check and ticking=false — run again.
+      if (wakePending && !stopped) void tick();
     }
   };
+  const unsubWake = registerScanQueueWakeListener(() => {
+    if (!stopped) void tick();
+  });
   const timer = setInterval(() => void tick(), intervalMs);
   timer.unref?.();
   void recoverExpiredScanJobs()
     .then((count) => {
-      if (count > 0) console.log(`[scan-queue] recovered ${count} expired lease(s)`);
+      if (count > 0) {
+        console.log(`[scan-queue] recovered ${count} expired lease(s)`);
+        notifyScanQueueWake();
+      }
     })
     .catch((error) => console.warn("[scan-queue] startup lease recovery failed:", error));
   void tick();
   return () => {
     stopped = true;
+    unsubWake();
     clearInterval(timer);
   };
 }

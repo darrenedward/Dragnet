@@ -971,6 +971,45 @@ export async function getActiveScan(prId: string): Promise<{
     return { reviewRun: null, findings: [], iterationsByChunk: {} };
   }
 
+  // Ghost-run guard: never keep the UI spinning when the PR is already
+  // terminal (Failed/Completed/Merged) or the in_progress row is past the
+  // stale TTL. Both cases mean the owning process is gone / finalize already
+  // stamped the PR — surfacing the orphan as activeScan causes
+  // "sidebar Failed + main Review Running…" desync.
+  const prRow = await prisma.pullRequest.findUnique({
+    where: { id: prId },
+    select: { status: true },
+  });
+  const prStatus = (prRow?.status ?? "").trim();
+  const ageMs = Date.now() - reviewRun.startedAt.getTime();
+  const prTerminal =
+    prStatus === "Failed" || prStatus === "Completed" || prStatus === "Merged";
+  if (prTerminal || ageMs > SCAN_STALE_AFTER_MS) {
+    try {
+      await prisma.reviewRun.update({
+        where: { id: reviewRun.id },
+        data: {
+          status: "failed",
+          completedAt: new Date(),
+          systemWarn:
+            prTerminal
+              ? `Orphaned in_progress run reaped — PR already ${prStatus}.`
+              : `Orphaned in_progress run reaped — stale after ${Math.round(ageMs / 60_000)}min.`,
+        },
+      });
+      console.warn(
+        `[reviewFreshness] getActiveScan reaped orphan run ${reviewRun.id} ` +
+          `(prId=${prId}, prStatus=${prStatus || "?"}, ageMin=${Math.round(ageMs / 60_000)})`,
+      );
+    } catch (err) {
+      console.warn(
+        `[reviewFreshness] getActiveScan failed to reap orphan ${reviewRun.id}:`,
+        err,
+      );
+    }
+    return { reviewRun: null, findings: [], iterationsByChunk: {} };
+  }
+
   const [findings, logs] = await Promise.all([
     prisma.reviewFinding.findMany({
       where: {

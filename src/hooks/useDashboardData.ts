@@ -410,6 +410,8 @@ export function useDashboardData() {
         setActiveScan(findingsData.activeScan ?? null);
         setQueueJob(findingsData.queueJob ?? null);
         // Keep sidebar PR status honest after failed terminal outcomes.
+        // Also clear the spinning gate — ghost activeScan/queueJob used to
+        // leave isScanning=true while PR.status was already Failed.
         if (
           findingsData.terminalOutcome?.isFailed &&
           !findingsData.queueJob &&
@@ -420,6 +422,9 @@ export function useDashboardData() {
               p.id === prId && p.status !== "Merged" ? { ...p, status: "Failed" } : p,
             ),
           );
+          setIsScanning(false);
+          setActiveScan(null);
+          setQueueJob(null);
         }
         setMergeReady(
           typeof findingsData.mergeReady === "boolean" ? findingsData.mergeReady : null,
@@ -634,9 +639,23 @@ export function useDashboardData() {
     // pointing at the previously-selected PR's run. The prId guard rejects
     // that, so isScanning can't be forced true by a foreign run.
     const activeScanIsForSelectedPr = !!activeScan && activeScan.prId === selectedPrId;
-    const queueJobIsForSelectedPr = !!queueJob && (queueJob.state === "queued" || queueJob.state === "running");
-    setIsScanning(activePR.status === "In Progress" || activeScanIsForSelectedPr || queueJobIsForSelectedPr);
-  }, [selectedPrId, prs, activeScan, queueJob, scanningPrId]);
+    const queueJobIsForSelectedPr =
+      !!queueJob && (queueJob.state === "queued" || queueJob.state === "running");
+    // Terminal Failed must win over orphan activeScan markers. A new admit
+    // always leaves a live queueJob (or flips PR to In Progress), so real
+    // rescans still spin; only ghost leftovers after soft/hard fail clear.
+    const terminalFailed =
+      terminalOutcome?.isFailed === true || activePR.status === "Failed";
+    if (terminalFailed && activePR.status === "Failed" && !queueJobIsForSelectedPr) {
+      setIsScanning(false);
+      return;
+    }
+    setIsScanning(
+      activePR.status === "In Progress" ||
+        activeScanIsForSelectedPr ||
+        queueJobIsForSelectedPr,
+    );
+  }, [selectedPrId, prs, activeScan, queueJob, scanningPrId, terminalOutcome]);
 
   // ===== DB actions =====
   const handleTestDbConnection = async () => {

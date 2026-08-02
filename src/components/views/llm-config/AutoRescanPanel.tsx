@@ -39,10 +39,20 @@ export default function AutoRescanPanel() {
     <section className="border border-white/10 rounded-xl p-4 space-y-3">
       <div>
         <h3 className="text-sm font-bold text-white">Automatic rescans</h3>
-        <p className="text-[11px] text-slate-500 mt-1">Global default for newly detected PR commits. Repository overrides are configured in repository settings.</p>
+        <p className="text-[11px] text-slate-500 mt-1">
+          <span className="text-slate-400">Default: off.</span> When on, webhook/poll may
+          enqueue a scan for each new PR tip (can thrash on burst commits). When off,
+          only intentional reviews (UI, prcheck, implement) enter the queue. Repository
+          overrides live in repository settings.
+        </p>
+        <p className="text-[11px] text-slate-500 mt-2">
+          Queue auto-start is separate: any job already in the queue starts when a
+          concurrent slot frees (global/per-repo limits under Review Limits) — no
+          extra toggle.
+        </p>
       </div>
       <label className="flex items-center justify-between gap-4 text-xs text-slate-300">
-        <span>Enqueue new revisions automatically</span>
+        <span>Enqueue new revisions automatically (AFK)</span>
         <input
           type="checkbox"
           checked={enabled}

@@ -2,6 +2,13 @@ import { describe, expect, it } from "vitest";
 import { isAutoRescanEnabled } from "../src/lib/autoRescanPolicy";
 
 describe("automatic rescan policy", () => {
+  it("product default is off (AFK admit blocked until deliberately enabled) (#147)", () => {
+    // DEFAULT_SETTINGS.defaultEnabled === false — inherit with empty settings = off
+    expect(isAutoRescanEnabled("inherit", { defaultEnabled: false })).toBe(false);
+    expect(isAutoRescanEnabled(null, { defaultEnabled: false })).toBe(false);
+    expect(isAutoRescanEnabled(undefined, { defaultEnabled: false })).toBe(false);
+  });
+
   it("inherits the global default", () => {
     expect(isAutoRescanEnabled("inherit", { defaultEnabled: false })).toBe(false);
     expect(isAutoRescanEnabled(undefined, { defaultEnabled: true })).toBe(true);

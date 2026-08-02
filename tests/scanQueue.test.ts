@@ -46,6 +46,45 @@ describe("scan queue", () => {
     }));
   });
 
+  it("wakes the queue worker when a job is admitted as queued (slot auto-start)", async () => {
+    const createdAt = new Date("2026-07-18T00:00:00Z");
+    scanJob.upsert.mockResolvedValue({
+      id: "job-wake", prId: "pr-1", commitHash: "abc", state: "queued",
+      claimedAt: null, leaseExpiresAt: null, createdAt, forced: false,
+      resumeRequested: false, freshRequested: false, priority: 10, triggerReason: "prcheck",
+    });
+    scanJob.count.mockResolvedValue(0);
+    const wake = vi.fn();
+    const { admitScanJob, registerScanQueueWakeListener } = await import("@/src/services/scanQueue");
+    const unsub = registerScanQueueWakeListener(wake);
+
+    await admitScanJob({
+      prId: "pr-1",
+      repoId: "repo-1",
+      commitHash: "abc",
+      triggerReason: "prcheck",
+      kind: "explicit",
+    });
+    expect(wake).toHaveBeenCalled();
+    unsub();
+  });
+
+  it("does not wake when admit returns an already-running job", async () => {
+    const job = {
+      id: "same-job", prId: "pr-1", commitHash: "abc", state: "running",
+      claimedAt: new Date(), leaseExpiresAt: new Date(), createdAt: new Date(),
+      forced: false, resumeRequested: false, freshRequested: false,
+    };
+    scanJob.upsert.mockResolvedValue(job);
+    const wake = vi.fn();
+    const { admitScanJob, registerScanQueueWakeListener } = await import("@/src/services/scanQueue");
+    const unsub = registerScanQueueWakeListener(wake);
+
+    await admitScanJob({ prId: "pr-1", repoId: "repo-1", commitHash: "abc" });
+    expect(wake).not.toHaveBeenCalled();
+    unsub();
+  });
+
   it("coalesces a duplicate revision through the unique upsert identity", async () => {
     const job = { id: "same-job", prId: "pr-1", commitHash: "abc", state: "running", claimedAt: new Date(), leaseExpiresAt: new Date(), createdAt: new Date() };
     scanJob.upsert.mockResolvedValue(job);
@@ -286,4 +325,215 @@ describe("scan queue", () => {
       data: expect.objectContaining({ forced: true, priority: 10 }),
     }));
   });
+
+  it("classifyQueueWorkerHttpResult marks soft-fail HTTP 200 as failed", async () => {
+    const { classifyQueueWorkerHttpResult } = await import("@/src/services/scanQueue");
+    expect(
+      classifyQueueWorkerHttpResult(true, {
+        success: false,
+        systemWarn: "quality failure",
+        runId: "run-1",
+        terminalOutcome: { isFailed: true, reason: "quality failure" },
+      }),
+    ).toMatchObject({ state: "failed", reviewRunId: "run-1", errorMessage: "quality failure" });
+    expect(
+      classifyQueueWorkerHttpResult(true, { success: true, runId: "run-2" }),
+    ).toMatchObject({ state: "completed", reviewRunId: "run-2" });
+    expect(
+      classifyQueueWorkerHttpResult(true, { interrupted: true, runId: "run-3" }),
+    ).toMatchObject({ state: "interrupted", reviewRunId: "run-3" });
+  });
+
+  it("getScanJobForPr hides running jobs with expired leases", async () => {
+    scanJob.updateMany.mockResolvedValue({ count: 0 });
+    scanJob.findFirst.mockResolvedValue({
+      id: "job-dead",
+      prId: "pr-1",
+      commitHash: "abc",
+      state: "running",
+      claimedAt: new Date("2026-07-18T00:00:00Z"),
+      leaseExpiresAt: new Date("2020-01-01T00:00:00Z"),
+      createdAt: new Date("2026-07-18T00:00:00Z"),
+      forced: false,
+      resumeRequested: false,
+      freshRequested: false,
+      priority: 0,
+      triggerReason: "manual",
+      completedAt: null,
+      errorMessage: null,
+      repository: { name: "demo" },
+      pullRequest: { title: "t", sourceBranch: "feat" },
+    });
+    const { getScanJobForPr } = await import("@/src/services/scanQueue");
+    await expect(getScanJobForPr("pr-1")).resolves.toBeNull();
+  });
+
+  it("wakes when a failed job is retried onto the queue", async () => {
+    scanJob.updateMany.mockResolvedValue({ count: 1 });
+    scanJob.findUnique.mockResolvedValue({
+      id: "job-retry", prId: "pr-2", commitHash: "def", state: "queued", priority: 0,
+      triggerReason: "manual", forced: false, resumeRequested: false, freshRequested: false,
+      claimedAt: null, leaseExpiresAt: null, createdAt: new Date(), completedAt: null,
+      repository: { name: "repo" }, pullRequest: { title: "PR", sourceBranch: "feat" },
+    });
+    const wake = vi.fn();
+    const { retryFailedScanJob, registerScanQueueWakeListener } = await import("@/src/services/scanQueue");
+    const unsub = registerScanQueueWakeListener(wake);
+
+    await expect(retryFailedScanJob("job-retry")).resolves.toMatchObject({ state: "queued", jobId: "job-retry" });
+    expect(wake).toHaveBeenCalled();
+    unsub();
+  });
+
+  it("worker auto-starts next queued job when a slot frees after finish (#147)", async () => {
+    const createdAt = new Date("2026-07-18T00:00:00Z");
+    const queued = (id: string, prId: string) => ({
+      id, prId, repoId: "repo-1", commitHash: id, state: "queued" as const,
+      claimedAt: null, leaseExpiresAt: null, createdAt, priority: 10,
+      forced: false, resumeRequested: false, freshRequested: false,
+      triggerReason: "prcheck", repository: { name: "demo", maxConcurrentScans: null },
+    });
+
+    // startup recoverExpiredScanJobs
+    scanJob.updateMany.mockResolvedValue({ count: 0 });
+    scanJob.count.mockResolvedValue(0);
+    const queue = [queued("job-a", "pr-a"), queued("job-b", "pr-b")];
+    scanJob.findFirst.mockImplementation(async () => queue.shift() ?? null);
+    // claim: expired recovery + priority normalize + claim update (per claim)
+    scanJob.updateMany.mockImplementation(async (args: { where?: { id?: string; state?: unknown }; data?: { state?: string } }) => {
+      if (args?.where && "id" in (args.where ?? {}) && args.data?.state === "running") {
+        return { count: 1 };
+      }
+      if (args?.data?.state && args.data.state !== "queued" && args.data.state !== "running") {
+        return { count: 1 }; // release
+      }
+      return { count: 0 };
+    });
+
+    const executed: string[] = [];
+    const { startScanQueueWorker } = await import("@/src/services/scanQueue");
+    const stop = startScanQueueWorker({
+      intervalMs: 60_000, // must not rely on poll interval
+      workerId: "worker-slot-free",
+      execute: async (job) => {
+        executed.push(job.jobId);
+        return { state: "completed" };
+      },
+    });
+
+    for (let i = 0; i < 40 && executed.length < 2; i++) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    stop();
+    expect(executed).toEqual(["job-a", "job-b"]);
+  });
+
+  it("worker wake registration fires tick when a job becomes queued (#147)", async () => {
+    scanJob.updateMany.mockResolvedValue({ count: 0 });
+    scanJob.count.mockResolvedValue(0);
+    let claimed = false;
+    scanJob.findFirst.mockImplementation(async () => {
+      if (claimed) return null;
+      claimed = true;
+      return {
+        id: "job-wake-worker", prId: "pr-w", repoId: "repo-1", commitHash: "w1", state: "queued",
+        claimedAt: null, leaseExpiresAt: null, createdAt: new Date(), priority: 10,
+        forced: false, resumeRequested: false, freshRequested: false, triggerReason: "manual",
+        repository: { name: "demo", maxConcurrentScans: null },
+      };
+    });
+    scanJob.updateMany.mockImplementation(async (args: { data?: { state?: string } }) => {
+      if (args?.data?.state === "running") return { count: 1 };
+      if (args?.data?.state === "completed") return { count: 1 };
+      return { count: 0 };
+    });
+
+    // First: recover returns 0, initial tick finds nothing (claimed stays false until we force)
+    claimed = true; // block initial tick
+    const executed: string[] = [];
+    const {
+      startScanQueueWorker,
+      notifyScanQueueWake,
+    } = await import("@/src/services/scanQueue");
+    const stop = startScanQueueWorker({
+      intervalMs: 60_000,
+      workerId: "worker-wake",
+      execute: async (job) => {
+        executed.push(job.jobId);
+        return { state: "completed" };
+      },
+    });
+    await new Promise((r) => setTimeout(r, 30));
+    expect(executed).toEqual([]);
+
+    claimed = false; // job becomes available
+    notifyScanQueueWake();
+    for (let i = 0; i < 40 && executed.length < 1; i++) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    stop();
+    expect(executed).toEqual(["job-wake-worker"]);
+  });
+
+  it("coalesces wake that arrives while tick is in-flight (#147 lost-wakeup)", async () => {
+    scanJob.updateMany.mockResolvedValue({ count: 0 });
+    scanJob.count.mockResolvedValue(0);
+
+    let claimGate: (() => void) | null = null;
+    const blockClaim = () => new Promise<void>((resolve) => {
+      claimGate = resolve;
+    });
+    let phase: "block" | "job" | "done" = "block";
+
+    scanJob.findFirst.mockImplementation(async () => {
+      if (phase === "block") {
+        await blockClaim();
+        return null;
+      }
+      if (phase === "job") {
+        phase = "done";
+        return {
+          id: "job-coalesce", prId: "pr-c", repoId: "repo-1", commitHash: "c1", state: "queued",
+          claimedAt: null, leaseExpiresAt: null, createdAt: new Date(), priority: 10,
+          forced: false, resumeRequested: false, freshRequested: false, triggerReason: "manual",
+          repository: { name: "demo", maxConcurrentScans: null },
+        };
+      }
+      return null;
+    });
+    scanJob.updateMany.mockImplementation(async (args: { data?: { state?: string } }) => {
+      if (args?.data?.state === "running") return { count: 1 };
+      if (args?.data?.state === "completed") return { count: 1 };
+      return { count: 0 };
+    });
+
+    const executed: string[] = [];
+    const { startScanQueueWorker, notifyScanQueueWake } = await import("@/src/services/scanQueue");
+    const stop = startScanQueueWorker({
+      intervalMs: 60_000,
+      workerId: "worker-coalesce",
+      execute: async (job) => {
+        executed.push(job.jobId);
+        return { state: "completed" };
+      },
+    });
+
+    // Wait until initial tick is blocked inside claim
+    for (let i = 0; i < 40 && !claimGate; i++) {
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    expect(claimGate).toBeTruthy();
+
+    // Job appears + wake while tick still in-flight
+    phase = "job";
+    notifyScanQueueWake();
+    claimGate!();
+
+    for (let i = 0; i < 40 && executed.length < 1; i++) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    stop();
+    expect(executed).toEqual(["job-coalesce"]);
+  });
+
 });

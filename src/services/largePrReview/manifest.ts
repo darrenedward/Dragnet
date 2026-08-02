@@ -9,15 +9,20 @@ import type {
   TierResult,
 } from "./types";
 
+/**
+ * Engine tier defaults. Hardcodes are defaults only — must match
+ * DEFAULT_LIMITS in prSizeConfig. Live decisions use
+ * tierThresholdsFromLimits(readLimits()), not these constants alone.
+ */
 export const NORMAL_MAX_LINES = 800;
 export const NORMAL_MAX_CODE_FILES = 40;
 export const OVERSIZED_LINES = 3000;
 export const OVERSIZED_CODE_FILES = 100;
 
 /**
- * Runtime overrides for tier thresholds. Callers pass these when they
- * want values from `.dragnet/review-limits.json` instead of the
- * constants. Omitted fields fall back to the constants.
+ * Runtime overrides for tier thresholds. Live path always passes values
+ * from readLimits() / tierThresholdsFromLimits(). Omitted fields fall
+ * back to the constants above for unit tests.
  */
 export interface TierThresholds {
   normalMaxLines?: number;

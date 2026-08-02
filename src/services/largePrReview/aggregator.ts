@@ -1,5 +1,5 @@
 import { prisma } from "@/src/lib/prisma";
-import { dedupFindingsWithinRun, reconcileFindingsAcrossRuns } from "./reconcile";
+import { publishFindingsForRun } from "./publishFindings";
 import type { ReviewReliability } from "./types";
 import { completePrReviewIfCurrent } from "@/src/lib/prRevisionStatus";
 import { recordFixesForCompletedScan } from "@/src/services/findingLifecycle/bugFixTracker";
@@ -52,28 +52,18 @@ export async function aggregateResults(reviewRunId: string): Promise<AggregatedR
     ? null
     : weightedRating(chunks);
 
-  await dedupFindingsWithinRun(reviewRunId);
-  await reconcileFindingsAcrossRuns(run.prId, reviewRunId);
-  const findings = await prisma.reviewFinding.findMany({
-    where: {
-      reviewRunId,
-      OR: [
-        { verificationStatus: null },
-        { verificationStatus: { not: "rejected" } },
-      ],
-      // Skeptic rejects mirror the verifier pattern: persisted for audit,
-      // excluded from the active findings list.
-      AND: [
-        {
-          OR: [
-            { skepticVerdict: null },
-            { skepticVerdict: { not: "rejected" } },
-          ],
-        },
-      ],
-    },
-    orderBy: [{ filename: "asc" }, { line: "asc" }],
+  // Post-aggregate publish seam (shared with single-shot):
+  // fingerprint dedupe → (optional cluster) → re-verify → reconcile → load.
+  const repo = await prisma.repository.findUnique({
+    where: { id: run.repoId },
+    select: { path: true, localPath: true },
   });
+  const repoPath = repo?.localPath || repo?.path || null;
+  const published = await publishFindingsForRun(reviewRunId, {
+    prId: run.prId,
+    repoPath,
+  });
+  const findings = published.findings;
 
   const skippedReasons = chunks
     .filter((chunk) => chunk.status === "skipped")

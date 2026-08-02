@@ -43,7 +43,7 @@ import { StepPipeline, StepError, isStepFailure, isStepSuccess, type StepResult 
 import { detectBuildSystem } from "@/src/lib/buildsystemDetect";
 import { classifyDiff } from "@/src/lib/diffClassifier";
 import { buildFindingFingerprint, resolveSymbolsBatch } from "@/src/services/largePrReview/fingerprint";
-import { dedupFindingsWithinRun, reconcileFindingsAcrossRuns } from "@/src/services/largePrReview/reconcile";
+import { publishFindingsForRun } from "@/src/services/largePrReview/publishFindings";
 import { recordFixesForCompletedScan } from "@/src/services/findingLifecycle/bugFixTracker";
 import { classifyProviderOutcome, type OutcomeClass, type ProviderAttempt } from "@/src/lib/failureClassifier";
 import { computeCost } from "@/src/lib/llmPricing";
@@ -2489,19 +2489,15 @@ ${diffPayload}${deterministicPayload}`;
   const earnedOk = terminal.isEarnedSuccess;
 
   if (reviewRunId && !reviewChunkId) {
-    // Intra-run dedup first: collapse duplicates within this run by fingerprint.
-    // Then reconcile against prior runs so the skill sees a consistent view
-    // (matched findings deduped, resolved findings hidden).
-    // Both are best-effort — a failure shouldn't block run completion.
+    // Post-aggregate publish seam (shared with large-PR mode):
+    // fingerprint dedupe → (optional cluster) → re-verify → cross-run reconcile.
     try {
-      await dedupFindingsWithinRun(reviewRunId);
+      await publishFindingsForRun(reviewRunId, {
+        prId,
+        repoPath: repoPathForVerifier ?? null,
+      });
     } catch (err) {
-      console.error(`[scan] dedupFindingsWithinRun failed for run ${reviewRunId}:`, err);
-    }
-    try {
-      await reconcileFindingsAcrossRuns(prId, reviewRunId);
-    } catch (err) {
-      console.error(`[scan] reconcileFindingsAcrossRuns failed for run ${reviewRunId}:`, err);
+      console.error(`[scan] publishFindingsForRun failed for run ${reviewRunId}:`, err);
     }
     if (earnedOk) {
       await completeReviewRun(reviewRunId, {

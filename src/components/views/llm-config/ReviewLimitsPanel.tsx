@@ -5,17 +5,21 @@ import { AlertCircle, RotateCcw, Save } from "lucide-react";
 import type { ReviewLimits } from "../../../lib/prSizeConfig";
 
 /**
- * Review-engine limits panel — exposes the knobs in
- * `.dragnet/review-limits.json` to the UI. Defaults match the
- * pre-config constants (chunkCap=600 etc.) so existing users see no
- * behavior change until they tune something.
+ * Review-engine limits panel — Settings own size + concurrency numbers.
+ * Hardcodes below are display fallbacks only until GET returns; Reset
+ * restores server-published `defaults` (engine DEFAULT_LIMITS), not a
+ * second client-side constant set.
  *
- * Fields are grouped by purpose:
+ * Metrics are **PR diff lines + code-file counts**, not authoring LOC caps.
+ *
+ * Fields:
  *  - Chunking: how big each LLM call's input is
  *  - PR-tier thresholds: when Dragnet switches to chunked mode
  *  - Tail-skip (off by default): Greptile-style file cap
  */
-const DEFAULTS: ReviewLimits = {
+
+/** Fallback only until /api/llm/review-limits loads (matches shipped DEFAULT_LIMITS). */
+const FALLBACK_DEFAULTS: ReviewLimits = {
   maxConcurrentScans: 1,
   chunkLineCap: 600,
   minUsefulChunkLines: 100,
@@ -40,7 +44,9 @@ const BOUNDS = {
 type FieldKey = keyof ReviewLimits;
 
 export default function ReviewLimitsPanel() {
-  const [limits, setLimits] = useState<ReviewLimits>(DEFAULTS);
+  const [limits, setLimits] = useState<ReviewLimits>(FALLBACK_DEFAULTS);
+  /** Server-published defaults from GET — Reset uses these, not FALLBACK. */
+  const [serverDefaults, setServerDefaults] = useState<ReviewLimits>(FALLBACK_DEFAULTS);
   const [dirty, setDirty] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -55,11 +61,10 @@ export default function ReviewLimitsPanel() {
         if (!res.ok) return;
         const data = await res.json();
         if (cancelled) return;
-        if (data.limits) setLimits(data.limits);
         if (data.defaults) {
-          // Keep DEFAULTS in sync with what the server reports.
-          Object.assign(DEFAULTS, data.defaults);
+          setServerDefaults(data.defaults as ReviewLimits);
         }
+        if (data.limits) setLimits(data.limits as ReviewLimits);
       } catch (err) {
         console.error("Failed loading review limits:", err);
       } finally {
@@ -133,10 +138,12 @@ export default function ReviewLimitsPanel() {
   };
 
   const handleReset = () => {
-    setLimits({ ...DEFAULTS });
+    setLimits({ ...serverDefaults });
     setDirty(true);
     setClientError(null);
   };
+
+  const effectiveCap = Math.max(limits.chunkLineCap, limits.normalMaxLines);
 
   if (isLoading) {
     return (
@@ -148,9 +155,17 @@ export default function ReviewLimitsPanel() {
 
   return (
     <div className="space-y-6">
+      <p className="text-[11px] text-slate-400 font-mono leading-relaxed border border-white/5 rounded-lg px-3 py-2 bg-slate-900/30">
+        Limits measure <span className="text-cyan-300/90">PR diff lines + code-file counts</span>
+        {" "}(additions+deletions on code paths) — not a 500 LOC authoring rule.
+        Changing values applies to the <span className="text-cyan-300/90">next</span> scan (no restart).
+        Effective chunk cap = max(Lines per chunk, Normal max lines)
+        {" "}→ currently <span className="text-cyan-300/90">{effectiveCap.toLocaleString()}</span>.
+      </p>
+
       <SectionCard
         title="Scan queue"
-        subtitle="The maximum number of PR reviews that can run at once across the server."
+        subtitle="Max concurrent PR reviews server-wide. Queued jobs auto-start when a slot frees (any admit path — not gated by auto-rescan)."
       >
         <NumberInput
           label="Max concurrent scans"
@@ -163,7 +178,7 @@ export default function ReviewLimitsPanel() {
 
       <SectionCard
         title="Chunking"
-        subtitle="How big each LLM call's input is. Effective cap = max(Lines per chunk, Normal max lines)."
+        subtitle="How big each LLM call's input is. Effective cap = max(Lines per chunk, Normal max lines) so a normal-tier PR always fits in one chunk."
       >
         <NumberInput
           label="Lines per chunk"
@@ -171,7 +186,7 @@ export default function ReviewLimitsPanel() {
           min={BOUNDS.chunkLineCap.min}
           max={BOUNDS.chunkLineCap.max}
           onChange={(v) => updateField("chunkLineCap", v)}
-          helpText={`Effective: ${Math.max(limits.chunkLineCap, limits.normalMaxLines)}`}
+          helpText={`Effective cap: ${effectiveCap.toLocaleString()} (= max of this and Normal max lines)`}
         />
         <NumberInput
           label="Min useful chunk"
@@ -184,7 +199,7 @@ export default function ReviewLimitsPanel() {
 
       <SectionCard
         title="PR-tier thresholds"
-        subtitle="When Dragnet switches from single-shot review to chunked Large PR Mode."
+        subtitle="When Dragnet switches from single-shot review to chunked Large PR Mode. Thresholds are code diff lines and code-file counts (docs/lockfiles excluded)."
       >
         <NumberInput
           label="Normal — max lines"

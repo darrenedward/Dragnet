@@ -108,6 +108,7 @@ vi.mock("@/src/services/largePrReview", () => ({
 
 vi.mock("@/src/lib/prSizeConfig", () => ({
   readLimits: vi.fn(() => ({})),
+  tierThresholdsFromLimits: vi.fn(() => ({})),
 }));
 
 vi.mock("@/src/lib/reviewFreshness", () => ({

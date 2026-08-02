@@ -3,7 +3,7 @@ import { prisma } from "@/src/lib/prisma";
 import { findPrByIdOrNumber, findPrByBranch } from "@/src/lib/findPr";
 import { refreshPrFiles } from "@/src/lib/getRealPrs";
 import { runPrScan, SYSTEM_INSTRUCTION } from "@/src/services/reviewService";
-import { authenticateApiRequest } from "@/src/lib/apiAuth";
+import { authenticateApiRequest, enforceRepoScope, type AuthResult } from "@/src/lib/apiAuth";
 import { isReviewActive, acquireReviewLock } from "@/src/lib/reviewLocks";
 import { blocksExplicitAdmit, runScanPrelude } from "@/src/lib/scanPrelude";
 import { getChatChain } from "@/src/lib/llmClient";
@@ -466,16 +466,18 @@ export async function POST(req: Request, { params }: { params: Promise<{ args?: 
   }
 
   const { args } = await params;
-  const defRepo = defaultRepoId(req.url, args);
+  // URL path / explicit args win; else per-repo API key scopes the project
+  // so DRAGNET_REPO_ID is optional when the Bearer key is already repo-scoped.
+  const defRepo = defaultRepoId(req.url, args) ?? auth.repoId ?? null;
   const body = await req.json().catch(() => null);
 
   if (body && body.jsonrpc && body.method) {
-    return handleJsonRpc(body, defRepo, auth.userId);
+    return handleJsonRpc(body, defRepo, auth);
   }
-  return handleLegacyCommand(body, defRepo, auth.userId);
+  return handleLegacyCommand(body, defRepo, auth);
 }
 
-async function handleJsonRpc(body: any, defRepo: string | null, userId: string | null) {
+async function handleJsonRpc(body: any, defRepo: string | null, auth: AuthResult) {
   const { method, id, params } = body;
   if (id === undefined || id === null) return new Response(null, { status: 202 });
 
@@ -500,7 +502,13 @@ async function handleJsonRpc(body: any, defRepo: string | null, userId: string |
     if (!toolName || !toolHandlers[toolName]) {
       return NextResponse.json({ jsonrpc: "2.0", id, error: { code: -32601, message: `Unknown tool: ${toolName}` } });
     }
-    const result = await toolHandlers[toolName](args, userId);
+    if (args.repoId) {
+      const scopeErr = enforceRepoScope(auth, args.repoId);
+      if (scopeErr) {
+        return NextResponse.json({ jsonrpc: "2.0", id, error: { code: -32003, message: scopeErr.error } }, { status: 403 });
+      }
+    }
+    const result = await toolHandlers[toolName](args, auth.userId);
     return NextResponse.json({ jsonrpc: "2.0", id, result: { content: [{ type: "text", text: result }] } });
   }
 
@@ -515,7 +523,7 @@ async function resolvePr(body: any, argVal: string): Promise<any | null> {
   return pr;
 }
 
-async function handleLegacyCommand(body: any, defRepo: string | null, userId: string | null) {
+async function handleLegacyCommand(body: any, defRepo: string | null, auth: AuthResult) {
   const { command } = body || {};
   if (!command || typeof command !== "string") {
     return NextResponse.json({ status: "Error", message: "Send a command." }, { status: 400 });
@@ -523,10 +531,16 @@ async function handleLegacyCommand(body: any, defRepo: string | null, userId: st
   const parts = command.trim().split(/\s+/);
   const cmdName = parts[0];
   const argVal = parts.slice(1).join(" ");
+  const userId = auth.userId;
 
   try {
     if (cmdName.endsWith("prcheck") || cmdName.endsWith("checkpr")) {
-      const pr = await resolvePr({ ...body, repoId: body.repoId || defRepo }, argVal);
+      const rid = body.repoId || defRepo;
+      if (rid) {
+        const scopeErr = enforceRepoScope(auth, rid);
+        if (scopeErr) return NextResponse.json({ status: "Error", message: scopeErr.error }, { status: 403 });
+      }
+      const pr = await resolvePr({ ...body, repoId: rid }, argVal);
       if (!pr) return NextResponse.json({ status: "Error", message: "> No PR found on this repository." });
       if (isReviewActive(pr.id)) {
         return NextResponse.json({
@@ -565,7 +579,12 @@ async function handleLegacyCommand(body: any, defRepo: string | null, userId: st
       });
     }
     if (cmdName.endsWith("prcomments") || cmdName.endsWith("comments")) {
-      const pr = await resolvePr({ ...body, repoId: body.repoId || defRepo }, argVal);
+      const rid = body.repoId || defRepo;
+      if (rid) {
+        const scopeErr = enforceRepoScope(auth, rid);
+        if (scopeErr) return NextResponse.json({ status: "Error", message: scopeErr.error }, { status: 403 });
+      }
+      const pr = await resolvePr({ ...body, repoId: rid }, argVal);
       if (!pr) return NextResponse.json({ status: "Error", message: "> No PR found on this repository." });
       const latest = await getLatestCompletedReview(pr.id);
       const sizeProfile = await loadPrSizeProfile(pr);
@@ -581,7 +600,12 @@ async function handleLegacyCommand(body: any, defRepo: string | null, userId: st
       });
     }
     if (cmdName.endsWith("prcheckstatus") || cmdName.endsWith("status")) {
-      const pr = await resolvePr({ ...body, repoId: body.repoId || defRepo }, argVal);
+      const rid = body.repoId || defRepo;
+      if (rid) {
+        const scopeErr = enforceRepoScope(auth, rid);
+        if (scopeErr) return NextResponse.json({ status: "Error", message: scopeErr.error }, { status: 403 });
+      }
+      const pr = await resolvePr({ ...body, repoId: rid }, argVal);
       if (!pr) return NextResponse.json({ status: "Error", message: "> No PR found on this repository." });
       const sizeProfile = await loadPrSizeProfile(pr);
       if (isReviewActive(pr.id)) {
@@ -700,6 +724,8 @@ async function handleLegacyCommand(body: any, defRepo: string | null, userId: st
     if (cmdName.endsWith("prlist") || cmdName.endsWith("list")) {
       const rid = body.repoId || defRepo;
       if (!rid) return NextResponse.json({ status: "Error", message: "Pass { repoId }." }, { status: 400 });
+      const scopeErr = enforceRepoScope(auth, rid);
+      if (scopeErr) return NextResponse.json({ status: "Error", message: scopeErr.error }, { status: 403 });
       const { prs, topology } = await buildPrList(rid);
       const pullRequests = await Promise.all(prs.map(async (p) => {
         const sizeProfile = await loadPrSizeProfile(p);
