@@ -1,4 +1,9 @@
 import { describe, expect, it } from "vitest";
+import {
+  clusterDuplicateIds,
+  planRootCauseClusters,
+  type ClusterFinding,
+} from "../../src/services/largePrReview/cluster";
 import { planIntraRunDedup } from "../../src/services/largePrReview/reconcile";
 import {
   PUBLISH_ORDER,
@@ -14,6 +19,41 @@ describe("post-aggregate publish order", () => {
       "cross_run_reconcile",
       "load_published",
     ]);
+  });
+
+  it("cluster step plans multi-location merge then marks non-keep members for removal", () => {
+    const stem = "Missing authz check before mutating protected admin resources safely";
+    const findings: ClusterFinding[] = [
+      {
+        id: "keep",
+        fingerprint: "fp-a",
+        category: "Security",
+        severity: "blocker",
+        filename: "a.ts",
+        line: 1,
+        explanation: stem,
+        confidence: 0.95,
+        evidenceChain: null,
+      },
+      {
+        id: "drop",
+        fingerprint: "fp-b",
+        category: "Security",
+        severity: "warning",
+        filename: "b.ts",
+        line: 2,
+        explanation: stem,
+        confidence: 0.9,
+        evidenceChain: null,
+      },
+    ];
+    const groups = planRootCauseClusters(findings);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].shouldReverify).toBe(true);
+    expect(groups[0].mergedSeverity).toBe("blocker");
+    const afterCluster = selectPublishedSurvivors(findings, clusterDuplicateIds(groups));
+    expect(afterCluster.map((f) => f.id)).toEqual(["keep"]);
+    expect(groups[0].multiLocation.map((l) => l.file).sort()).toEqual(["a.ts", "b.ts"]);
   });
 
   it("same fingerprint collapses to one survivor (publish step 1)", () => {
