@@ -115,24 +115,25 @@ export async function publishFindingsForRun(
 
   // 4. Cross-run reconcile
   try {
-    const run = await prisma.reviewRun.findUnique({
-      where: { id: reviewRunId },
-      select: { prId: true },
-    });
-    if (run) {
-      await reconcileFindingsAcrossRuns(run.prId, reviewRunId);
+    let prId = options.prId;
+    if (!prId) {
+      const run = await prisma.reviewRun.findUnique({
+        where: { id: reviewRunId },
+        select: { prId: true },
+      });
+      prId = run?.prId;
+    }
+    if (prId) {
+      await reconcileFindingsAcrossRuns(prId, reviewRunId);
     }
   } catch (err) {
     console.error(`[publish] reconcile failed for run ${reviewRunId}:`, err);
   }
 
-  // 5. Load published set
-  let findings: Awaited<ReturnType<typeof loadPublishedFindings>> = [];
-  try {
-    findings = await loadPublishedFindings(reviewRunId);
-  } catch (err) {
-    console.error(`[publish] load published findings failed for run ${reviewRunId}:`, err);
-  }
+  // 5. Load published set — errors propagate so large-PR aggregate cannot
+  // complete with a false empty result (single-shot discards the return and
+  // already wraps this call in best-effort try/catch).
+  const findings = await loadPublishedFindings(reviewRunId);
 
   return {
     findings,
