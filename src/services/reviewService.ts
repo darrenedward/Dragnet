@@ -67,6 +67,12 @@ import {
   formatAttemptEndConsoleLog,
   formatAttemptEndReviewLog,
 } from "@/src/lib/agenticFinish";
+import {
+  beginProviderAttempt,
+  completeProviderAttempt,
+  persistReviewArtifact,
+  persistReviewCheckpoint,
+} from "@/src/services/durableScanState";
 
 export interface ScanResult {
   success: boolean;
@@ -302,6 +308,7 @@ async function persistCheckpoint(
   };
   try {
     writeCheckpoint(repoPath ?? "", reviewRunId, checkpointId, state, repoId);
+    await persistReviewCheckpoint(state);
     const at = new Date();
     if (reviewChunkId) {
       await setReviewChunkLastCheckpointAt(reviewChunkId, at);
@@ -1315,6 +1322,18 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
     try {
       const pipelineResult = await pipeline.run();
       deterministicFindings = pipelineResult.findings;
+      if (reviewRunId) {
+        await persistReviewArtifact({
+          reviewRunId,
+          reviewChunkId,
+          artifactKey: `deterministic:${reviewChunkId ?? RUN_CHECKPOINT_ID}`,
+          kind: "deterministic_checks",
+          content: {
+            commitHash: checkHeadSha,
+            findings: deterministicFindings,
+          },
+        });
+      }
 
       if (pipelineResult.aborted) {
         const isInfra = pipelineResult.infrastructureFailure;
@@ -1441,9 +1460,20 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
       }
 
       void logReview(prId, "Starting LLM agentic review...", "info", reviewRunId, reviewChunkId);
-      for (const { client, model, name, endpoint, maxIterations } of chain) {
+      for (const [providerIndex, { client, model, name, endpoint, maxIterations }] of chain.entries()) {
         void logReview(prId, `Checking provider: ${name} (${model})`, "info", reviewRunId, reviewChunkId);
         usedModel = model;
+        const attemptKey = `${reviewChunkId ?? RUN_CHECKPOINT_ID}:${providerIndex}:${name}`;
+        if (reviewRunId) {
+          await beginProviderAttempt({
+            reviewRunId,
+            reviewChunkId,
+            attemptKey,
+            provider: name,
+            model,
+            maxIterations,
+          });
+        }
         // Per-attempt state — visible to catch/finally for classification.
         // Reset at the top of each provider iteration.
         let attemptIterations = 0;
@@ -1890,6 +1920,20 @@ ${diffPayload}${deterministicPayload}`;
             completionTokens: attemptCompletionTokens,
             costUsd,
           });
+          if (reviewRunId) {
+            await completeProviderAttempt({
+              reviewRunId,
+              attemptKey,
+              status: outcome === "success" ? "completed" : "failed",
+              outcome,
+              error: attemptError,
+              iterationsUsed: attemptIterations,
+              maxIterations,
+              promptTokens: attemptPromptTokens,
+              completionTokens: attemptCompletionTokens,
+              costUsd,
+            });
+          }
           const endFields = {
             provider: name,
             outcome,
@@ -1944,6 +1988,19 @@ ${diffPayload}${deterministicPayload}`;
       }
 
       // Terminal outcome (success or quality-failure). Clear checkpoint.
+      if (reviewRunId) {
+        await persistReviewArtifact({
+          reviewRunId,
+          reviewChunkId,
+          artifactKey: `review-result:${reviewChunkId ?? RUN_CHECKPOINT_ID}`,
+          kind: "review_result",
+          content: {
+            providerAttempts,
+            review: finalReview,
+            deterministicFindings,
+          },
+        });
+      }
       clearCheckpoint(breakerRepoPath, reviewRunId, reviewChunkId, pr.repoId);
 
       // Phase 2 cost telemetry
