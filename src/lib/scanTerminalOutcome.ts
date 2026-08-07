@@ -56,6 +56,8 @@ export type ScanTerminalOutcome = {
   isProcessing: boolean;
   /** True when this is an earned AI pass (merge gate may still fail). */
   isEarnedSuccess: boolean;
+  /** True when deterministic coverage skipped an unavailable project service. */
+  externalDependencySkipped?: boolean;
   queuePosition: number | null;
 };
 
@@ -97,6 +99,10 @@ function normalizePos(raw: number | null | undefined): number | null {
 
 function lower(s: string | null | undefined): string {
   return (s ?? "").trim().toLowerCase();
+}
+
+function hasExternalDependencySkip(warn: string | null | undefined): boolean {
+  return /external (?:project service|dependency).*skip/i.test(warn ?? "");
 }
 
 function hasProviderOutcome(
@@ -349,6 +355,7 @@ export function classifyScanTerminalOutcome(input: ScanTerminalInput): ScanTermi
       isFailed: false,
       isProcessing: false,
       isEarnedSuccess: true,
+      externalDependencySkipped: hasExternalDependencySkip(systemWarn),
       queuePosition: null,
     };
   }
@@ -452,6 +459,7 @@ export function classifyScanTerminalOutcome(input: ScanTerminalInput): ScanTermi
       isFailed: false,
       isProcessing: false,
       isEarnedSuccess: true,
+      externalDependencySkipped: hasExternalDependencySkip(systemWarn),
       queuePosition: null,
     };
   }
@@ -468,6 +476,7 @@ export function classifyScanTerminalOutcome(input: ScanTerminalInput): ScanTermi
       isFailed: false,
       isProcessing: false,
       isEarnedSuccess: input.rating != null && Number.isFinite(input.rating),
+      externalDependencySkipped: hasExternalDependencySkip(systemWarn),
       queuePosition: null,
     };
   }
