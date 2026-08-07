@@ -5,6 +5,7 @@ import {
   DEFAULT_TEST_COMMAND,
   externalDependencySkipFinding,
   isExternalDependencyFailure,
+  isBroadQualityCommand,
   redactExternalDependencyOutput,
   resolveQualityCommand,
   skippedFinding,
@@ -175,7 +176,7 @@ export async function runContainerizedChecks(
   };
 
   const runQualityChecks = async (): Promise<DeterministicFinding[]> => {
-    const scripts = !opts.testCommand || opts.testCommand.trim() === DEFAULT_TEST_COMMAND
+    const scripts = !opts.testCommand || opts.testCommand.trim() === DEFAULT_TEST_COMMAND || isBroadQualityCommand(opts.testCommand)
       ? await readPackageScripts()
       : null;
     const cmd = resolveQualityCommand({ configuredCommand: opts.testCommand, scripts });

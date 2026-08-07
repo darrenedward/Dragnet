@@ -8,6 +8,7 @@ export {
   resolveQualityCommand,
   externalDependencySkipFinding,
   isExternalDependencyFailure,
+  isBroadQualityCommand,
   redactExternalDependencyOutput,
   skippedFinding,
 } from "./helpers";

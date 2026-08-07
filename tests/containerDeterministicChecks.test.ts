@@ -41,7 +41,7 @@ const baseOpts: ContainerizedCheckOptions = {
   commitHash: "abc123def456",
   runnerImage: "node:22-alpine",
   installCommand: "npm install",
-  testCommand: "npm test && npm run lint",
+  testCommand: "npm run verify",
   prId: "pr-test-1",
 };
 
@@ -181,6 +181,26 @@ describe("runContainerizedChecks", () => {
       networkMode: "none",
     }));
     expect(mockRunRunner.mock.calls[2][0]).not.toHaveProperty("env");
+  });
+
+  it("migrates a saved broad npm test override using the reviewed package scripts", async () => {
+    mockRunRunner
+      .mockResolvedValueOnce({ exitCode: 0, stdout: "", stderr: "", timedOut: false })
+      .mockResolvedValueOnce({
+        exitCode: 0,
+        stdout: JSON.stringify({ scripts: { build: "next build", lint: "eslint", test: "vitest" } }),
+        stderr: "",
+        timedOut: false,
+      })
+      .mockResolvedValueOnce({ exitCode: 0, stdout: "", stderr: "", timedOut: false });
+
+    await runContainerizedChecks({ ...baseOpts, testCommand: "npm test && npm run lint" });
+
+    expect(mockRunRunner).toHaveBeenCalledTimes(3);
+    expect(mockRunRunner.mock.calls[2][0]).toEqual(expect.objectContaining({
+      commands: ["npm run build && npm run lint"],
+      networkMode: "none",
+    }));
   });
 
   it("mounts the correct volume name", async () => {
@@ -374,6 +394,7 @@ describe("runContainerizedChecks", () => {
 
     mockRunRunner
       .mockResolvedValueOnce({ exitCode: 0, stdout: "", stderr: "", timedOut: false })
+      .mockResolvedValueOnce({ exitCode: 0, stdout: "not a package.json", stderr: "", timedOut: false })
       .mockResolvedValueOnce({ exitCode: 0, stdout: "All tests passed!", stderr: "", timedOut: false });
 
     const findings = await runContainerizedChecks(customOpts);
@@ -382,7 +403,7 @@ describe("runContainerizedChecks", () => {
     expect(mockRunRunner).toHaveBeenNthCalledWith(1,
       expect.objectContaining({ image: "python:3.12-slim", commands: ["pip install -r requirements.txt"] }),
     );
-    expect(mockRunRunner).toHaveBeenNthCalledWith(2,
+    expect(mockRunRunner).toHaveBeenNthCalledWith(3,
       expect.objectContaining({ image: "python:3.12-slim", commands: ["pytest"] }),
     );
   });

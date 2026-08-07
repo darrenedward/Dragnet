@@ -63,6 +63,10 @@ Dragnet is developed with AI assistance and is intentionally transparent about i
 
 The in-app **DB Config** tab lets you re-test and re-save the database connection without editing `.env.local` by hand. The **LLM Settings** tab lets you point Dragnet at any OpenAI-compatible endpoint (OpenRouter, Ollama, LM Studio), browse the live model catalog, and configure a **primary + optional fallback** provider for each role (chat + embedding). When the primary fails, the fallback is tried automatically — if both fail, reviews return empty findings + null rating with an actionable banner, and embeddings trip a session circuit breaker to avoid log spam.
 
+### Review control plane and clean-room checks
+
+Dragnet PostgreSQL is internal control-plane storage for repository metadata, symbols, call graphs, review runs, and scan logs. Its connection string and credentials remain in the Dragnet process and are never exposed to reviewed repositories or their quality-check containers.
+
 **Review Limits** (same Settings area) own PR size tiers, chunk caps, and global `maxConcurrentScans`. Metrics are **PR diff lines + code-file counts**, not a 500 LOC authoring rule. Shipped defaults: normal under **800** lines / **40** code files; oversized over **3000** / **100**; chunk floor 600 (effective cap = max of chunk lines and normal max lines). Live installs may override via the UI (`.dragnet/review-limits.json`); the next scan picks them up without a process restart.
 
 ---
@@ -114,12 +118,14 @@ DRAGNET_REPO_KEY=dr_your_key_here
 
 ## Quality gates (deterministic checks)
 
-Per-repo **install** and **test** commands run in an ephemeral container (Tier 2) before the LLM review.
+Per-repo **install** and deterministic **quality** commands run in an ephemeral container (Tier 2) before the LLM review. Quality commands run without network access; only the narrowly scoped Git synchronization and dependency installation need external access.
 
 | Setting | Default | Guidance |
 |---------|---------|----------|
 | `installCommand` | `npm install` | Dependency install only. Non-zero exit **fails the scan closed** (no LLM high score after a broken install). |
-| `testCommand` | `npm run typecheck && npm run lint` | Prefer **typecheck + lint**. Optional build can be appended. Full e2e/unit suites are **not** the default merge gate. |
+| `testCommand` | `npm run typecheck && npm run lint` | Legacy setting name; it means deterministic **typecheck + lint**. If typecheck is unavailable, Dragnet verifies **build + lint** (or lint alone). Broad `npm test`, Vitest, Jest, pytest, Playwright, Cypress, and live-service integration overrides are migrated to the safe path when package scripts are available. |
+
+The default PR merge gate is deterministic source quality, not a full test-suite run. Full unit, integration, and end-to-end suites remain available for local development or an explicitly managed deployment workflow, but they are not run by normal PR scans because they may require live databases, service endpoints, credentials, or other ambient infrastructure.
 
 **Remote / volume-backed repos** (clone URL or Docker volume) skip host Tier 1 (local tsc/eslint) and use container Tier 2 only — no host/container double-run. Local path-only repos still run host Tier 1 when a real checkout exists.
 
