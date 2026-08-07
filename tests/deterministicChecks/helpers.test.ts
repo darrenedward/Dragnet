@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   externalDependencySkipFinding,
   isExternalDependencyFailure,
+  isBroadQualityCommand,
   redactExternalDependencyOutput,
   skippedFinding,
   shouldRunHostTier1,
@@ -118,6 +119,11 @@ describe("default quality-gate commands", () => {
       configuredCommand: "npm test && npm run lint",
       scripts: { build: "next build", lint: "eslint" },
     })).toBe("npm run build && npm run lint");
+  });
+
+  it("identifies saved broad test overrides for migration", () => {
+    expect(isBroadQualityCommand("npm test && npm run lint")).toBe(true);
+    expect(isBroadQualityCommand("npm run build && npm run lint")).toBe(false);
   });
 
   it("does not fall back to npm test when typecheck is unavailable", () => {

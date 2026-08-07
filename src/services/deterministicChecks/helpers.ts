@@ -10,6 +10,10 @@ export const DEFAULT_INSTALL_COMMAND = "npm install";
 export const DEFAULT_TEST_COMMAND = "npm run typecheck && npm run lint";
 const BROAD_TEST_COMMAND = /\b(?:npm\s+(?:run\s+)?test|vitest|jest|playwright|cypress|pytest)\b/i;
 
+export function isBroadQualityCommand(command: string | null | undefined): boolean {
+  return Boolean(command?.trim() && BROAD_TEST_COMMAND.test(command));
+}
+
 export type QualityCommandOptions = {
   /** A repository-specific command already verified to be service-free. */
   configuredCommand?: string | null;
@@ -28,7 +32,7 @@ export function resolveQualityCommand(options: QualityCommandOptions = {}): stri
   const configured = options.configuredCommand?.trim();
   const scripts = options.scripts;
   const isDefault = !configured || configured === DEFAULT_TEST_COMMAND;
-  if (!isDefault && !BROAD_TEST_COMMAND.test(configured)) return configured;
+  if (!isDefault && !isBroadQualityCommand(configured)) return configured;
 
   // A non-Node repository may have an explicitly verified command such as
   // pytest. Without package metadata, preserve that explicit command; the
