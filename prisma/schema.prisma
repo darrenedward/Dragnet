@@ -184,6 +184,7 @@ model ReviewProviderAttempt {
   reviewRunId      String
   reviewChunkId    String?
   attemptKey       String
+  attemptOrdinal   Int
   provider         String
   model            String
   status           String    // running | completed | failed

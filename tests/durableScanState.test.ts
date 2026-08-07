@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const reviewProviderAttempt = {
   upsert: vi.fn(),
+  create: vi.fn(),
+  findUnique: vi.fn(),
   update: vi.fn(),
   findMany: vi.fn(),
 };
@@ -22,6 +24,8 @@ describe("durable scan state", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     reviewProviderAttempt.upsert.mockResolvedValue({});
+    reviewProviderAttempt.create.mockResolvedValue({});
+    reviewProviderAttempt.findUnique.mockResolvedValue(null);
     reviewProviderAttempt.update.mockResolvedValue({});
     reviewArtifact.upsert.mockResolvedValue({});
     reviewCheckpoint.upsert.mockResolvedValue({});
@@ -36,6 +40,7 @@ describe("durable scan state", () => {
     await beginProviderAttempt({
       reviewRunId: "run-1",
       attemptKey: "primary:1",
+      attemptOrdinal: 0,
       provider: "Agnes",
       model: "agnes-2.0-flash",
       maxIterations: 2,
@@ -53,14 +58,28 @@ describe("durable scan state", () => {
       costUsd: 0.03,
     });
 
-    expect(reviewProviderAttempt.upsert).toHaveBeenCalledWith(expect.objectContaining({
-      where: { reviewRunId_attemptKey: { reviewRunId: "run-1", attemptKey: "primary:1" } },
-      create: expect.objectContaining({ status: "running", provider: "Agnes" }),
+    expect(reviewProviderAttempt.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: "running", provider: "Agnes", attemptOrdinal: 0 }),
     }));
     expect(reviewProviderAttempt.update).toHaveBeenCalledWith(expect.objectContaining({
       where: { reviewRunId_attemptKey: { reviewRunId: "run-1", attemptKey: "primary:1" } },
       data: expect.objectContaining({ status: "failed", outcome: "transport_failure", errorClass: "ETIMEDOUT" }),
     }));
+  });
+
+  it("does not reopen a terminal attempt during replay", async () => {
+    const { beginProviderAttempt } = await import("../src/services/durableScanState");
+    reviewProviderAttempt.findUnique.mockResolvedValue({ status: "failed" });
+
+    await expect(beginProviderAttempt({
+      reviewRunId: "run-1",
+      attemptKey: "primary:1",
+      attemptOrdinal: 0,
+      provider: "Agnes",
+      model: "agnes-2.0-flash",
+      maxIterations: 2,
+    })).resolves.toBe(false);
+    expect(reviewProviderAttempt.create).not.toHaveBeenCalled();
   });
 
   it("replays artifacts and checkpoints idempotently with content hashes", async () => {

@@ -26,6 +26,7 @@ export interface ProviderAttemptStart {
   reviewRunId: string;
   reviewChunkId?: string;
   attemptKey: string;
+  attemptOrdinal: number;
   provider: string;
   model: string;
   maxIterations: number;
@@ -47,31 +48,34 @@ export interface ProviderAttemptCompletion {
 }
 
 /** Persisting evidence is best-effort so a telemetry outage cannot fail a review. */
-export async function beginProviderAttempt(input: ProviderAttemptStart): Promise<void> {
-  if (!db.reviewProviderAttempt) return;
+export async function beginProviderAttempt(input: ProviderAttemptStart): Promise<boolean> {
+  if (!db.reviewProviderAttempt) return true;
   try {
-    await db.reviewProviderAttempt.upsert({
+    const existing = await db.reviewProviderAttempt.findUnique({
       where: { reviewRunId_attemptKey: { reviewRunId: input.reviewRunId, attemptKey: input.attemptKey } },
-      create: {
-        id: stableId("attempt", `${input.reviewRunId}:${input.attemptKey}`),
-        reviewRunId: input.reviewRunId,
-        reviewChunkId: input.reviewChunkId ?? null,
-        attemptKey: input.attemptKey,
-        provider: input.provider,
-        model: input.model,
-        status: "running",
-        maxIterations: input.maxIterations,
-        startedAt: input.startedAt ?? new Date(),
-      },
-      update: {
-        provider: input.provider,
-        model: input.model,
-        status: "running",
-        maxIterations: input.maxIterations,
-      },
+      select: { status: true },
     });
+    if (existing?.status === "completed" || existing?.status === "failed") return false;
+    if (!existing) {
+      await db.reviewProviderAttempt.create({
+        data: {
+          id: stableId("attempt", `${input.reviewRunId}:${input.attemptKey}`),
+          reviewRunId: input.reviewRunId,
+          reviewChunkId: input.reviewChunkId ?? null,
+          attemptKey: input.attemptKey,
+          attemptOrdinal: input.attemptOrdinal,
+          provider: input.provider,
+          model: input.model,
+          status: "running",
+          maxIterations: input.maxIterations,
+          startedAt: input.startedAt ?? new Date(),
+        },
+      });
+    }
+    return true;
   } catch (error) {
     console.warn(`[durable-scan] failed to persist provider attempt start:`, error);
+    return true;
   }
 }
 

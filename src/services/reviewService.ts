@@ -1465,14 +1465,19 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
         usedModel = model;
         const attemptKey = `${reviewChunkId ?? RUN_CHECKPOINT_ID}:${providerIndex}:${name}`;
         if (reviewRunId) {
-          await beginProviderAttempt({
+          const shouldRunAttempt = await beginProviderAttempt({
             reviewRunId,
             reviewChunkId,
             attemptKey,
+            attemptOrdinal: providerIndex,
             provider: name,
             model,
             maxIterations,
           });
+          if (!shouldRunAttempt) {
+            void logReview(prId, `Skipping already terminal provider attempt: ${name}`, "info", reviewRunId, reviewChunkId);
+            continue;
+          }
         }
         // Per-attempt state — visible to catch/finally for classification.
         // Reset at the top of each provider iteration.
