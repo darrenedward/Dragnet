@@ -68,6 +68,9 @@ import {
   formatAttemptEndReviewLog,
 } from "@/src/lib/agenticFinish";
 
+const isExternalDependencySkip = (finding: DeterministicFinding): boolean =>
+  finding.kind === "external_dependency_skip";
+
 export interface ScanResult {
   success: boolean;
   /**
@@ -1145,6 +1148,7 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
   });
 
   let deterministicFindings: DeterministicFinding[] = [];
+  let externalDependencySkips: DeterministicFinding[] = [];
   let tier1HadErrors = false;
   let runnerImage = repo.runnerImage ?? "node:20-alpine";
   let buildSystemWarn: string | null = null;
@@ -1153,7 +1157,18 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
   if (options?.precomputedFindings) {
     // Large-PR mode: Tier 1+2 already ran globally before the chunk loop.
     // Skip planHostTier1 entirely — do not materialize per-chunk worktrees.
-    deterministicFindings = options.precomputedFindings;
+    externalDependencySkips = options.precomputedFindings.filter(isExternalDependencySkip);
+    deterministicFindings = options.precomputedFindings.filter((finding) => !isExternalDependencySkip(finding));
+    for (const skip of externalDependencySkips) {
+      void logReview(
+        prId,
+        `External dependency skip (${skip.provenance ?? "unknown provenance"}): ${skip.explanation}`,
+        "warn",
+        reviewRunId,
+        reviewChunkId,
+      );
+      console.warn(`[scan] runPrScan: external dependency skipped — ${skip.explanation}`);
+    }
     void logReview(
       prId,
       `Using ${deterministicFindings.length} pre-computed deterministic findings (global scan)`,
@@ -1314,7 +1329,18 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
     // and continues for non-critical steps.
     try {
       const pipelineResult = await pipeline.run();
-      deterministicFindings = pipelineResult.findings;
+      externalDependencySkips = pipelineResult.findings.filter(isExternalDependencySkip);
+      deterministicFindings = pipelineResult.findings.filter((finding) => !isExternalDependencySkip(finding));
+      for (const skip of externalDependencySkips) {
+        void logReview(
+          prId,
+          `External dependency skip (${skip.provenance ?? "unknown provenance"}): ${skip.explanation}`,
+          "warn",
+          reviewRunId,
+          reviewChunkId,
+        );
+        console.warn(`[scan] runPrScan: external dependency skipped — ${skip.explanation}`);
+      }
 
       if (pipelineResult.aborted) {
         const isInfra = pipelineResult.infrastructureFailure;
@@ -1386,7 +1412,10 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
       // Tier 3 gate: skip LLM review when Tier 1+2 clean and diff trivial
       const findingsEmpty = deterministicFindings.length === 0;
       const diffClass = classifyDiff(files);
-      const skipTier3 = findingsEmpty && diffClass.isTrivial;
+      // An external dependency skip is not a code finding, but it also is not
+      // evidence of a clean pass. Continue to the LLM instead of taking the
+      // trivial-diff clean shortcut.
+      const skipTier3 = findingsEmpty && externalDependencySkips.length === 0 && diffClass.isTrivial;
       if (skipTier3) {
         void logReview(
           prId,
@@ -2138,6 +2167,10 @@ ${diffPayload}${deterministicPayload}`;
   let scanSummary = llmData.summary || "";
   usedModel = llmData.usedModel;
   systemWarn = llmData.systemWarn;
+  if (externalDependencySkips.length > 0) {
+    const skipWarning = `${externalDependencySkips.length} external project service check(s) skipped; deterministic quality status is unavailable for those checks.`;
+    systemWarn = systemWarn ? `${systemWarn} ${skipWarning}` : skipWarning;
+  }
   // Merge provider attempts from step data (step fn mutates the outer
   // providerAttempts array via closure — `as any[]` avoids const-reassign)
   (providerAttempts as any[]).length = 0;

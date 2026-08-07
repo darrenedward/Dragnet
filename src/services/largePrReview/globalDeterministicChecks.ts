@@ -189,10 +189,21 @@ export async function runGlobalDeterministicChecks(
         }
         void logReview(
           prId,
-          `[global] Tier 2 containerized checks → ${tier2Result.data.length} finding(s) head=${tier2Plan.commitHash.slice(0, 12)} mode=${tier2Plan.action}`,
+          `[global] Tier 2 containerized checks → ${tier2Result.data.length} result(s) head=${tier2Plan.commitHash.slice(0, 12)} mode=${tier2Plan.action}`,
           "info",
           reviewRunId,
         );
+        for (const result of tier2Result.data) {
+          if (result.kind === "external_dependency_skip") {
+            void logReview(
+              prId,
+              `[global] External dependency skip (${result.provenance ?? "unknown provenance"}): ${result.explanation}`,
+              "warn",
+              reviewRunId,
+            );
+            console.warn(`[global] external dependency skipped — ${result.explanation}`);
+          }
+        }
         findings.push(...tier2Result.data);
       } catch (err: any) {
         return {

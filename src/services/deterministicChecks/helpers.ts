@@ -78,3 +78,32 @@ export function skippedFinding(
     source,
   };
 }
+
+/** Detect an unavailable project-owned service without masking compiler/lint diagnostics. */
+export function isExternalDependencyFailure(output: string): boolean {
+  return /(?:ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENETUNREACH|ENOTFOUND|EAI_AGAIN|connection\s+(?:refused|reset|timed out|failed)|failed to connect|service unavailable|could not connect|missing credentials|credentials? (?:not found|not configured)|postgres(?:ql)?(?:\s+error|.*connection)|mysql(?:\s+error|.*connection)|redis(?:\s+error|.*connection))/i.test(output);
+}
+
+export function redactExternalDependencyOutput(output: string): string {
+  return output
+    .slice(0, 500)
+    .replace(/([a-z][a-z0-9+.-]*:\/\/)[^@\s]+@/gi, "$1<redacted>@")
+    .replace(/((?:password|token|secret|api[_-]?key)\s*[=:]\s*)[^\s&]+/gi, "$1<redacted>");
+}
+
+export function externalDependencySkipFinding(
+  source: "tsc" | "eslint" | "runner",
+  message: string,
+  provenance: string = "quality command output",
+): DeterministicFinding {
+  return {
+    filename: "<external-dependency>",
+    line: null,
+    severity: "info",
+    category: "External Dependency Skipped",
+    explanation: message,
+    source,
+    kind: "external_dependency_skip",
+    provenance,
+  };
+}

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { prisma } from "@/src/lib/prisma";
-import type { DeterministicFinding } from "@/src/services/deterministicChecks";
+import { isExternalDependencySkip, type DeterministicFinding } from "@/src/services/deterministicChecks";
 import { resolveSymbolsBatch, buildFindingFingerprint } from "../fingerprint";
 
 /**
@@ -14,14 +14,15 @@ export async function persistGlobalDeterministicFindings(
   repoId: string,
   findings: DeterministicFinding[],
 ): Promise<void> {
-  if (findings.length === 0) return;
+  const codeFindings = findings.filter((finding) => !isExternalDependencySkip(finding));
+  if (codeFindings.length === 0) return;
 
   const symbolMap = await resolveSymbolsBatch(
     repoId,
-    findings.map((f) => ({ filePath: f.filename, line: f.line })),
+    codeFindings.map((f) => ({ filePath: f.filename, line: f.line })),
   );
 
-  const findingsData = findings.map((finding) => {
+  const findingsData = codeFindings.map((finding) => {
     const resolution = symbolMap.get(`${finding.filename}:${finding.line ?? "?"}`);
     const symbolId = resolution?.symbolId ?? null;
     const sourceHashAtInsert = resolution?.sourceHash ?? null;

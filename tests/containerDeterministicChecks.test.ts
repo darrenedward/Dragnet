@@ -285,6 +285,30 @@ describe("runContainerizedChecks", () => {
     expect(findings[1].explanation).toContain("semi");
   });
 
+  it("classifies a localhost PostgreSQL refusal as an external skip, not a code finding", async () => {
+    mockRunRunner
+      .mockResolvedValueOnce({ exitCode: 0, stdout: "", stderr: "", timedOut: false })
+      .mockResolvedValueOnce({
+        exitCode: 1,
+        stdout: "",
+        stderr: "AggregateError: connect ECONNREFUSED 127.0.0.1:5433",
+        timedOut: false,
+      });
+
+    const findings = await runContainerizedChecks(baseOpts);
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toMatchObject({
+      kind: "external_dependency_skip",
+      category: "External Dependency Skipped",
+      filename: "<external-dependency>",
+      source: "runner",
+    });
+    expect(findings[0].explanation).not.toContain("127.0.0.1:5433");
+    expect(mockReviewLogCreate.mock.calls.some((call: any[]) =>
+      String(call[0]?.data?.message).includes("External dependency skip")
+    )).toBe(true);
+  });
+
   it("returns timedOut finding when test times out", async () => {
     mockRunRunner
       .mockResolvedValueOnce({ exitCode: 0, stdout: "", stderr: "", timedOut: false })
