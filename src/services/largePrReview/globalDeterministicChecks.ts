@@ -3,7 +3,6 @@ import {
   runContainerizedChecks,
   logReview,
   DEFAULT_INSTALL_COMMAND,
-  DEFAULT_TEST_COMMAND,
   type DeterministicFinding,
 } from "@/src/services/deterministicChecks";
 import {
@@ -171,7 +170,7 @@ export async function runGlobalDeterministicChecks(
               pat,
               runnerImage: tier2Image,
               installCommand: repo.installCommand ?? DEFAULT_INSTALL_COMMAND,
-              testCommand: repo.testCommand ?? DEFAULT_TEST_COMMAND,
+              testCommand: repo.testCommand,
               prId,
               reviewRunId,
             });

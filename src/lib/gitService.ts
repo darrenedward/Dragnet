@@ -17,7 +17,7 @@ import { execFileSync } from "node:child_process";
 import { writeFileSync, unlinkSync, mkdirSync, mkdtempSync, rmdirSync, chmodSync, existsSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import type { RunResult } from "./containerOrchestratorTypes";
+import type { GitSyncRunnerEnv, RunResult } from "./containerOrchestratorTypes";
 import { ContainerOrchestrator } from "./containerOrchestrator";
 import { shellEscape } from "./shellEscape";
 
@@ -111,7 +111,7 @@ export function buildSyncBranchScript(opts: {
 export function buildSshEnv(
   deployKey: string,
   keyId: string,
-): { env: Record<string, string>; [Symbol.dispose](): void } {
+): { env: GitSyncRunnerEnv; [Symbol.dispose](): void } {
   const baseTmp = process.env.XDG_RUNTIME_DIR || os.tmpdir();
   const keyDir = mkdtempSync(path.join(baseTmp, "dragnet-key-"));
   try {
@@ -216,13 +216,13 @@ class RealGitService implements GitServiceInterface {
     ].join(" && ");
 
     // Extra SSH env vars via GIT_SSH_COMMAND if using deploy key.
-    const extraEnv: Record<string, string> = {};
+    const extraEnv: GitSyncRunnerEnv = {};
     let result: RunResult;
 
     {
       using ssh = opts.deployKey
         ? buildSshEnv(opts.deployKey, `sync-${opts.repoId}`)
-        : { env: {} as Record<string, string>, [Symbol.dispose]() {} };
+        : { env: {}, [Symbol.dispose]() {} };
 
       Object.assign(extraEnv, ssh.env);
 
@@ -306,13 +306,13 @@ class RealGitService implements GitServiceInterface {
       refspecs,
     });
 
-    const extraEnv: Record<string, string> = {};
+    const extraEnv: GitSyncRunnerEnv = {};
     let result: RunResult;
 
     {
       using ssh = opts.deployKey
         ? buildSshEnv(opts.deployKey, `syncbranch-${opts.repoId}`)
-        : { env: {} as Record<string, string>, [Symbol.dispose]() {} };
+        : { env: {}, [Symbol.dispose]() {} };
 
       Object.assign(extraEnv, ssh.env);
 

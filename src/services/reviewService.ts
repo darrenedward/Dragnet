@@ -36,7 +36,6 @@ import {
   logReview,
   shouldRunHostTier1,
   DEFAULT_INSTALL_COMMAND,
-  DEFAULT_TEST_COMMAND,
   type DeterministicFinding,
 } from "@/src/services/deterministicChecks";
 import { StepPipeline, StepError, isStepFailure, isStepSuccess, type StepResult } from "@/src/services/stepPipeline";
@@ -1295,7 +1294,7 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
             pat,
             runnerImage: tier2Image,
             installCommand: repo.installCommand ?? DEFAULT_INSTALL_COMMAND,
-            testCommand: repo.testCommand ?? DEFAULT_TEST_COMMAND,
+            testCommand: repo.testCommand,
             prId,
             reviewRunId,
             reviewChunkId,

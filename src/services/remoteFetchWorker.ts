@@ -172,7 +172,7 @@ export async function enqueue(repoId: string): Promise<string | null> {
       // Legacy host-path mode — inline git fetch (no gitRemote dependency)
       using ssh = deployKey
         ? buildSshEnv(deployKey, `fetch-${repoId}`)
-        : { env: {} as Record<string, string>, [Symbol.dispose]() {} };
+        : { env: {}, [Symbol.dispose]() {} };
 
       execFileSync("git", ["-C", hostLocalPath!, "fetch", "origin", "--prune", "+refs/heads/*:refs/heads/*"], {
         env: { ...process.env, ...ssh.env },

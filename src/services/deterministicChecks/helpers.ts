@@ -8,6 +8,36 @@ export const DEFAULT_INSTALL_COMMAND = "npm install";
  * Build is optional per-repo; full e2e/unit suites are not the default gate.
  */
 export const DEFAULT_TEST_COMMAND = "npm run typecheck && npm run lint";
+const BROAD_TEST_COMMAND = /\b(?:npm\s+(?:run\s+)?test|vitest|jest|playwright|cypress|pytest)\b/i;
+
+export type QualityCommandOptions = {
+  /** A repository-specific command already verified to be service-free. */
+  configuredCommand?: string | null;
+  /** Package scripts from the reviewed tip, when it is a Node repository. */
+  scripts?: Record<string, string> | null;
+};
+
+/**
+ * Resolve the command used by the deterministic quality gate.
+ *
+ * The default is deliberately typecheck + lint. A repository without a
+ * typecheck script can opt into a verified build + lint command; there is no
+ * fallback to a broad unit, integration, or end-to-end test suite.
+ */
+export function resolveQualityCommand(options: QualityCommandOptions = {}): string {
+  const configured = options.configuredCommand?.trim();
+  const scripts = options.scripts;
+  const isDefault = !configured || configured === DEFAULT_TEST_COMMAND;
+  if (!isDefault && !BROAD_TEST_COMMAND.test(configured)) return configured;
+
+  // A non-Node repository may have an explicitly verified command such as
+  // pytest. Without package metadata, preserve that explicit command; the
+  // safe fallback applies when the default command is being resolved.
+  if (!scripts) return configured || DEFAULT_TEST_COMMAND;
+  if (scripts.typecheck) return DEFAULT_TEST_COMMAND;
+  if (scripts.build) return "npm run build && npm run lint";
+  return "npm run lint";
+}
 
 export type HostTier1Repo = {
   path?: string | null;

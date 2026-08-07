@@ -67,6 +67,7 @@ function asyncSpawnWithTimeout(
 }
 
 let cachedEngine: "docker" | "podman" | null = null;
+const ALLOWED_RUNNER_ENV_KEYS = new Set(["GIT_SSH_COMMAND"]);
 
 /**
  * Detects whether docker or podman is installed and available.
@@ -172,6 +173,7 @@ export class ContainerOrchestrator {
     // Add custom env vars if provided (ensuring system secrets aren't passed)
     if (options.env) {
       for (const [key, val] of Object.entries(options.env)) {
+        if (!ALLOWED_RUNNER_ENV_KEYS.has(key)) continue;
         args.push("-e", `${key}=${val}`);
       }
     }
