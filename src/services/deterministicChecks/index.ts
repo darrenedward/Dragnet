@@ -6,6 +6,9 @@ export {
   DEFAULT_INSTALL_COMMAND,
   DEFAULT_TEST_COMMAND,
   resolveQualityCommand,
+  externalDependencySkipFinding,
+  isExternalDependencyFailure,
+  redactExternalDependencyOutput,
   skippedFinding,
 } from "./helpers";
 export type { ContainerizedCheckOptions } from "./containerRunner";
@@ -17,3 +20,4 @@ export type {
   Runner,
   ProjectType,
 } from "./types";
+export { isExternalDependencySkip } from "./types";

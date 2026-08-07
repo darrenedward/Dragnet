@@ -35,4 +35,12 @@ export interface DeterministicFinding {
   explanation: string;
   diffSuggestion?: string | null;
   source: "tsc" | "eslint" | "runner";
+  /** Result is an external service skip, not a source-quality finding. */
+  kind?: "external_dependency_skip";
+  /** Stable human-readable source/provenance for operator telemetry. */
+  provenance?: string;
+}
+
+export function isExternalDependencySkip(finding: DeterministicFinding): boolean {
+  return finding.kind === "external_dependency_skip";
 }

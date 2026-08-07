@@ -1,7 +1,14 @@
 import { ContainerOrchestrator } from "@/src/lib/containerOrchestrator";
 import { gitService } from "@/src/lib/gitService";
 import type { DeterministicFinding } from "./types";
-import { DEFAULT_TEST_COMMAND, resolveQualityCommand, skippedFinding } from "./helpers";
+import {
+  DEFAULT_TEST_COMMAND,
+  externalDependencySkipFinding,
+  isExternalDependencyFailure,
+  redactExternalDependencyOutput,
+  resolveQualityCommand,
+  skippedFinding,
+} from "./helpers";
 import { parseTscOutput, parseEslintJson } from "./parsers";
 import { logReview } from "./logging";
 
@@ -198,6 +205,20 @@ export async function runContainerizedChecks(
 
     const eslintFindings = parseEslintJson(result.stdout);
     if (eslintFindings.length > 0) return eslintFindings;
+
+    if (isExternalDependencyFailure(combined)) {
+      const message = `Quality command skipped because an external project service was unavailable: ${cmd}`;
+      const provenance = redactExternalDependencyOutput(combined.trim());
+      void logReview(
+        opts.prId,
+        `External dependency skip (${cmd}): ${provenance}`,
+        "warn",
+        opts.reviewRunId,
+        opts.reviewChunkId,
+      );
+      console.warn(`[deterministic] ${message}`);
+      return [externalDependencySkipFinding("runner", message, provenance)];
+    }
 
     const genericFindings = parseGenericErrors(combined);
     if (genericFindings.length > 0) return genericFindings;

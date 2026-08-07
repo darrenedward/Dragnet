@@ -1,9 +1,10 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import type { DeterministicFinding } from "@/src/services/deterministicChecks";
 
-const { runDeterministicChecksMock, runContainerizedChecksMock } = vi.hoisted(() => ({
+const { runDeterministicChecksMock, runContainerizedChecksMock, getChatChainMock } = vi.hoisted(() => ({
   runDeterministicChecksMock: vi.fn(),
   runContainerizedChecksMock: vi.fn(),
+  getChatChainMock: vi.fn(() => []),
 }));
 
 vi.mock("../../src/services/deterministicChecks", () => ({
@@ -112,7 +113,7 @@ vi.mock("../../src/lib/prisma", () => ({
 }));
 
 vi.mock("../../src/lib/llmClient", () => ({
-  getChatChain: () => [],
+  getChatChain: getChatChainMock,
   getChatClient: () => null,
 }));
 
@@ -189,6 +190,26 @@ describe("runPrScan with precomputedFindings", () => {
       (f: any) => f.explanation === "pre-existing lint error",
     )).toBe(true);
   });
+
+  it("does not take the trivial clean shortcut when an external check was skipped", async () => {
+    const externalSkip: DeterministicFinding = {
+      filename: "<external-dependency>",
+      line: null,
+      severity: "info",
+      category: "External Dependency Skipped",
+      explanation: "database unavailable",
+      source: "runner",
+      kind: "external_dependency_skip",
+      provenance: "ECONNREFUSED 127.0.0.1:5433",
+    };
+
+    const result = await runPrScan("pr-1", undefined, "run-1", "chunk-1", undefined, {
+      precomputedFindings: [externalSkip],
+    });
+
+    expect(getChatChainMock).toHaveBeenCalled();
+    expect(result.findings.some((finding: any) => finding.kind === "external_dependency_skip")).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -231,6 +252,27 @@ describe("runGlobalDeterministicChecks", () => {
     expect(result.findings).toHaveLength(2);
     expect(result.findings[0].explanation).toBe("tsc warning");
     expect(result.findings[1].explanation).toBe("test failure");
+  });
+
+  it("retains external skips as telemetry results without treating them as compiler findings", async () => {
+    runDeterministicChecksMock.mockResolvedValue([]);
+    runContainerizedChecksMock.mockResolvedValue([{
+      filename: "<external-dependency>",
+      line: null,
+      severity: "info",
+      category: "External Dependency Skipped",
+      explanation: "database unavailable",
+      source: "runner",
+      kind: "external_dependency_skip",
+      provenance: "ECONNREFUSED 127.0.0.1:5433",
+    }]);
+
+    const result = await runGlobalDeterministicChecks("run-1", "pr-1");
+
+    expect(result.abort).toBe(false);
+    expect(result.findings).toHaveLength(1);
+    expect(result.findings[0].kind).toBe("external_dependency_skip");
+    expect(result.findings[0].filename).toBe("<external-dependency>");
   });
 
   it("aborts on Tier 2 infrastructure failure", async () => {
