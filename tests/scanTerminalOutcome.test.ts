@@ -83,6 +83,20 @@ describe("classifyScanTerminalOutcome", () => {
     expect(prStatusForTerminal(o)).toBe("Completed");
   });
 
+  it("preserves external dependency skip telemetry on an earned LLM result", () => {
+    const o = classifyScanTerminalOutcome({
+      prStatus: "Completed",
+      runStatus: "completed",
+      runOutcome: "reviewed",
+      rating: 8,
+      systemWarn: "1 external project service check(s) skipped; deterministic quality status is unavailable",
+    });
+
+    expect(o.class).toBe("success");
+    expect(o.isEarnedSuccess).toBe(true);
+    expect(o.externalDependencySkipped).toBe(true);
+  });
+
   it("skipped is completed lifecycle but not earned AI pass", () => {
     const o = classifyScanTerminalOutcome({
       prStatus: "Completed",
