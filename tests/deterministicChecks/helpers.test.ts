@@ -4,6 +4,7 @@ import {
   shouldRunHostTier1,
   DEFAULT_TEST_COMMAND,
   DEFAULT_INSTALL_COMMAND,
+  resolveQualityCommand,
 } from "@/src/services/deterministicChecks/helpers";
 
 describe("skippedFinding", () => {
@@ -65,5 +66,44 @@ describe("default quality-gate commands", () => {
     expect(DEFAULT_TEST_COMMAND).toBe("npm run typecheck && npm run lint");
     expect(DEFAULT_TEST_COMMAND).not.toMatch(/\bnpm test\b/);
     expect(DEFAULT_INSTALL_COMMAND).toBe("npm install");
+  });
+
+  it("keeps the default quality gate free of broad test suites", () => {
+    expect(resolveQualityCommand()).toBe("npm run typecheck && npm run lint");
+  });
+
+  it("uses build plus lint when the default command has no typecheck script", () => {
+    expect(resolveQualityCommand({
+      configuredCommand: DEFAULT_TEST_COMMAND,
+      scripts: { build: "next build", lint: "eslint" },
+    }))
+      .toBe("npm run build && npm run lint");
+  });
+
+  it("accepts a verified repository-specific quality command", () => {
+    expect(resolveQualityCommand({ configuredCommand: "npm run build && npm run lint" }))
+      .toBe("npm run build && npm run lint");
+  });
+
+  it("replaces a broad test override with the safe quality path", () => {
+    expect(resolveQualityCommand({
+      configuredCommand: "npm test && npm run lint",
+      scripts: { build: "next build", lint: "eslint" },
+    })).toBe("npm run build && npm run lint");
+  });
+
+  it("does not fall back to npm test when typecheck is unavailable", () => {
+    expect(resolveQualityCommand({
+      configuredCommand: DEFAULT_TEST_COMMAND,
+      scripts: { build: "npm run build", lint: "eslint" },
+    }))
+      .not.toMatch(/npm (run )?test/);
+  });
+
+  it("uses lint alone when neither typecheck nor build is available", () => {
+    expect(resolveQualityCommand({
+      configuredCommand: DEFAULT_TEST_COMMAND,
+      scripts: { lint: "eslint" },
+    })).toBe("npm run lint");
   });
 });

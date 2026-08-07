@@ -210,6 +210,23 @@ describe("ContainerOrchestrator.runRunner", () => {
     delete process.env.DATABASE_URL;
   });
 
+  it("only forwards the scoped Git SSH environment", async () => {
+    mockSpawnSuccess("");
+    const orc = ContainerOrchestrator.getInstance();
+    await orc.runRunner({
+      ...baseOpts,
+      env: {
+        GIT_SSH_COMMAND: "ssh -i /tmp/key",
+        DATABASE_URL: "postgresql://secret@db/app",
+        LLM_API_KEY: "provider-secret",
+      } as never,
+    });
+    const args: string[] = mockSpawn.mock.calls[0][1] as string[];
+    const envArgs = args.flatMap((arg, index) => arg === "-e" ? [args[index + 1]] : []);
+    expect(envArgs).toContain("GIT_SSH_COMMAND=ssh -i /tmp/key");
+    expect(envArgs.some((arg) => /DATABASE_URL|LLM_API_KEY|secret/.test(arg))).toBe(false);
+  });
+
   it("returns timedOut=true and exitCode=-1 on timeout", async () => {
     mockSpawn.mockReturnValue(
       createMockSpawnProcess({

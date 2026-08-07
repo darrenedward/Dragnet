@@ -1,7 +1,7 @@
 import { ContainerOrchestrator } from "@/src/lib/containerOrchestrator";
 import { gitService } from "@/src/lib/gitService";
 import type { DeterministicFinding } from "./types";
-import { skippedFinding } from "./helpers";
+import { DEFAULT_TEST_COMMAND, resolveQualityCommand, skippedFinding } from "./helpers";
 import { parseTscOutput, parseEslintJson } from "./parsers";
 import { logReview } from "./logging";
 
@@ -14,7 +14,7 @@ export interface ContainerizedCheckOptions {
   pat?: string;
   runnerImage: string;
   installCommand: string;
-  testCommand: string;
+  testCommand?: string | null;
   prId: string;
   reviewRunId?: string;
   reviewChunkId?: string;
@@ -25,8 +25,22 @@ export interface ContainerizedCheckOptions {
   hostBindPath?: string;
 }
 
+export const QUALITY_CHECK_NETWORK_MODE = "none" as const;
+
 function volumeName(repoId: string): string {
   return `dragnet-repo-${repoId}`;
+}
+
+function parsePackageScripts(stdout: string): Record<string, string> | null {
+  try {
+    const packageJson = JSON.parse(stdout) as { scripts?: unknown };
+    if (!packageJson.scripts || typeof packageJson.scripts !== "object") return {};
+    return Object.fromEntries(
+      Object.entries(packageJson.scripts).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+    );
+  } catch {
+    return null;
+  }
 }
 
 export function parseGenericErrors(stderr: string): DeterministicFinding[] {
@@ -109,6 +123,18 @@ export async function runContainerizedChecks(
     ? { hostBindPath }
     : { volumeName: vn };
 
+  const readPackageScripts = async (): Promise<Record<string, string> | null> => {
+    const result = await orchestrator.runRunner({
+      ...mountOpts,
+      image: opts.runnerImage,
+      commands: ["cat package.json"],
+      timeoutMs: 10_000,
+      networkMode: QUALITY_CHECK_NETWORK_MODE,
+    });
+    if (result.exitCode !== 0 || result.timedOut) return null;
+    return parsePackageScripts(result.stdout);
+  };
+
   const runInstall = async (): Promise<void> => {
     const cmd = opts.installCommand.trim();
     if (!cmd) return;
@@ -141,12 +167,15 @@ export async function runContainerizedChecks(
     }
   };
 
-  const runTest = async (): Promise<DeterministicFinding[]> => {
-    const cmd = opts.testCommand.trim();
+  const runQualityChecks = async (): Promise<DeterministicFinding[]> => {
+    const scripts = !opts.testCommand || opts.testCommand.trim() === DEFAULT_TEST_COMMAND
+      ? await readPackageScripts()
+      : null;
+    const cmd = resolveQualityCommand({ configuredCommand: opts.testCommand, scripts });
     if (!cmd) return [];
     void logReview(
       opts.prId,
-      `Containerized checks: running tests (${opts.testCommand})...`,
+      `Containerized checks: running quality checks (${cmd})...`,
       "info",
       opts.reviewRunId,
       opts.reviewChunkId,
@@ -156,9 +185,9 @@ export async function runContainerizedChecks(
       image: opts.runnerImage,
       commands: [cmd],
       timeoutMs: 300_000,
-      networkMode: "none",
+      networkMode: QUALITY_CHECK_NETWORK_MODE,
     });
-    logs.push(`[test] exit=${result.exitCode} stdout=${result.stdout.slice(0, 2000)} stderr=${result.stderr.slice(0, 2000)}`);
+    logs.push(`[quality] exit=${result.exitCode} stdout=${result.stdout.slice(0, 2000)} stderr=${result.stderr.slice(0, 2000)}`);
 
     if (result.exitCode === 0 && !result.timedOut) return [];
 
@@ -174,7 +203,7 @@ export async function runContainerizedChecks(
     if (genericFindings.length > 0) return genericFindings;
 
     if (result.timedOut) {
-      return [skippedFinding("tsc", "Test command timed out after 300s")];
+      return [skippedFinding("runner", `Quality command timed out after 300s: ${cmd}`)];
     }
 
     return [
@@ -183,7 +212,7 @@ export async function runContainerizedChecks(
         line: null,
         severity: "info",
         category: "Skipped",
-        explanation: `Test command exited with code ${result.exitCode} but output could not be parsed. Check runner logs for details.`,
+        explanation: `Quality command exited with code ${result.exitCode} but output could not be parsed: ${cmd}. Check runner logs for details.`,
         source: "runner",
       },
     ];
@@ -198,7 +227,7 @@ export async function runContainerizedChecks(
     throw err;
   }
 
-  const testFindings = await runTest();
+  const testFindings = await runQualityChecks();
   findings.push(...testFindings);
 
   const logSummary = findings.length === 0

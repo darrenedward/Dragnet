@@ -1,10 +1,11 @@
 export { runDeterministicChecks } from "./orchestrator";
-export { runContainerizedChecks } from "./containerRunner";
+export { runContainerizedChecks, QUALITY_CHECK_NETWORK_MODE } from "./containerRunner";
 export { logReview } from "./logging";
 export {
   shouldRunHostTier1,
   DEFAULT_INSTALL_COMMAND,
   DEFAULT_TEST_COMMAND,
+  resolveQualityCommand,
   skippedFinding,
 } from "./helpers";
 export type { ContainerizedCheckOptions } from "./containerRunner";

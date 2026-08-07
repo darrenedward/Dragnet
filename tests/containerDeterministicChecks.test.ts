@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { runContainerizedChecks } from "../src/services/deterministicChecks/containerRunner";
 import type { ContainerizedCheckOptions } from "../src/services/deterministicChecks/containerRunner";
+import { DEFAULT_TEST_COMMAND } from "../src/services/deterministicChecks/helpers";
 
 const mockSyncToCommit = vi.fn();
 const mockRunRunner = vi.fn();
@@ -147,9 +148,39 @@ describe("runContainerizedChecks", () => {
 
     const firstCall = mockRunRunner.mock.calls[0][0];
     expect(firstCall.commands).toContain(baseOpts.installCommand);
+    expect(firstCall.networkMode).toBe("bridge");
+    expect(firstCall.env).toBeUndefined();
 
     const secondCall = mockRunRunner.mock.calls[1][0];
     expect(secondCall.commands).toContain(baseOpts.testCommand);
+    expect(secondCall.networkMode).toBe("none");
+    expect(secondCall.env).toBeUndefined();
+  });
+
+  it("resolves the default command to build plus lint when typecheck is absent", async () => {
+    mockRunRunner
+      .mockResolvedValueOnce({ exitCode: 0, stdout: "", stderr: "", timedOut: false })
+      .mockResolvedValueOnce({
+        exitCode: 0,
+        stdout: JSON.stringify({ scripts: { build: "next build", lint: "eslint" } }),
+        stderr: "",
+        timedOut: false,
+      })
+      .mockResolvedValueOnce({ exitCode: 0, stdout: "", stderr: "", timedOut: false });
+
+    await runContainerizedChecks({ ...baseOpts, testCommand: DEFAULT_TEST_COMMAND });
+
+    expect(mockRunRunner).toHaveBeenCalledTimes(3);
+    expect(mockRunRunner.mock.calls[1][0]).toEqual(expect.objectContaining({
+      commands: ["cat package.json"],
+      networkMode: "none",
+    }));
+    expect(mockRunRunner.mock.calls[1][0]).not.toHaveProperty("env");
+    expect(mockRunRunner.mock.calls[2][0]).toEqual(expect.objectContaining({
+      commands: ["npm run build && npm run lint"],
+      networkMode: "none",
+    }));
+    expect(mockRunRunner.mock.calls[2][0]).not.toHaveProperty("env");
   });
 
   it("mounts the correct volume name", async () => {
@@ -294,7 +325,7 @@ describe("runContainerizedChecks", () => {
     const containerLogCalls = mockReviewLogCreate.mock.calls.filter(
       (c: any) => {
         const msg = c[0]?.data?.message ?? "";
-        return msg.startsWith("[install]") || msg.startsWith("[test]");
+        return msg.startsWith("[install]") || msg.startsWith("[quality]");
       },
     );
 

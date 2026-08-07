@@ -1,3 +1,8 @@
+/** Environment allowed into a containerized Git synchronization command. */
+export type GitSyncRunnerEnv = {
+  GIT_SSH_COMMAND?: string;
+};
+
 export interface RunOptions {
   /**
    * Named Docker volume mounted at /workspace. Required unless hostBindPath
@@ -14,7 +19,8 @@ export interface RunOptions {
   timeoutMs?: number;
   memoryLimit?: string; // e.g. "4g"
   cpuLimit?: string; // e.g. "2"
-  env?: Record<string, string>;
+  /** Only Git synchronization may pass its scoped SSH command. */
+  env?: GitSyncRunnerEnv;
   /** Docker network mode. Defaults to "none" (no network). Set to "bridge"
    *  for git operations that need outbound network access. */
   networkMode?: string;
