@@ -40,12 +40,15 @@ export async function GET(req: Request) {
         completedAt: true,
         rating: true,
         reliability: true,
+        systemWarn: true,
         refused: true,
         refusalNote: true,
         chunksTotal: true,
         chunksCompleted: true,
         chunksFailed: true,
         chunksSkipped: true,
+        lastActivityAt: true,
+        lastCheckpointAt: true,
         model: true,
         triggerReason: true,
         commitHash: true,
@@ -124,7 +127,12 @@ export async function GET(req: Request) {
     ]);
 
     return NextResponse.json({
-      reviewRun: run,
+      reviewRun: {
+        ...run,
+        chunksIncomplete: Math.max(0, run.chunksTotal - run.chunksCompleted - run.chunksFailed - run.chunksSkipped),
+        heartbeatAgeMs: run.lastActivityAt ? Math.max(0, Date.now() - run.lastActivityAt.getTime()) : null,
+        recoveryReason: run.systemWarn ?? null,
+      },
       findings,
       rejectedFindings,
       rejectedCount: rejectedFindings.length,

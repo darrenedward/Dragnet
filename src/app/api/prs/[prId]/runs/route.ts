@@ -29,6 +29,9 @@ export async function GET(req: Request, { params }: { params: Promise<{ prId: st
         chunksCompleted: true,
         chunksFailed: true,
         chunksSkipped: true,
+        lastActivityAt: true,
+        lastCheckpointAt: true,
+        systemWarn: true,
         model: true,
         triggerReason: true,
         commitHash: true,
@@ -38,7 +41,14 @@ export async function GET(req: Request, { params }: { params: Promise<{ prId: st
       },
     });
 
-    return NextResponse.json({ runs });
+    return NextResponse.json({
+      runs: runs.map((run) => ({
+        ...run,
+        chunksIncomplete: Math.max(0, run.chunksTotal - run.chunksCompleted - run.chunksFailed - run.chunksSkipped),
+        heartbeatAgeMs: run.lastActivityAt ? Math.max(0, Date.now() - run.lastActivityAt.getTime()) : null,
+        recoveryReason: run.systemWarn ?? null,
+      })),
+    });
   } catch (err: any) {
     console.error("Failed to fetch review runs:", err);
     return NextResponse.json({ error: err.message }, { status: 500 });

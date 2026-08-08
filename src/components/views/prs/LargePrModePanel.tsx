@@ -13,6 +13,9 @@ interface Props {
     chunksCompleted?: number;
     chunksFailed?: number;
     chunksSkipped?: number;
+    chunksIncomplete?: number;
+    heartbeatAgeMs?: number | null;
+    recoveryReason?: string | null;
   };
   chunks: ReviewChunk[];
   sizeProfile?: PrSizeProfile;
@@ -43,7 +46,7 @@ export default function LargePrModePanel({
   // "running" with no process actually working on it — retryFailedChunks
   // handles all three non-terminal statuses.
   const resumableCount = chunks.filter((chunk) =>
-    chunk.status === "failed" || chunk.status === "pending" || chunk.status === "running",
+    chunk.status === "failed" || chunk.status === "pending" || chunk.status === "running" || chunk.status === "interrupted",
   ).length;
   const reliability = reviewRun.reliability || "pending";
   const cfg = reliabilityConfig(reliability);
@@ -52,7 +55,9 @@ export default function LargePrModePanel({
   const done = reviewRun.chunksCompleted ?? 0;
   const failed = reviewRun.chunksFailed ?? 0;
   const skipped = reviewRun.chunksSkipped ?? 0;
-  const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+  const incomplete = reviewRun.chunksIncomplete ?? Math.max(0, total - done - failed - skipped);
+  const terminal = done + failed + skipped;
+  const pct = total > 0 ? Math.round((terminal / total) * 100) : 0;
   const inFlight = chunks.find((c) => c.status === "running");
 
   return (
@@ -80,7 +85,7 @@ export default function LargePrModePanel({
               />
             </div>
             <span className="text-[10px] font-mono text-slate-400 tabular-nums shrink-0">
-              {done}/{total} ({pct}%)
+              {terminal}/{total} terminal ({pct}%)
             </span>
           </div>
           <div className="mt-1 text-[10px] font-mono text-slate-500">
@@ -88,8 +93,11 @@ export default function LargePrModePanel({
               ? `Scanning chunk ${chunks.findIndex((c) => c.id === inFlight.id) + 1} of ${total}: ${inFlight.label}…`
               : done === total
                 ? `All ${total} chunks completed${failed ? ` · ${failed} failed` : ""}${skipped ? ` · ${skipped} skipped` : ""}`
-                : `${done}/${total} chunks completed${failed ? ` · ${failed} failed` : ""}${skipped ? ` · ${skipped} skipped` : ""}`}
+                : `${done}/${total} chunks completed · ${incomplete} unfinished${failed ? ` · ${failed} failed` : ""}${skipped ? ` · ${skipped} skipped` : ""}`}
           </div>
+          {reviewRun.recoveryReason && (
+            <div className="mt-1 text-[10px] font-mono text-amber-300/80">Recovery: {reviewRun.recoveryReason}</div>
+          )}
           <div className="mt-1 text-[10px] font-mono text-amber-300/80">
             Cross-chunk bugs may be missed in v1; split recommended for oversized PRs.
           </div>
@@ -179,6 +187,7 @@ function statusConfig(value: string): { className: string; iconClass: string; Ic
   if (value === "completed") return { className: "bg-emerald-500/10 text-emerald-400 border-emerald-500/25", iconClass: "text-emerald-400", Icon: CheckCircle2 };
   if (value === "failed") return { className: "bg-rose-500/10 text-rose-300 border-rose-500/25", iconClass: "text-rose-400", Icon: XCircle };
   if (value === "skipped") return { className: "bg-amber-500/10 text-amber-400 border-amber-500/25", iconClass: "text-amber-400", Icon: AlertTriangle };
+  if (value === "interrupted") return { className: "bg-amber-500/10 text-amber-300 border-amber-500/25", iconClass: "text-amber-300", Icon: RotateCcw };
   if (value === "running") return { className: "bg-blue-500/10 text-blue-400 border-blue-500/25", iconClass: "text-blue-400 animate-spin", Icon: Loader2 };
   return { className: "bg-slate-700/40 text-slate-400 border-white/10", iconClass: "text-slate-500", Icon: Loader2 };
 }

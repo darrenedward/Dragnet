@@ -29,6 +29,9 @@ export interface ReviewRunMeta {
   chunksCompleted?: number;
   chunksFailed?: number;
   chunksSkipped?: number;
+  chunksIncomplete?: number;
+  heartbeatAgeMs?: number | null;
+  recoveryReason?: string | null;
   tokensUsed?: {
     totalCostUsd: number;
     totalPromptTokens: number;
@@ -51,7 +54,7 @@ export interface ReviewRunMeta {
  * scan. Active in-progress runs don't have rating/completedAt/reliability
  * yet, so we only require the chunk-count fields (and the run id).
  */
-export type ActiveScanMeta = Pick<ReviewRunMeta, "id" | "chunksTotal" | "chunksCompleted" | "chunksFailed" | "chunksSkipped" | "reliability">;
+export type ActiveScanMeta = Pick<ReviewRunMeta, "id" | "chunksTotal" | "chunksCompleted" | "chunksFailed" | "chunksSkipped" | "chunksIncomplete" | "heartbeatAgeMs" | "recoveryReason" | "reliability">;
 
 const severityOrder = ["blocker", "warning", "suggestion"] as const;
 
