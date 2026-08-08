@@ -32,7 +32,7 @@ import { assertNoActiveScan } from "./reviewFreshness";
 //
 // Phase 4: value shape is { startedAt, controller } so force-restart
 // can abort the in-flight scan.
-const activeReviews = new Map<string, { startedAt: number; controller: AbortController }>();
+const activeReviews = new Map<string, { startedAt: number; lastActivityAt: number; controller: AbortController }>();
 // MUST stay aligned with SCAN_STALE_AFTER_MS in reviewFreshness.ts. Both
 // layers must agree on when an orphaned scan is stale — if the in-memory
 // TTL is longer than the DB stale threshold, a hot-reloaded scan leaves
@@ -46,12 +46,15 @@ const activeReviews = new Map<string, { startedAt: number; controller: AbortCont
 // is the same at both layers — fixable downstream with a partial unique
 // index on ReviewRun(prId) WHERE status='in_progress' (P2006) or a
 // heartbeat, not by re-divorcing these two constants.
-const REVIEW_TTL_MS = 5 * 60 * 1000;
+const configuredReviewTtlMs = Number(process.env.DRAGNET_SCAN_STALE_AFTER_MS);
+const REVIEW_TTL_MS = Number.isFinite(configuredReviewTtlMs) && configuredReviewTtlMs > 0
+  ? configuredReviewTtlMs
+  : 15 * 60 * 1000;
 
 export function isReviewActive(prId: string): boolean {
   const entry = activeReviews.get(prId);
   if (!entry) return false;
-  if (Date.now() - entry.startedAt > REVIEW_TTL_MS) {
+  if (Date.now() - entry.lastActivityAt > REVIEW_TTL_MS) {
     activeReviews.delete(prId);
     console.warn(`[review] lock timed out for ${prId} (>${REVIEW_TTL_MS}ms) — evicted`);
     return false;
@@ -67,8 +70,15 @@ export function isReviewActive(prId: string): boolean {
  */
 export function beginReview(prId: string): AbortController {
   const controller = new AbortController();
-  activeReviews.set(prId, { startedAt: Date.now(), controller });
+  const now = Date.now();
+  activeReviews.set(prId, { startedAt: now, lastActivityAt: now, controller });
   return controller;
+}
+
+/** Refresh the in-memory liveness marker for an active review. */
+export function touchReviewActivity(prId: string): void {
+  const entry = activeReviews.get(prId);
+  if (entry) entry.lastActivityAt = Date.now();
 }
 
 /** Clear a PR's in-flight marker (call in finally / .catch). */
@@ -85,7 +95,7 @@ export function endReview(prId: string): void {
 export function getActiveReviewSignal(prId: string): AbortSignal | undefined {
   const entry = activeReviews.get(prId);
   if (!entry) return undefined;
-  if (Date.now() - entry.startedAt > REVIEW_TTL_MS) {
+  if (Date.now() - entry.lastActivityAt > REVIEW_TTL_MS) {
     activeReviews.delete(prId);
     return undefined;
   }

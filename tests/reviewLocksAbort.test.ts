@@ -25,6 +25,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // Mock assertNoActiveScan so acquireReviewLock doesn't hit the DB.
 vi.mock("../src/lib/reviewFreshness", () => ({
   assertNoActiveScan: vi.fn().mockResolvedValue({ ok: true }),
+  SCAN_STALE_AFTER_MS: 15 * 60 * 1000,
 }));
 
 // Re-import AFTER mock setup so the module picks up the mock.

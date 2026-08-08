@@ -5,6 +5,15 @@ import type { OutcomeClass } from "@/src/lib/failureClassifier";
 
 const db = prisma as any;
 
+async function touchReviewRunActivity(runId: string, at = new Date()): Promise<void> {
+  if (!db.reviewRun?.update) return;
+  try {
+    await db.reviewRun.update({ where: { id: runId }, data: { lastActivityAt: at } });
+  } catch (error) {
+    console.warn(`[durable-scan] failed to persist activity heartbeat for ${runId}:`, error);
+  }
+}
+
 function stableId(prefix: string, value: string): string {
   return `${prefix}-${createHash("sha256").update(value).digest("hex").slice(0, 32)}`;
 }
@@ -49,6 +58,7 @@ export interface ProviderAttemptCompletion {
 
 /** Persisting evidence is best-effort so a telemetry outage cannot fail a review. */
 export async function beginProviderAttempt(input: ProviderAttemptStart): Promise<boolean> {
+  await touchReviewRunActivity(input.reviewRunId);
   if (!db.reviewProviderAttempt) return true;
   try {
     await db.reviewProviderAttempt.create({
@@ -77,6 +87,7 @@ export async function beginProviderAttempt(input: ProviderAttemptStart): Promise
 }
 
 export async function completeProviderAttempt(input: ProviderAttemptCompletion): Promise<void> {
+  await touchReviewRunActivity(input.reviewRunId, input.completedAt ?? new Date());
   if (!db.reviewProviderAttempt) return;
   const details = errorDetails(input.error);
   try {
