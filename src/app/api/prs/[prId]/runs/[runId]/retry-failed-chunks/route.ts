@@ -25,7 +25,7 @@ export async function POST(
     }
 
     const resumableCount = await prisma.reviewChunk.count({
-      where: { reviewRunId: runId, status: { in: ["failed", "pending", "running"] } },
+      where: { reviewRunId: runId, status: { in: ["failed", "pending", "running", "interrupted"] } },
     });
     if (resumableCount === 0) {
       return NextResponse.json({ ok: true, message: "Nothing to resume — all chunks completed or skipped." });

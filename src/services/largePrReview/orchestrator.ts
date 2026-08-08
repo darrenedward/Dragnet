@@ -25,6 +25,8 @@ import type {
   ReviewFileInput,
 } from "./types";
 import { completePrReviewIfCurrent } from "@/src/lib/prRevisionStatus";
+import { readCheckpoint, type CheckpointState } from "@/src/services/checkpointStore";
+import { readLatestReviewCheckpoint } from "@/src/services/durableScanState";
 
 type ChunkRunner = (
   prId: string,
@@ -92,6 +94,123 @@ export interface RunLargePrReviewOptions {
   tipOverlay?: TipOverlay;
 }
 
+const CHUNK_LEASE_MS = 30 * 60 * 1000;
+
+export async function claimChunk(reviewRunId: string, chunkId: string, workerId: string): Promise<number | null> {
+  const now = new Date();
+  const result = await prisma.reviewChunk.updateMany({
+    where: {
+      id: chunkId,
+      reviewRunId,
+      OR: [
+        { status: { in: ["pending", "failed", "interrupted"] } },
+        { status: "running", leaseExpiresAt: { lt: now } },
+      ],
+    },
+    data: {
+      status: "running",
+      leaseOwner: workerId,
+      leaseExpiresAt: new Date(now.getTime() + CHUNK_LEASE_MS),
+      leaseVersion: { increment: 1 },
+      attemptCount: { increment: 1 },
+      startedAt: now,
+      completedAt: null,
+      errorMessage: null,
+      skipReason: null,
+    },
+  });
+  if (result.count !== 1) return null;
+  const claimed = await prisma.reviewChunk.findUnique({
+    where: { id: chunkId },
+    select: { leaseVersion: true },
+  });
+  return claimed?.leaseVersion ?? null;
+}
+
+export async function releaseChunk(
+  reviewRunId: string,
+  chunkId: string,
+  workerId: string,
+  leaseVersion: number,
+  data: Record<string, unknown>,
+): Promise<boolean> {
+  const result = await prisma.reviewChunk.updateMany({
+    where: { id: chunkId, reviewRunId, leaseOwner: workerId, leaseVersion },
+    data: { ...data, leaseOwner: null, leaseExpiresAt: null },
+  });
+  return result.count === 1;
+}
+
+export async function renewChunk(reviewRunId: string, chunkId: string, workerId: string, leaseVersion: number): Promise<boolean> {
+  const result = await prisma.reviewChunk.updateMany({
+    where: { id: chunkId, reviewRunId, leaseOwner: workerId, leaseVersion },
+    data: { leaseExpiresAt: new Date(Date.now() + CHUNK_LEASE_MS) },
+  });
+  return result.count === 1;
+}
+
+async function loadCompletedChunkContext(reviewRunId: string, excludeChunkId: string): Promise<string> {
+  try {
+    const chunks = await prisma.reviewChunk.findMany({
+      where: { reviewRunId, status: "completed", id: { not: excludeChunkId } },
+      orderBy: { id: "asc" },
+      select: { id: true, label: true, rating: true, summary: true },
+    });
+    const findingDelegate = (prisma as any).reviewFinding;
+    const findings = findingDelegate?.findMany
+      ? await findingDelegate.findMany({
+          where: { reviewRunId, reviewChunkId: { in: chunks.map((chunk: any) => chunk.id) } },
+          select: { reviewChunkId: true, filename: true, line: true, severity: true, explanation: true },
+        })
+      : [];
+    return JSON.stringify({ chunks, findings });
+  } catch (error) {
+    console.warn(`[large-pr] failed to load completed chunk context:`, error);
+    return "";
+  }
+}
+
+async function loadGlobalDeterministicFindings(reviewRunId: string): Promise<DeterministicFinding[]> {
+  const findingDelegate = (prisma as any).reviewFinding;
+  if (!findingDelegate?.findMany) return [];
+  try {
+    const rows = await findingDelegate.findMany({
+      where: { reviewRunId, reviewChunkId: null },
+      select: { filename: true, line: true, severity: true, category: true, explanation: true, diffSuggestion: true, source: true },
+      orderBy: { id: "asc" },
+    });
+    return rows.map((row: any) => ({
+      filename: row.filename,
+      line: row.line ?? undefined,
+      severity: row.severity === "blocker" ? "error" : row.severity === "warning" ? "warning" : "info",
+      category: row.category,
+      explanation: row.explanation,
+      diffSuggestion: row.diffSuggestion ?? undefined,
+      source: row.source ?? "deterministic",
+    }));
+  } catch (error) {
+    console.warn(`[large-pr] failed to load global deterministic findings:`, error);
+    return [];
+  }
+}
+
+async function loadChunkCheckpoint(
+  repoPath: string,
+  repoId: string,
+  reviewRunId: string,
+  chunkId: string,
+  metadata?: { commitHash: string; diffHash: string; reviewConfigHash: string },
+): Promise<CheckpointState | null> {
+  const checkpoint = readCheckpoint(repoPath, reviewRunId, chunkId, repoId)
+    ?? await readLatestReviewCheckpoint(reviewRunId, chunkId);
+  if (!checkpoint || !metadata) return checkpoint;
+  return checkpoint.commitHash === metadata.commitHash
+    && checkpoint.diffHash === metadata.diffHash
+    && checkpoint.reviewConfigHash === metadata.reviewConfigHash
+    ? checkpoint
+    : null;
+}
+
 export async function runLargePrReview({
   reviewRunId,
   prId,
@@ -149,8 +268,18 @@ export async function runLargePrReview({
   await logRun(prId, reviewRunId, repoPath, `Large PR Mode activated: ${plans.length} chunk${plans.length === 1 ? "" : "s"} (${manifest.codeLines.toLocaleString()} code lines)`, "info");
   if (effectiveWarning) await logRun(prId, reviewRunId, repoPath, effectiveWarning, "warn");
 
-  await prisma.reviewChunk.deleteMany({ where: { reviewRunId } });
-  if (plans.length > 0) {
+  const existingChunks = await prisma.reviewChunk.findMany({
+    where: { reviewRunId },
+    select: { id: true, status: true },
+  });
+  const desiredChunkIds = plans.map((plan) => chunkDbId(reviewRunId, plan.id)).sort();
+  const existingChunkIds = existingChunks.map((chunk) => chunk.id).sort();
+  const chunkPlanUnchanged = desiredChunkIds.length === existingChunkIds.length &&
+    desiredChunkIds.every((id, index) => id === existingChunkIds[index]);
+  if (!chunkPlanUnchanged) {
+    await prisma.reviewChunk.deleteMany({ where: { reviewRunId } });
+  }
+  if (plans.length > 0 && !chunkPlanUnchanged) {
     await prisma.reviewChunk.createMany({
       data: plans.map((plan) => ({
         id: chunkDbId(reviewRunId, plan.id),
@@ -253,9 +382,15 @@ export async function runLargePrReview({
 
   let consecutiveErrorKey: string | null = null;
   let consecutiveErrorCount = 0;
+  const workerId = `large-pr-${randomUUID()}`;
 
   for (const plan of plans) {
     const chunkId = chunkDbId(reviewRunId, plan.id);
+    const existingChunk = existingChunks.find((chunk) => chunk.id === chunkId);
+    if (chunkPlanUnchanged && existingChunk?.status === "completed") {
+      await logRun(prId, reviewRunId, repoPath, `Chunk ${plan.id}: preserved completed result`, "info", chunkId);
+      continue;
+    }
     // Bail out if a concurrent path (force=true scan, manual DB write,
     // parallel retry call) has already closed this run. Without this,
     // every remaining chunk burns the full provider chain (~10 min per
@@ -291,13 +426,15 @@ export async function runLargePrReview({
       }
     }
 
-    await prisma.reviewChunk.update({
-      where: { id: chunkId },
-      data: { status: "running", startedAt: new Date(), errorMessage: null, skipReason: null },
-    });
+    const leaseVersion = await claimChunk(reviewRunId, chunkId, workerId);
+    if (leaseVersion === null) {
+      await logRun(prId, reviewRunId, repoPath, `Chunk ${plan.id}: another worker owns the lease`, "info", chunkId);
+      continue;
+    }
     await updateChunkCounters(reviewRunId);
     await logRun(prId, reviewRunId, repoPath, `Chunk ${plan.id}: scanning ${plan.label} (${plan.lineCount} lines)`, "info", chunkId);
 
+    const checkpoint = await loadChunkCheckpoint(repoPath, run.repoId, reviewRunId, chunkId, checkpointMetadata);
     const result = await runChunkWithRetry({
       prId,
       reviewRunId,
@@ -309,6 +446,11 @@ export async function runLargePrReview({
       signal,
       checkpointMetadata,
       precomputedFindings: globalChecks.findings,
+      completedChunkContext: await loadCompletedChunkContext(reviewRunId, chunkId),
+      workerId,
+      leaseVersion,
+      initialMessages: checkpoint?.messages,
+      startLoopCount: checkpoint?.loopCount,
       reviewTree,
       tipOverlay,
     });
@@ -321,14 +463,11 @@ export async function runLargePrReview({
       // aggregations can tell "this chunk can be resumed" from "this
       // chunk genuinely failed and needs a full re-run".
       if (result.scan.interrupted) {
-        await prisma.reviewChunk.update({
-          where: { id: chunkId },
-          data: {
+        await releaseChunk(reviewRunId, chunkId, workerId, leaseVersion, {
             status: "interrupted",
             completedAt: new Date(),
             errorMessage: result.scan.message ?? "Chunk interrupted",
-          },
-        }).catch(() => {});
+        }).catch(() => false);
         await updateChunkCounters(reviewRunId);
         await logRun(prId, reviewRunId, repoPath, `Chunk ${plan.id}: interrupted — aborting remaining chunks`, "warn", chunkId);
         const aggregated = await aggregateResults(reviewRunId);
@@ -346,33 +485,28 @@ export async function runLargePrReview({
           chunksCompleted: aggregated.chunksCompleted,
           chunksFailed: aggregated.chunksFailed,
           chunksSkipped: aggregated.chunksSkipped,
+          recoverable: !aggregated.terminalized,
           warning: effectiveWarning,
         };
       }
       consecutiveErrorKey = null;
       consecutiveErrorCount = 0;
-      await prisma.reviewChunk.update({
-        where: { id: chunkId },
-        data: {
+      await releaseChunk(reviewRunId, chunkId, workerId, leaseVersion, {
           status: "completed",
           completedAt: new Date(),
           rating: result.scan.rating,
           summary: result.scan.summary || `${result.scan.findings.length} finding${result.scan.findings.length === 1 ? "" : "s"}`,
           errorMessage: null,
-        },
       });
       await logRun(prId, reviewRunId, repoPath, `Chunk ${plan.id}: completed rating=${result.scan.rating ?? "null"}`, "info", chunkId);
     } else {
       const errorKey = normalizeError(result.error.message);
       consecutiveErrorCount = consecutiveErrorKey === errorKey ? consecutiveErrorCount + 1 : 1;
       consecutiveErrorKey = errorKey;
-      await prisma.reviewChunk.update({
-        where: { id: chunkId },
-        data: {
+      await releaseChunk(reviewRunId, chunkId, workerId, leaseVersion, {
           status: "failed",
           completedAt: new Date(),
           errorMessage: result.error.message,
-        },
       });
       await logRun(prId, reviewRunId, repoPath, `Chunk ${plan.id}: failed after retry — ${result.error.message}`, "error", chunkId);
     }
@@ -389,7 +523,7 @@ export async function runLargePrReview({
   );
 
   return {
-    success: true,
+    success: aggregated.terminalized,
     rating: aggregated.rating,
     findings: aggregated.findings,
     usedModel: "large-pr-mode",
@@ -406,6 +540,7 @@ export async function runLargePrReview({
     chunksFailed: aggregated.chunksFailed,
     chunksSkipped: aggregated.chunksSkipped,
     warning: effectiveWarning,
+    recoverable: !aggregated.terminalized,
   };
 }
 
@@ -415,7 +550,7 @@ export async function retryFailedChunks(
 ): Promise<LargePrReviewResult> {
   const run = await prisma.reviewRun.findUnique({
     where: { id: reviewRunId },
-    select: { id: true, prId: true, repoId: true },
+    select: { id: true, prId: true, repoId: true, commitHash: true, diffHash: true, reviewConfigHash: true },
   });
   if (!run) throw new Error(`ReviewRun ${reviewRunId} not found.`);
 
@@ -425,6 +560,7 @@ export async function retryFailedChunks(
   });
   const repoPath = repo?.path ?? "";
   const installationId = repo?.installationId;
+  const workerId = `large-pr-retry-${randomUUID()}`;
 
   // Resume scope: any chunk not in a terminal state. Covers failed retries,
   // pending chunks that never started, and `running` chunks left dangling
@@ -438,7 +574,7 @@ export async function retryFailedChunks(
   if (resumableChunks.length === 0) {
     const aggregated = await aggregateResults(reviewRunId);
     return {
-      success: true,
+      success: aggregated.terminalized,
       rating: aggregated.rating,
       findings: aggregated.findings,
       usedModel: "large-pr-mode",
@@ -449,6 +585,7 @@ export async function retryFailedChunks(
       chunksCompleted: aggregated.chunksCompleted,
       chunksFailed: aggregated.chunksFailed,
       chunksSkipped: aggregated.chunksSkipped,
+      recoverable: !aggregated.terminalized,
     };
   }
 
@@ -490,11 +627,18 @@ export async function retryFailedChunks(
       }
     }
 
-    await prisma.reviewChunk.update({
-      where: { id: chunk.id },
-      data: { status: "running", startedAt: new Date(), completedAt: null, errorMessage: null },
-    });
+    const leaseVersion = await claimChunk(reviewRunId, chunk.id, workerId);
+    if (leaseVersion === null) {
+      await logRun(run.prId, reviewRunId, repoPath, `Chunk ${chunk.id}: another worker owns the lease`, "info", chunk.id);
+      continue;
+    }
     await updateChunkCounters(reviewRunId);
+    const checkpoint = await loadChunkCheckpoint(repoPath, run.repoId, reviewRunId, chunk.id, {
+      commitHash: run.commitHash,
+      diffHash: run.diffHash,
+      reviewConfigHash: run.reviewConfigHash,
+    });
+    const completedChunkContext = await loadCompletedChunkContext(reviewRunId, chunk.id);
     const result = await runChunkWithRetry({
       prId: run.prId,
       reviewRunId,
@@ -510,26 +654,41 @@ export async function retryFailedChunks(
       },
       runner,
       prManifest: buildPrManifest(prFiles),
+      checkpointMetadata: {
+        commitHash: run.commitHash,
+        diffHash: run.diffHash,
+        reviewConfigHash: run.reviewConfigHash,
+      },
+      precomputedFindings: await loadGlobalDeterministicFindings(reviewRunId),
+      completedChunkContext,
+      workerId,
+      leaseVersion,
+      initialMessages: checkpoint?.messages,
+      startLoopCount: checkpoint?.loopCount,
     });
+    if (result.ok === true && result.scan.interrupted) {
+      await releaseChunk(reviewRunId, chunk.id, workerId, leaseVersion, {
+        status: "interrupted",
+        completedAt: new Date(),
+        errorMessage: result.scan.message ?? "Chunk interrupted",
+      });
+      await updateChunkCounters(reviewRunId);
+      await logRun(run.prId, reviewRunId, repoPath, `Chunk ${chunk.id}: interrupted — leaving retry incomplete`, "warn", chunk.id);
+      break;
+    }
     if (result.ok === true) {
-      await prisma.reviewChunk.update({
-        where: { id: chunk.id },
-        data: {
+      await releaseChunk(reviewRunId, chunk.id, workerId, leaseVersion, {
           status: "completed",
           completedAt: new Date(),
           rating: result.scan.rating,
           summary: result.scan.summary || `${result.scan.findings.length} finding${result.scan.findings.length === 1 ? "" : "s"}`,
           errorMessage: null,
-        },
       });
     } else {
-      await prisma.reviewChunk.update({
-        where: { id: chunk.id },
-        data: {
+      await releaseChunk(reviewRunId, chunk.id, workerId, leaseVersion, {
           status: "failed",
           completedAt: new Date(),
           errorMessage: result.error.message,
-        },
       });
     }
     await updateChunkCounters(reviewRunId);
@@ -537,7 +696,7 @@ export async function retryFailedChunks(
 
   const aggregated = await aggregateResults(reviewRunId);
   return {
-    success: true,
+    success: aggregated.terminalized,
     rating: aggregated.rating,
     findings: aggregated.findings,
     usedModel: "large-pr-mode",
@@ -548,6 +707,7 @@ export async function retryFailedChunks(
     chunksCompleted: aggregated.chunksCompleted,
     chunksFailed: aggregated.chunksFailed,
     chunksSkipped: aggregated.chunksSkipped,
+    recoverable: !aggregated.terminalized,
   };
 }
 
@@ -562,6 +722,11 @@ async function runChunkWithRetry({
   signal,
   checkpointMetadata,
   precomputedFindings,
+  completedChunkContext,
+  workerId,
+  leaseVersion,
+  initialMessages,
+  startLoopCount,
   reviewTree,
   tipOverlay,
 }: {
@@ -575,16 +740,27 @@ async function runChunkWithRetry({
   signal?: AbortSignal;
   checkpointMetadata?: { commitHash: string; diffHash: string; reviewConfigHash: string };
   precomputedFindings?: DeterministicFinding[];
+  completedChunkContext?: string;
+  workerId: string;
+  leaseVersion: number;
+  initialMessages?: RunPrScanOptions["initialMessages"];
+  startLoopCount?: number;
   reviewTree?: ReviewTree;
   tipOverlay?: TipOverlay;
 }): Promise<{ ok: true; scan: ScanResult } | { ok: false; error: Error }> {
   let lastError: Error | null = null;
   for (let attempt = 1; attempt <= 2; attempt++) {
+    const heartbeat = setInterval(() => {
+      void renewChunk(reviewRunId, chunkId, workerId, leaseVersion);
+    }, 60_000);
     try {
       const scan = await runner(prId, plan.files, reviewRunId, chunkId, prManifest, {
         signal,
         checkpointMetadata,
         precomputedFindings,
+        completedChunkContext,
+        ...(initialMessages ? { initialMessages } : {}),
+        ...(startLoopCount !== undefined ? { startLoopCount } : {}),
         reviewTree,
         tipOverlay,
       });
@@ -597,6 +773,8 @@ async function runChunkWithRetry({
       // provider-chain cycle (~10 min on a hung finalizer). Bail now
       // and let the orchestrator's loop-level check skip remaining chunks.
       if (isRunClosedError(lastError)) break;
+    } finally {
+      clearInterval(heartbeat);
     }
   }
   return { ok: false, error: lastError || new Error("Chunk scan failed.") };

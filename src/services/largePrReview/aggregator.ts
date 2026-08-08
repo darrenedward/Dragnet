@@ -5,6 +5,7 @@ import { completePrReviewIfCurrent } from "@/src/lib/prRevisionStatus";
 import { recordFixesForCompletedScan } from "@/src/services/findingLifecycle/bugFixTracker";
 
 export interface AggregatedReviewResult {
+  terminalized: boolean;
   reliability: ReviewReliability;
   rating: number | null;
   chunksTotal: number;
@@ -50,7 +51,37 @@ export async function aggregateResults(reviewRunId: string): Promise<AggregatedR
       : "complete";
   const rating = reliability === "incomplete_security_review"
     ? null
-    : weightedRating(chunks);
+      : weightedRating(chunks);
+
+  const incomplete = chunks.some((chunk) => chunk.status !== "completed");
+  if (incomplete) {
+    await prisma.reviewRun.update({
+      where: { id: reviewRunId },
+      data: {
+        status: "in_progress",
+        completedAt: null,
+        rating: null,
+        reliability,
+        chunksTotal,
+        chunksCompleted,
+        chunksFailed,
+        chunksSkipped,
+      },
+    });
+    return {
+      terminalized: false,
+      reliability,
+      rating: null,
+      chunksTotal,
+      chunksCompleted,
+      chunksFailed,
+      chunksSkipped,
+      findings: [],
+      skippedReasons: chunks
+        .filter((chunk) => chunk.status === "skipped")
+        .map((chunk) => `${chunk.label}: ${chunk.skipReason || "skipped"}`),
+    };
+  }
 
   // Post-aggregate publish seam (shared with single-shot):
   // fingerprint dedupe → (optional cluster) → re-verify → reconcile → load.
@@ -116,6 +147,7 @@ export async function aggregateResults(reviewRunId: string): Promise<AggregatedR
   }
 
   return {
+    terminalized: true,
     reliability,
     rating,
     chunksTotal,

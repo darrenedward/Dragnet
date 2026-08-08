@@ -72,4 +72,5 @@ export interface LargePrReviewResult {
   chunksFailed: number;
   chunksSkipped: number;
   warning?: string | null;
+  recoverable?: boolean;
 }

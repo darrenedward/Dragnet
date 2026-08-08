@@ -911,6 +911,8 @@ export interface RunPrScanOptions {
    * running tsc/eslint/container-tests once per chunk.
    */
   precomputedFindings?: DeterministicFinding[];
+  /** Completed large-PR chunk summaries/findings for whole-PR context. */
+  completedChunkContext?: string;
   /**
    * Tip-bound review tree from ensureReviewTree. When set, the agent
    * readFile tool reads tip content via this seam instead of ambient
@@ -1525,7 +1527,7 @@ Description: ${pr.description || ""}
 
 ${codebaseContext ? `=== PRE-FETCHED AST SYMBOLS & CALL-GRAPH LINKAGES ===\n${codebaseContext}\n` : ""}
 === CHANGED FILES & CONTEXT ===
-${diffPayload}${deterministicPayload}`;
+${diffPayload}${deterministicPayload}${options?.completedChunkContext ? `\n\n=== COMPLETED CHUNK RESULTS (prior work in this PR) ===\n${options.completedChunkContext}` : ""}`;
 
           const priorAttempt = providerAttempts[providerAttempts.length - 1];
           const shouldResumeFallback = providerIndex > 0 &&

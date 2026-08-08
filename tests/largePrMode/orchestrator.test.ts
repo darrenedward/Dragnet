@@ -26,6 +26,8 @@ vi.mock("../../src/lib/prisma", () => ({
       deleteMany: vi.fn().mockResolvedValue({}),
       createMany: vi.fn().mockResolvedValue({ count: 0 }),
       findMany: vi.fn().mockResolvedValue([]),
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+      findUnique: vi.fn().mockResolvedValue({ leaseVersion: 1 }),
     },
   },
 }));
@@ -71,7 +73,7 @@ vi.mock("../../src/services/largePrReview/globalDeterministicChecks", () => ({
   }),
 }));
 
-import { runLargePrReview } from "../../src/services/largePrReview/orchestrator";
+import { claimChunk, releaseChunk, runLargePrReview } from "../../src/services/largePrReview/orchestrator";
 
 describe("runLargePrReview — zero plans (no code files)", () => {
   beforeEach(() => {
@@ -122,5 +124,29 @@ describe("runLargePrReview — zero plans (no code files)", () => {
         }),
       }),
     );
+  });
+});
+
+describe("large-PR chunk leases", () => {
+  it("claims a chunk atomically and fences release to its owner", async () => {
+    const { prisma } = await import("../../src/lib/prisma");
+    const claimed = await claimChunk("run-1", "run-1-chunk-a", "worker-a");
+    expect(claimed).toBe(1);
+    expect(prisma.reviewChunk.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ id: "run-1-chunk-a", reviewRunId: "run-1" }),
+      data: expect.objectContaining({ leaseOwner: "worker-a", status: "running" }),
+    }));
+
+    await releaseChunk("run-1", "run-1-chunk-a", "worker-a", 1, { status: "completed", rating: 8 });
+    expect(prisma.reviewChunk.updateMany).toHaveBeenLastCalledWith({
+      where: { id: "run-1-chunk-a", reviewRunId: "run-1", leaseOwner: "worker-a", leaseVersion: 1 },
+      data: expect.objectContaining({ status: "completed", leaseOwner: null, leaseExpiresAt: null }),
+    });
+  });
+
+  it("does not treat a lost atomic claim as a chunk failure", async () => {
+    const { prisma } = await import("../../src/lib/prisma");
+    (prisma.reviewChunk.updateMany as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ count: 0 });
+    await expect(claimChunk("run-1", "run-1-chunk-a", "worker-b")).resolves.toBeNull();
   });
 });

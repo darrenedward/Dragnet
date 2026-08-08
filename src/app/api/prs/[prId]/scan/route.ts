@@ -638,7 +638,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ prId: s
       } catch (statusErr) {
         console.warn(`[scan] route: failed to clear PR In Progress status:`, statusErr);
       }
-    } else if (!result.success && !result.interrupted) {
+    } else if (!result.success && !result.interrupted && !("recoverable" in result && result.recoverable)) {
       // runPrScan/finalizeScanFailure already stamps ReviewRun terminalClass.
       // Do not re-stamp here as hard_fail — that clobbered quality/transport.
       try {
