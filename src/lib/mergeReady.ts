@@ -28,6 +28,7 @@ export type MergeBlockReason =
   | "null_rating"
   | "rating_below_threshold"
   | "reliability_incomplete"
+  | "coverage_incomplete"
   | "refused"
   | "stale";
 
@@ -48,6 +49,11 @@ export interface MergeReadyInput {
   stale?: boolean | null;
   /** Optional detail when stale — tip moved vs diff changed. */
   staleReason?: ReviewStaleReason | null;
+  /** Optional persisted chunk coverage; terminal coverage is required when present. */
+  chunksTotal?: number | null;
+  chunksCompleted?: number | null;
+  chunksFailed?: number | null;
+  chunksSkipped?: number | null;
 }
 
 export interface MergeReadyResult {
@@ -92,6 +98,20 @@ export function isMergeReady(input: MergeReadyInput | null | undefined): MergeRe
       mergeReady: false,
       mergeBlockReason: "null_rating",
       message: "Rating unavailable — not merge-ready.",
+    };
+  }
+
+  if (
+    input.chunksTotal != null &&
+    input.chunksCompleted != null &&
+    input.chunksFailed != null &&
+    input.chunksSkipped != null &&
+    input.chunksCompleted + input.chunksFailed + input.chunksSkipped < input.chunksTotal
+  ) {
+    return {
+      mergeReady: false,
+      mergeBlockReason: "coverage_incomplete",
+      message: `Review coverage is incomplete (${input.chunksCompleted + input.chunksFailed + input.chunksSkipped}/${input.chunksTotal} chunks terminal).`,
     };
   }
 

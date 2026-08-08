@@ -3,6 +3,7 @@ import { publishFindingsForRun } from "./publishFindings";
 import type { ReviewReliability } from "./types";
 import { completePrReviewIfCurrent } from "@/src/lib/prRevisionStatus";
 import { recordFixesForCompletedScan } from "@/src/services/findingLifecycle/bugFixTracker";
+import { getChunkCoverage } from "@/src/lib/chunkCoverage";
 
 export interface AggregatedReviewResult {
   reliability: ReviewReliability;
@@ -11,6 +12,7 @@ export interface AggregatedReviewResult {
   chunksCompleted: number;
   chunksFailed: number;
   chunksSkipped: number;
+  chunksIncomplete: number;
   findings: any[];
   skippedReasons: string[];
 }
@@ -34,21 +36,19 @@ export async function aggregateResults(reviewRunId: string): Promise<AggregatedR
     orderBy: { id: "asc" },
   });
 
-  const chunksTotal = chunks.length;
-  const chunksCompleted = chunks.filter((chunk) => chunk.status === "completed").length;
-  const chunksFailed = chunks.filter((chunk) => chunk.status === "failed").length;
-  const chunksSkipped = chunks.filter((chunk) => chunk.status === "skipped").length;
+  const coverage = getChunkCoverage(chunks);
+  const { chunksTotal, chunksCompleted, chunksFailed, chunksSkipped, chunksIncomplete } = coverage;
   const incompleteSecurity = chunks.some(
     (chunk) =>
       chunk.touchesSecuritySensitive &&
-      (chunk.status === "failed" || chunk.status === "skipped"),
+      chunk.status !== "completed",
   );
   const reliability: ReviewReliability = incompleteSecurity
     ? "incomplete_security_review"
-    : chunksFailed > 0 || chunksSkipped > 0
+    : chunksIncomplete > 0 || chunksFailed > 0 || chunksSkipped > 0
       ? "partial"
       : "complete";
-  const rating = reliability === "incomplete_security_review"
+  const rating = chunksIncomplete > 0 || reliability === "incomplete_security_review"
     ? null
     : weightedRating(chunks);
 
@@ -69,19 +69,36 @@ export async function aggregateResults(reviewRunId: string): Promise<AggregatedR
     .filter((chunk) => chunk.status === "skipped")
     .map((chunk) => `${chunk.label}: ${chunk.skipReason || "skipped"}`);
 
+  const isComplete = chunksIncomplete === 0;
   await prisma.reviewRun.update({
     where: { id: reviewRunId },
     data: {
-      status: "completed",
-      completedAt: new Date(),
+      ...(isComplete ? { status: "completed", completedAt: new Date() } : {}),
       rating,
       reliability,
       chunksTotal,
       chunksCompleted,
       chunksFailed,
       chunksSkipped,
+      ...(isComplete
+        ? {}
+        : { systemWarn: `Review incomplete: ${chunksCompleted}/${chunksTotal} chunks reached a terminal state.` }),
     },
   });
+
+  if (!isComplete) {
+    return {
+      reliability,
+      rating,
+      chunksTotal,
+      chunksCompleted,
+      chunksFailed,
+      chunksSkipped,
+      chunksIncomplete,
+      findings,
+      skippedReasons,
+    };
+  }
 
   // Large-PR runs reconcile findings here rather than in reviewService's
   // normal path, so they must also feed the cross-scan fix ledger here.
@@ -122,6 +139,7 @@ export async function aggregateResults(reviewRunId: string): Promise<AggregatedR
     chunksCompleted,
     chunksFailed,
     chunksSkipped,
+    chunksIncomplete,
     findings,
     skippedReasons,
   };

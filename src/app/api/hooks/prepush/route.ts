@@ -75,6 +75,10 @@ export async function POST(req: Request) {
       refused: true,
       status: true,
       commitHash: true,
+      chunksTotal: true,
+      chunksCompleted: true,
+      chunksFailed: true,
+      chunksSkipped: true,
     },
   });
   const findings = await prisma.reviewFinding.findMany({
@@ -92,8 +96,12 @@ export async function POST(req: Request) {
     outcome: run?.outcome ?? null,
     refused: run?.refused ?? false,
     status: run?.status ?? "completed",
-    stale: tipMismatch,
-    staleReason: tipMismatch ? "tip_mismatch" : null,
+      stale: tipMismatch,
+      staleReason: tipMismatch ? "tip_mismatch" : null,
+      chunksTotal: run?.chunksTotal,
+      chunksCompleted: run?.chunksCompleted,
+      chunksFailed: run?.chunksFailed,
+      chunksSkipped: run?.chunksSkipped,
   });
   const passed = gate.mergeReady;
   return NextResponse.json({

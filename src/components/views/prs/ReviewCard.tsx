@@ -179,6 +179,10 @@ export default function ReviewCard({
         stale: stale ?? false,
         staleReason: staleReason ?? null,
         status: reviewRun.status,
+        chunksTotal: reviewRun.chunksTotal,
+        chunksCompleted: reviewRun.chunksCompleted,
+        chunksFailed: reviewRun.chunksFailed,
+        chunksSkipped: reviewRun.chunksSkipped,
       })
     : null;
   const handleCopyAll = useCallback(() => {

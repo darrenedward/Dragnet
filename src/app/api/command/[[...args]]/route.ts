@@ -234,6 +234,10 @@ async function formatLatestFindings(pr: any): Promise<string> {
         stale: latest.stale,
         staleReason: latest.staleReason,
         status: run.status,
+        chunksTotal: run.chunksTotal,
+        chunksCompleted: run.chunksCompleted,
+        chunksFailed: run.chunksFailed,
+        chunksSkipped: run.chunksSkipped,
       })
     : { mergeReady: false, mergeBlockReason: "No completed review yet" };
   const displayPr = {
@@ -324,6 +328,10 @@ async function handlePrCheckStatus(args: any, _userId: string | null): Promise<s
         stale: latest.stale,
         staleReason: latest.staleReason,
         status: run.status,
+        chunksTotal: run.chunksTotal,
+        chunksCompleted: run.chunksCompleted,
+        chunksFailed: run.chunksFailed,
+        chunksSkipped: run.chunksSkipped,
       })
     : { mergeReady: false, mergeBlockReason: "No completed review yet" };
   const displayPr = {
@@ -671,6 +679,10 @@ async function handleLegacyCommand(body: any, defRepo: string | null, auth: Auth
                 refused: latest.reviewRun.refused,
                 stale: latest.stale,
                 staleReason: latest.staleReason,
+                chunksTotal: latest.reviewRun.chunksTotal,
+                chunksCompleted: latest.reviewRun.chunksCompleted,
+                chunksFailed: latest.reviewRun.chunksFailed,
+                chunksSkipped: latest.reviewRun.chunksSkipped,
               }
             : null,
       );

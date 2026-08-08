@@ -90,6 +90,18 @@ describe("isMergeReady", () => {
     expect(r.message).toMatch(/security|incomplete/i);
   });
 
+  it("blocks a high-rated run when persisted chunk coverage is incomplete", () => {
+    const r = isMergeReady(ready({
+      chunksTotal: 17,
+      chunksCompleted: 9,
+      chunksFailed: 0,
+      chunksSkipped: 0,
+    }));
+    expect(r.mergeReady).toBe(false);
+    expect(r.mergeBlockReason).toBe("coverage_incomplete");
+    expect(r.message).toMatch(/9\/17/);
+  });
+
   it("refused is not merge-ready even with rating 10", () => {
     const r = isMergeReady(ready({ refused: true, rating: 10 }));
     expect(r.mergeReady).toBe(false);

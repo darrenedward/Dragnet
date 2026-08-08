@@ -2,7 +2,7 @@ import type { PrSizeProfile } from "@/src/lib/prSizeProfile";
 
 export type FileClass = "code" | "docs" | "generated" | "lock" | "vendor";
 export type LargePrTier = "normal" | "grouped" | "oversized";
-export type ChunkStatus = "pending" | "running" | "completed" | "failed" | "skipped";
+export type ChunkStatus = "pending" | "running" | "interrupted" | "completed" | "failed" | "skipped";
 export type ReviewReliability = "complete" | "partial" | "incomplete_security_review";
 
 export interface ReviewFileInput {
@@ -71,5 +71,6 @@ export interface LargePrReviewResult {
   chunksCompleted: number;
   chunksFailed: number;
   chunksSkipped: number;
+  chunksIncomplete?: number;
   warning?: string | null;
 }

@@ -272,6 +272,10 @@ export async function GET(req: Request, { params }: { params: Promise<{ prId: st
       stale: latest.stale,
       staleReason: latest.staleReason,
       status: statusRun.status === "failed" ? "failed" : latest.reviewRun.status,
+      chunksTotal: statusRun.chunksTotal,
+      chunksCompleted: statusRun.chunksCompleted,
+      chunksFailed: statusRun.chunksFailed,
+      chunksSkipped: statusRun.chunksSkipped,
     });
 
     return NextResponse.json({
