@@ -22,6 +22,7 @@ import {
   type ClusterFinding,
 } from "./cluster";
 import { dedupFindingsWithinRun, reconcileFindingsAcrossRuns } from "./reconcile";
+import { persistReviewArtifact } from "@/src/services/durableScanState";
 
 export const PUBLISH_ORDER = [
   "fingerprint_dedupe",
@@ -326,10 +327,17 @@ export async function publishFindingsForRun(
       prId = run?.prId;
     }
     if (prId) {
-      await reconcileFindingsAcrossRuns(prId, reviewRunId);
+      const reconciliation = await reconcileFindingsAcrossRuns(prId, reviewRunId);
+      await persistReviewArtifact({
+        reviewRunId,
+        artifactKey: "reconciliation:final",
+        kind: "reconciliation",
+        content: reconciliation,
+      });
     }
   } catch (err) {
     console.error(`[publish] reconcile failed for run ${reviewRunId}:`, err);
+    throw err;
   }
 
   // 5. Load published set — errors propagate so large-PR aggregate cannot

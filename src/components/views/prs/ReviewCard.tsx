@@ -9,6 +9,7 @@ import PrSizeProfileChip from "../../PrSizeProfileChip";
 import FindingsList from "./FindingsList";
 import LargePrModePanel from "./LargePrModePanel";
 import CostBanner from "./CostBanner";
+import type { ScanRecoveryState } from "../../../lib/scanRecovery";
 
 export interface ReviewRunMeta {
   id: string;
@@ -29,6 +30,9 @@ export interface ReviewRunMeta {
   chunksCompleted?: number;
   chunksFailed?: number;
   chunksSkipped?: number;
+  finalizationStatus?: string | null;
+  finalizationError?: string | null;
+  scanRecovery?: ScanRecoveryState;
   tokensUsed?: {
     totalCostUsd: number;
     totalPromptTokens: number;
@@ -317,6 +321,30 @@ export default function ReviewCard({
           )}
         </div>
       </div>
+      )}
+
+      {reviewRun?.scanRecovery && (
+        <div className="px-4 py-2 border-b border-white/5 bg-slate-950/30 flex items-center gap-3 flex-wrap text-[10px] font-mono uppercase tracking-wider">
+          <span className="text-cyan-300 font-bold">Recovery: {reviewRun.scanRecovery.lifecycle}</span>
+          <span className="text-slate-500">Attempts {reviewRun.scanRecovery.attempts.length}</span>
+          <span className="text-slate-500">Artifacts {reviewRun.scanRecovery.artifacts.length}</span>
+          {reviewRun.scanRecovery.providerNeutral.finalization.status && (
+            <span className="text-slate-500">Finalize {reviewRun.scanRecovery.providerNeutral.finalization.status}</span>
+          )}
+          {reviewRun.scanRecovery.attempts.some((attempt) => attempt.outcome === "transport_failure") && (
+            <span className="text-amber-300">Provider timeout/fallback recorded</span>
+          )}
+          {reviewRun.scanRecovery.attempts.slice(-3).map((attempt) => (
+            <span key={attempt.id ?? `${attempt.provider}-${attempt.startedAt}`} className="text-slate-400 normal-case">
+              {attempt.provider ?? "provider"}: {attempt.outcome ?? attempt.status}
+              {attempt.checkpointPosition != null ? ` @${attempt.checkpointPosition}` : ""}
+              {attempt.durationMs != null ? ` ${Math.round(attempt.durationMs / 1000)}s` : ""}
+            </span>
+          ))}
+          {reviewRun.scanRecovery.providerNeutral.finalization.error && (
+            <span className="text-rose-300">{reviewRun.scanRecovery.providerNeutral.finalization.error}</span>
+          )}
+        </div>
       )}
 
       {/* Large PR Mode chunk panel.

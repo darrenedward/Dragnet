@@ -14,6 +14,7 @@ import {
 import { detectBuildSystem } from "@/src/lib/buildsystemDetect";
 import { withRetry, isStepFailure } from "@/src/services/stepPipeline";
 import { prisma } from "@/src/lib/prisma";
+import { persistReviewArtifact } from "@/src/services/durableScanState";
 
 export interface GlobalChecksResult {
   abort: boolean;
@@ -180,6 +181,12 @@ export async function runGlobalDeterministicChecks(
         );
 
         if (isStepFailure(tier2Result)) {
+          await persistReviewArtifact({
+            reviewRunId,
+            artifactKey: "deterministic:global",
+            kind: "deterministic_checks",
+            content: { status: "infrastructure_failure", findings },
+          });
           return {
             abort: true,
             infrastructureFailure: true,
@@ -195,6 +202,12 @@ export async function runGlobalDeterministicChecks(
         );
         findings.push(...tier2Result.data);
       } catch (err: any) {
+        await persistReviewArtifact({
+          reviewRunId,
+          artifactKey: "deterministic:global",
+          kind: "deterministic_checks",
+          content: { status: "infrastructure_failure", findings },
+        });
         return {
           abort: true,
           infrastructureFailure: true,
@@ -204,6 +217,12 @@ export async function runGlobalDeterministicChecks(
       }
     }
 
+    await persistReviewArtifact({
+      reviewRunId,
+      artifactKey: "deterministic:global",
+      kind: "deterministic_checks",
+      content: { status: "complete", findings },
+    });
     return {
       abort: false,
       infrastructureFailure: false,

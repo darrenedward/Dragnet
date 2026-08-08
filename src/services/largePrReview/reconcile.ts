@@ -309,12 +309,17 @@ export async function reconcileFindingsAcrossRuns(
       confidence: true,
     },
   });
+  const currentRun = await (prisma as any).reviewRun?.findUnique?.({
+    where: { id: currentRunId },
+    select: { commitHash: true },
+  });
 
   const priorOpenFindings = await prisma.reviewFinding.findMany({
     where: {
       prId,
       status: "open",
       lastSeenRunId: { not: currentRunId },
+      reviewRun: { status: "completed" },
     },
     select: {
       id: true,
@@ -332,6 +337,7 @@ export async function reconcileFindingsAcrossRuns(
       prId,
       status: "resolved",
       resolvedAtRunId: { not: null },
+      reviewRun: { status: "completed" },
     },
     select: {
       id: true,
@@ -356,6 +362,7 @@ export async function reconcileFindingsAcrossRuns(
       data: {
         lastSeenRunId: currentRunId,
         sourceHashAtInsert: update.sourceHashAtInsert,
+        lastSeenCommitHash: currentRun?.commitHash ?? null,
         // Carry the matched-new finding's latest adjudicated state onto
         // the surviving prior row. Without this (issue #31) the prior
         // row keeps its previous run's verdict after the matched-new is
@@ -400,7 +407,11 @@ export async function reconcileFindingsAcrossRuns(
     if (resolvedIds.length > 0) {
       await prisma.reviewFinding.updateMany({
         where: { id: { in: resolvedIds } },
-        data: { status: "resolved", resolvedAtRunId: currentRunId },
+        data: {
+          status: "resolved",
+          resolvedAtRunId: currentRunId,
+          resolvedAtCommitHash: currentRun?.commitHash ?? null,
+        },
       });
       result.resolved = resolvedIds.length;
     }

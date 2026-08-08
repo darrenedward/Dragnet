@@ -76,6 +76,7 @@ import {
   readDurableScanEvidence,
   readLatestReviewCheckpoint,
 } from "@/src/services/durableScanState";
+import { finalizeValidReviewRun } from "@/src/services/scanFinalizer";
 
 export interface ScanResult {
   success: boolean;
@@ -110,6 +111,12 @@ export interface ScanResult {
   totalIterations?: number;
   lastProvider?: string | null;
   message?: string;
+}
+
+/** A worker restart can leave a durable provider row running without an outcome. */
+export function recoveredProviderOutcome(attempt: { outcome?: string | null; status?: string } | undefined): OutcomeClass | null {
+  const outcome = attempt?.outcome ?? (attempt?.status === "running" ? "interrupted" : null);
+  return outcome as OutcomeClass | null;
 }
 
 /**
@@ -1482,24 +1489,40 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
             provider: name,
             model,
             maxIterations,
+            checkpointPosition: options?.startLoopCount,
+            resumed: Boolean(options?.initialMessages),
+            correlationId: `${reviewRunId}:${attemptKey}`,
           });
           if (!shouldRunAttempt) {
-            if (durableAttempt?.outcome) {
+            const recoveredOutcome = recoveredProviderOutcome(durableAttempt);
+            if (recoveredOutcome) {
               providerAttempts.push({
                 provider: durableAttempt.provider,
                 model: durableAttempt.model,
                 iterationsUsed: durableAttempt.iterationsUsed ?? 0,
                 maxIterations: durableAttempt.maxIterations ?? maxIterations,
-                submitReviewCalled: durableAttempt.outcome === "success",
+                submitReviewCalled: recoveredOutcome === "success",
                 rating: null,
-                error: durableAttempt.errorMessage ? new Error(durableAttempt.errorMessage) : null,
-                outcome: durableAttempt.outcome,
+                error: durableAttempt.errorMessage
+                  ? new Error(durableAttempt.errorMessage)
+                  : recoveredOutcome === "interrupted"
+                    ? new Error("Provider attempt was left running by a previous worker.")
+                    : null,
+                outcome: recoveredOutcome,
                 promptTokens: durableAttempt.promptTokens ?? 0,
                 completionTokens: durableAttempt.completionTokens ?? 0,
                 costUsd: durableAttempt.costUsd ?? 0,
               });
             }
-            void logReview(prId, `Skipping already terminal provider attempt: ${name}`, "info", reviewRunId, reviewChunkId);
+            void logReview(
+              prId,
+              recoveredOutcome === "interrupted"
+                ? `Recovering abandoned provider attempt: ${name}`
+                : `Skipping already terminal provider attempt: ${name}`,
+              "info",
+              reviewRunId,
+              reviewChunkId,
+            );
             continue;
           }
         }
@@ -1995,6 +2018,8 @@ ${diffPayload}${deterministicPayload}${options?.completedChunkContext ? `\n\n===
               promptTokens: attemptPromptTokens,
               completionTokens: attemptCompletionTokens,
               costUsd,
+              checkpointPosition: attemptIterations,
+              resumed: Boolean(options?.initialMessages),
             });
           }
           const endFields = {
@@ -2571,6 +2596,8 @@ ${diffPayload}${deterministicPayload}${options?.completedChunkContext ? `\n\n===
       lastSeenRunId: reviewRunId ?? null,
       status: "open",
       sourceHashAtInsert,
+      sourceCommitHashAtInsert: reviewRunId ? pr.commitHash : null,
+      lastSeenCommitHash: reviewRunId ? pr.commitHash : null,
     };
   });
 
@@ -2608,29 +2635,14 @@ ${diffPayload}${deterministicPayload}${options?.completedChunkContext ? `\n\n===
   const earnedOk = terminal.isEarnedSuccess;
 
   if (reviewRunId && !reviewChunkId) {
-    // Post-aggregate publish seam (shared with large-PR mode):
-    // fingerprint dedupe → (optional cluster) → re-verify → cross-run reconcile.
-    try {
-      await publishFindingsForRun(reviewRunId, {
-        prId,
-        repoPath: repoPathForVerifier ?? null,
-      });
-    } catch (err) {
-      console.error(`[scan] publishFindingsForRun failed for run ${reviewRunId}:`, err);
-    }
     if (earnedOk) {
-      await completeReviewRun(reviewRunId, {
-        status: "completed",
-        rating,
-        refused,
-        refusalNote,
-        outcome: "reviewed",
-        terminalClass: "success",
-        systemWarn,
+      const finalized = await finalizeValidReviewRun(reviewRunId, { rating, systemWarn }, async () => {
+        await publishFindingsForRun(reviewRunId, {
+          prId,
+          repoPath: repoPathForVerifier ?? null,
+        });
       });
-      recordFixesForCompletedScan(reviewRunId).catch((err) =>
-        console.warn(`[scan] recordFixesForCompletedScan failed for run ${reviewRunId}:`, err),
-      );
+      if (finalized.finalized) await recordFixesForCompletedScan(reviewRunId);
     } else {
       const persist = runPersistForTerminal(terminal);
       await completeReviewRun(reviewRunId, {

@@ -77,6 +77,7 @@ vi.mock("../src/lib/prisma", () => ({
     reviewLog: { create: vi.fn().mockResolvedValue({}) },
     reviewFinding: {
       createMany: vi.fn().mockResolvedValue({ count: 0 }),
+      findMany: vi.fn().mockResolvedValue([]),
       deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
       updateMany: vi.fn().mockResolvedValue({ count: 0 }),
     },

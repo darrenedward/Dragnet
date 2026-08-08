@@ -3,6 +3,7 @@ import { publishFindingsForRun } from "./publishFindings";
 import type { ReviewReliability } from "./types";
 import { completePrReviewIfCurrent } from "@/src/lib/prRevisionStatus";
 import { recordFixesForCompletedScan } from "@/src/services/findingLifecycle/bugFixTracker";
+import { finalizeValidReviewRun } from "@/src/services/scanFinalizer";
 
 export interface AggregatedReviewResult {
   terminalized: boolean;
@@ -90,11 +91,19 @@ export async function aggregateResults(reviewRunId: string): Promise<AggregatedR
     select: { path: true, localPath: true },
   });
   const repoPath = repo?.localPath || repo?.path || null;
-  const published = await publishFindingsForRun(reviewRunId, {
-    prId: run.prId,
-    repoPath,
-  });
-  const findings = published.findings;
+  const finalized = await finalizeValidReviewRun(
+    reviewRunId,
+    { rating, reliability },
+    async () => {
+      const published = await publishFindingsForRun(reviewRunId, {
+        prId: run.prId,
+        repoPath,
+      });
+      return published;
+    },
+  );
+  const findings = finalized.value?.findings ?? [];
+  if (finalized.finalized) await recordFixesForCompletedScan(reviewRunId);
 
   const skippedReasons = chunks
     .filter((chunk) => chunk.status === "skipped")
@@ -102,21 +111,8 @@ export async function aggregateResults(reviewRunId: string): Promise<AggregatedR
 
   await prisma.reviewRun.update({
     where: { id: reviewRunId },
-    data: {
-      status: "completed",
-      completedAt: new Date(),
-      rating,
-      reliability,
-      chunksTotal,
-      chunksCompleted,
-      chunksFailed,
-      chunksSkipped,
-    },
+    data: { chunksTotal, chunksCompleted, chunksFailed, chunksSkipped },
   });
-
-  // Large-PR runs reconcile findings here rather than in reviewService's
-  // normal path, so they must also feed the cross-scan fix ledger here.
-  await recordFixesForCompletedScan(reviewRunId);
 
   await completePrReviewIfCurrent(run.prId, run.commitHash, rating);
 
