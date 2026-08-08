@@ -227,6 +227,18 @@ describe("ContainerOrchestrator.runRunner", () => {
     expect(envArgs.some((arg) => /DATABASE_URL|LLM_API_KEY|secret/.test(arg))).toBe(false);
   });
 
+  it("can provide only the fixed synthetic database URL for install hooks", async () => {
+    mockSpawnSuccess("");
+    const orc = ContainerOrchestrator.getInstance();
+    await orc.runRunner({ ...baseOpts, provideSyntheticDatabaseUrl: true });
+    const args: string[] = mockSpawn.mock.calls[0][1] as string[];
+    const envArgs = args.flatMap((arg, index) => arg === "-e" ? [args[index + 1]] : []);
+    expect(envArgs).toContain(
+      "DATABASE_URL=postgresql://dragnet-quality-check:dragnet-quality-check@127.0.0.1:5432/placeholder",
+    );
+    expect(envArgs.some((arg) => /secret|localhost\/db/.test(arg))).toBe(false);
+  });
+
   it("returns timedOut=true and exitCode=-1 on timeout", async () => {
     mockSpawn.mockReturnValue(
       createMockSpawnProcess({

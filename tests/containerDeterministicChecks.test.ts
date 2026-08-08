@@ -149,12 +149,13 @@ describe("runContainerizedChecks", () => {
     const firstCall = mockRunRunner.mock.calls[0][0];
     expect(firstCall.commands).toContain(baseOpts.installCommand);
     expect(firstCall.networkMode).toBe("bridge");
-    expect(firstCall.env).toBeUndefined();
+    expect(firstCall.provideSyntheticDatabaseUrl).toBe(true);
 
     const secondCall = mockRunRunner.mock.calls[1][0];
     expect(secondCall.commands).toContain(baseOpts.testCommand);
     expect(secondCall.networkMode).toBe("none");
     expect(secondCall.env).toBeUndefined();
+    expect(secondCall.provideSyntheticDatabaseUrl).toBeUndefined();
   });
 
   it("resolves the default command to build plus lint when typecheck is absent", async () => {
