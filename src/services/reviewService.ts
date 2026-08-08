@@ -112,6 +112,12 @@ export interface ScanResult {
   message?: string;
 }
 
+/** A worker restart can leave a durable provider row running without an outcome. */
+export function recoveredProviderOutcome(attempt: { outcome?: string | null; status?: string } | undefined): OutcomeClass | null {
+  const outcome = attempt?.outcome ?? (attempt?.status === "running" ? "interrupted" : null);
+  return outcome as OutcomeClass | null;
+}
+
 /**
  * Per-provider attempt record. One entry per provider tried in a scan,
  * classified by `classifyProviderOutcome()`. Phase 1 logs the array;
@@ -1482,22 +1488,35 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
             maxIterations,
           });
           if (!shouldRunAttempt) {
-            if (durableAttempt?.outcome) {
+            const recoveredOutcome = recoveredProviderOutcome(durableAttempt);
+            if (recoveredOutcome) {
               providerAttempts.push({
                 provider: durableAttempt.provider,
                 model: durableAttempt.model,
                 iterationsUsed: durableAttempt.iterationsUsed ?? 0,
                 maxIterations: durableAttempt.maxIterations ?? maxIterations,
-                submitReviewCalled: durableAttempt.outcome === "success",
+                submitReviewCalled: recoveredOutcome === "success",
                 rating: null,
-                error: durableAttempt.errorMessage ? new Error(durableAttempt.errorMessage) : null,
-                outcome: durableAttempt.outcome,
+                error: durableAttempt.errorMessage
+                  ? new Error(durableAttempt.errorMessage)
+                  : recoveredOutcome === "interrupted"
+                    ? new Error("Provider attempt was left running by a previous worker.")
+                    : null,
+                outcome: recoveredOutcome,
                 promptTokens: durableAttempt.promptTokens ?? 0,
                 completionTokens: durableAttempt.completionTokens ?? 0,
                 costUsd: durableAttempt.costUsd ?? 0,
               });
             }
-            void logReview(prId, `Skipping already terminal provider attempt: ${name}`, "info", reviewRunId, reviewChunkId);
+            void logReview(
+              prId,
+              recoveredOutcome === "interrupted"
+                ? `Recovering abandoned provider attempt: ${name}`
+                : `Skipping already terminal provider attempt: ${name}`,
+              "info",
+              reviewRunId,
+              reviewChunkId,
+            );
             continue;
           }
         }

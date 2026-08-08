@@ -305,4 +305,10 @@ describe("runPrScan quality_failure provider chain (#139)", () => {
     ]));
     expect(hoisted.logReview.mock.calls.some((call: any[]) => /Resuming fallback provider/.test(String(call[1])))).toBe(true);
   });
+
+  it("treats an abandoned running provider attempt as interrupted for fallback", async () => {
+    const { recoveredProviderOutcome } = await import("../src/services/reviewService");
+    expect(recoveredProviderOutcome({ status: "running", outcome: null })).toBe("interrupted");
+    expect(recoveredProviderOutcome({ status: "failed", outcome: "transport_failure" })).toBe("transport_failure");
+  });
 });
