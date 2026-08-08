@@ -53,6 +53,11 @@ interface Props {
     chunksCompleted?: number;
     chunksFailed?: number;
     chunksSkipped?: number;
+    chunksIncomplete?: number;
+    lastActivityAt?: string | null;
+    lastCheckpointAt?: string | null;
+    heartbeatAgeMs?: number | null;
+    recoveryReason?: string | null;
     tokensUsed?: {
       totalCostUsd: number;
       totalPromptTokens: number;
@@ -82,6 +87,9 @@ interface Props {
     chunksCompleted?: number;
     chunksFailed?: number;
     chunksSkipped?: number;
+    chunksIncomplete?: number;
+    heartbeatAgeMs?: number;
+    recoveryReason?: string | null;
   } | null;
   queueJob?: {
     jobId: string;

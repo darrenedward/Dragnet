@@ -78,7 +78,15 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
         : { repoId: id, status: { not: "Merged" } },
       orderBy: { createdAt: 'desc' }
     });
-    return NextResponse.json(await attachSizeProfiles(prs, repo));
+    const activeRuns = typeof (prisma as typeof prisma & { reviewRun?: unknown }).reviewRun !== "undefined"
+      ? await prisma.reviewRun.findMany({
+          where: { prId: { in: prs.map((pr) => pr.id) }, status: "in_progress" },
+          select: { prId: true },
+        })
+      : [];
+    const activePrIds = new Set(activeRuns.map((run) => run.prId));
+    const projectedPrs = prs.map((pr) => activePrIds.has(pr.id) ? { ...pr, status: "In Progress" } : pr);
+    return NextResponse.json(await attachSizeProfiles(projectedPrs, repo));
   } catch (err: any) {
     console.error("Error fetching repository PRs:", err);
     return NextResponse.json({ error: err.message }, { status: 500 });
@@ -112,7 +120,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         : { repoId: id, status: { not: "Merged" } },
       orderBy: { createdAt: 'desc' }
     });
-    return NextResponse.json(await attachSizeProfiles(prs, repo));
+    const activeRuns = typeof (prisma as typeof prisma & { reviewRun?: unknown }).reviewRun !== "undefined"
+      ? await prisma.reviewRun.findMany({
+          where: { prId: { in: prs.map((pr) => pr.id) }, status: "in_progress" },
+          select: { prId: true },
+        })
+      : [];
+    const activePrIds = new Set(activeRuns.map((run) => run.prId));
+    const projectedPrs = prs.map((pr) => activePrIds.has(pr.id) ? { ...pr, status: "In Progress" } : pr);
+    return NextResponse.json(await attachSizeProfiles(projectedPrs, repo));
   } catch (err: any) {
     console.error("Error refreshing repository PRs:", err);
     return NextResponse.json({ error: err.message }, { status: 500 });

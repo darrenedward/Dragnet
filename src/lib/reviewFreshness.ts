@@ -114,6 +114,8 @@ export interface LatestReviewResult {
     chunksCompleted: number;
     chunksFailed: number;
     chunksSkipped: number;
+    lastActivityAt: Date | null;
+    lastCheckpointAt: Date | null;
     tokensUsed: unknown | null;
   } | null;
   findings: Array<{
@@ -727,6 +729,8 @@ export async function getLatestCompletedReview(
         chunksCompleted: true,
         chunksFailed: true,
         chunksSkipped: true,
+        lastActivityAt: true,
+        lastCheckpointAt: true,
         tokensUsed: true,
       },
     }),
@@ -869,6 +873,8 @@ const TERMINAL_RUN_SELECT = {
   chunksCompleted: true,
   chunksFailed: true,
   chunksSkipped: true,
+  lastActivityAt: true,
+  lastCheckpointAt: true,
   tokensUsed: true,
 } as const;
 
@@ -945,6 +951,11 @@ export async function getActiveScan(prId: string): Promise<{
     chunksCompleted: number;
     chunksFailed: number;
     chunksSkipped: number;
+    lastActivityAt: Date | null;
+    lastCheckpointAt: Date | null;
+    chunksIncomplete: number;
+    heartbeatAgeMs: number;
+    recoveryReason: string | null;
   } | null;
   findings: Array<{
     id: string;
@@ -1094,8 +1105,17 @@ export async function getActiveScan(prId: string): Promise<{
     }),
   ]);
 
+  const chunksIncomplete = Math.max(
+    0,
+    reviewRun.chunksTotal - reviewRun.chunksCompleted - reviewRun.chunksFailed - reviewRun.chunksSkipped,
+  );
   return {
-    reviewRun,
+    reviewRun: {
+      ...reviewRun,
+      chunksIncomplete,
+      heartbeatAgeMs: Math.max(0, Date.now() - lastActivityAt(reviewRun).getTime()),
+      recoveryReason: "Unfinished chunks can be resumed.",
+    },
     findings,
     iterationsByChunk: parseIterationLogs(logs),
   };

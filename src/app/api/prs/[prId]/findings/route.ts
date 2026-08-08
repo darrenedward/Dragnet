@@ -169,6 +169,11 @@ export async function GET(req: Request, { params }: { params: Promise<{ prId: st
           chunksCompleted: activeScan.reviewRun.chunksCompleted,
           chunksFailed: activeScan.reviewRun.chunksFailed,
           chunksSkipped: activeScan.reviewRun.chunksSkipped,
+          chunksIncomplete: activeScan.reviewRun.chunksIncomplete,
+          lastActivityAt: activeScan.reviewRun.lastActivityAt,
+          lastCheckpointAt: activeScan.reviewRun.lastCheckpointAt,
+          heartbeatAgeMs: activeScan.reviewRun.heartbeatAgeMs,
+          recoveryReason: activeScan.reviewRun.recoveryReason,
         }
       : null;
 
@@ -213,6 +218,13 @@ export async function GET(req: Request, { params }: { params: Promise<{ prId: st
               chunksCompleted: terminalRun.chunksCompleted,
               chunksFailed: terminalRun.chunksFailed,
               chunksSkipped: terminalRun.chunksSkipped,
+              chunksIncomplete: Math.max(0, terminalRun.chunksTotal - terminalRun.chunksCompleted - terminalRun.chunksFailed - terminalRun.chunksSkipped),
+              lastActivityAt: terminalRun.lastActivityAt,
+              lastCheckpointAt: terminalRun.lastCheckpointAt,
+              heartbeatAgeMs: terminalRun.lastActivityAt
+                ? Math.max(0, Date.now() - terminalRun.lastActivityAt.getTime())
+                : null,
+              recoveryReason: terminalRun.systemWarn,
               tokensUsed: terminalRun.tokensUsed ?? null,
             }
           : null,
@@ -309,6 +321,13 @@ export async function GET(req: Request, { params }: { params: Promise<{ prId: st
         chunksCompleted: statusRun.chunksCompleted,
         chunksFailed: statusRun.chunksFailed,
         chunksSkipped: statusRun.chunksSkipped,
+        chunksIncomplete: Math.max(0, statusRun.chunksTotal - statusRun.chunksCompleted - statusRun.chunksFailed - statusRun.chunksSkipped),
+        lastActivityAt: statusRun.lastActivityAt,
+        lastCheckpointAt: statusRun.lastCheckpointAt,
+        heartbeatAgeMs: statusRun.lastActivityAt
+          ? Math.max(0, Date.now() - statusRun.lastActivityAt.getTime())
+          : null,
+        recoveryReason: statusRun.systemWarn,
         tokensUsed: statusRun.tokensUsed ?? null,
       },
       findings: statusRun.status === "failed" && statusRun.id !== latest.reviewRun.id
