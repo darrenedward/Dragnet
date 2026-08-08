@@ -26,6 +26,9 @@ import type {
 } from "./types";
 import { completePrReviewIfCurrent } from "@/src/lib/prRevisionStatus";
 import { touchReviewRunActivity } from "@/src/lib/reviewFreshness";
+import { computeDiffHash, computeReviewConfigHash, shortHash } from "@/src/lib/reviewFreshness";
+import { getChatChain } from "@/src/lib/llmClient";
+import { SYSTEM_INSTRUCTION } from "@/src/services/reviewService";
 
 type ChunkRunner = (
   prId: string,
@@ -51,6 +54,14 @@ async function isRunStillActive(reviewRunId: string): Promise<boolean> {
     select: { status: true },
   });
   return run?.status === "in_progress";
+}
+
+async function isRunOwned(reviewRunId: string, ownerToken: string): Promise<boolean> {
+  const run = await prisma.reviewRun.findUnique({
+    where: { id: reviewRunId },
+    select: { status: true, ownerToken: true },
+  });
+  return run?.status === "in_progress" && run.ownerToken === ownerToken;
 }
 
 /**
@@ -416,7 +427,15 @@ export async function retryFailedChunks(
 ): Promise<LargePrReviewResult> {
   const run = await prisma.reviewRun.findUnique({
     where: { id: reviewRunId },
-    select: { id: true, prId: true, repoId: true },
+    select: {
+      id: true,
+      prId: true,
+      repoId: true,
+      commitHash: true,
+      diffHash: true,
+      reviewConfigHash: true,
+      pullRequest: { select: { commitHash: true } },
+    },
   });
   if (!run) throw new Error(`ReviewRun ${reviewRunId} not found.`);
 
@@ -426,6 +445,34 @@ export async function retryFailedChunks(
   });
   const repoPath = repo?.path ?? "";
   const installationId = repo?.installationId;
+
+  const prFiles = await prisma.prFile.findMany({
+    where: { prId: run.prId },
+    select: { filename: true, status: true, additions: true, deletions: true, originalContent: true, modifiedContent: true, diff: true },
+  });
+  const currentDiffHash = computeDiffHash(prFiles, run.pullRequest.commitHash);
+  const currentConfigHash = computeReviewConfigHash(
+    getChatChain({ repoPath }),
+    shortHash(SYSTEM_INSTRUCTION),
+    readLimits(),
+  );
+  if (
+    run.commitHash !== run.pullRequest.commitHash ||
+    run.diffHash !== currentDiffHash ||
+    run.reviewConfigHash !== currentConfigHash
+  ) {
+    throw new Error(
+      run.commitHash !== run.pullRequest.commitHash || run.diffHash !== currentDiffHash
+        ? "Resume rejected: PR identity changed since the interrupted run."
+        : "Resume rejected: review configuration changed since the interrupted run.",
+    );
+  }
+
+  const ownerToken = randomUUID();
+  await prisma.reviewRun.update({
+    where: { id: reviewRunId },
+    data: { status: "in_progress", completedAt: null, ownerToken },
+  });
 
   // Resume scope: any chunk not in a terminal state. Covers failed retries,
   // pending chunks that never started, and `running` chunks left dangling
@@ -437,6 +484,9 @@ export async function retryFailedChunks(
     orderBy: { id: "asc" },
   });
   if (resumableChunks.length === 0) {
+    if (!(await isRunOwned(reviewRunId, ownerToken))) {
+      throw new Error(`Review run ${reviewRunId} ownership changed before aggregation.`);
+    }
     const aggregated = await aggregateResults(reviewRunId);
     return {
       success: true,
@@ -453,23 +503,14 @@ export async function retryFailedChunks(
     };
   }
 
-  await prisma.reviewRun.update({
-    where: { id: reviewRunId },
-    data: { status: "in_progress", completedAt: null },
-  });
   await prisma.pullRequest.updateMany({ where: { id: run.prId }, data: { status: "In Progress" } });
-
-  const prFiles = await prisma.prFile.findMany({
-    where: { prId: run.prId },
-    select: { filename: true, status: true, additions: true, deletions: true, originalContent: true, modifiedContent: true, diff: true },
-  });
 
   for (const chunk of resumableChunks) {
     // Same bail-out as orchestrate(). The retry path is especially
     // vulnerable to this race because the user may have triggered a
     // fresh scan (force=true) while this retry was iterating, and the
     // new scan's aggregateResults closes this run out from under us.
-    if (!(await isRunStillActive(reviewRunId))) {
+    if (!(await isRunOwned(reviewRunId, ownerToken))) {
       await logRun(run.prId, reviewRunId, repoPath, `Aborting retry chunk loop: run ${reviewRunId} is no longer in_progress`, "warn");
       break;
     }
@@ -512,6 +553,10 @@ export async function retryFailedChunks(
       runner,
       prManifest: buildPrManifest(prFiles),
     });
+    if (!(await isRunOwned(reviewRunId, ownerToken))) {
+      await logRun(run.prId, reviewRunId, repoPath, `Aborting retry after chunk ${chunk.id}: run ownership changed`, "warn");
+      break;
+    }
     if (result.ok === true) {
       await prisma.reviewChunk.update({
         where: { id: chunk.id },
@@ -536,6 +581,9 @@ export async function retryFailedChunks(
     await updateChunkCounters(reviewRunId);
   }
 
+  if (!(await isRunOwned(reviewRunId, ownerToken))) {
+    throw new Error(`Review run ${reviewRunId} ownership changed before aggregation.`);
+  }
   const aggregated = await aggregateResults(reviewRunId);
   return {
     success: true,

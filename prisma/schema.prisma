@@ -162,6 +162,7 @@ model ReviewRun {
   tokensUsed       Json? // Phase 2 cost telemetry: { totalCostUsd, totalPromptTokens, totalCompletionTokens, providers[] }
   lastActivityAt   DateTime? // Durable heartbeat for active scans; legacy rows fall back to checkpoint/start time.
   lastCheckpointAt DateTime? // Phase 5 resume: last successful checkpoint write for an in-progress run
+  ownerToken       String? // Durable resume ownership token; stale workers must not finalize a run they no longer own.
   createdByUserId  String?
   createdByUser    User?           @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
   pullRequest      PullRequest     @relation(fields: [prId], references: [id], onDelete: Cascade)
