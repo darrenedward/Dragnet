@@ -9,10 +9,12 @@ const reviewProviderAttempt = {
 };
 const reviewArtifact = {
   upsert: vi.fn(),
+  findUnique: vi.fn(),
   findMany: vi.fn(),
 };
 const reviewCheckpoint = {
   upsert: vi.fn(),
+  findUnique: vi.fn(),
   findMany: vi.fn(),
 };
 
@@ -28,7 +30,9 @@ describe("durable scan state", () => {
     reviewProviderAttempt.findUnique.mockResolvedValue(null);
     reviewProviderAttempt.update.mockResolvedValue({});
     reviewArtifact.upsert.mockResolvedValue({});
+    reviewArtifact.findUnique.mockResolvedValue(null);
     reviewCheckpoint.upsert.mockResolvedValue({});
+    reviewCheckpoint.findUnique.mockResolvedValue(null);
     reviewProviderAttempt.findMany.mockResolvedValue([{ attemptKey: "primary" }]);
     reviewArtifact.findMany.mockResolvedValue([{ artifactKey: "checks" }]);
     reviewCheckpoint.findMany.mockResolvedValue([{ checkpointId: "__run" }]);
@@ -70,6 +74,7 @@ describe("durable scan state", () => {
   it("does not reopen a terminal attempt during replay", async () => {
     const { beginProviderAttempt } = await import("../src/services/durableScanState");
     reviewProviderAttempt.findUnique.mockResolvedValue({ status: "failed" });
+    reviewProviderAttempt.create.mockRejectedValue(new Error("unique constraint"));
 
     await expect(beginProviderAttempt({
       reviewRunId: "run-1",
@@ -79,7 +84,7 @@ describe("durable scan state", () => {
       model: "agnes-2.0-flash",
       maxIterations: 2,
     })).resolves.toBe(false);
-    expect(reviewProviderAttempt.create).not.toHaveBeenCalled();
+    expect(reviewProviderAttempt.create).toHaveBeenCalledTimes(1);
   });
 
   it("replays artifacts and checkpoints idempotently with content hashes", async () => {
