@@ -291,6 +291,10 @@ model ReviewChunk {
   startedAt                DateTime?
   completedAt              DateTime?
   lastCheckpointAt         DateTime? // Phase 5 resume: last checkpoint write for this chunk
+  leaseOwner               String?
+  leaseExpiresAt           DateTime?
+  leaseVersion             Int       @default(0)
+  attemptCount             Int       @default(0)
   reviewRun                ReviewRun @relation(fields: [reviewRunId], references: [id], onDelete: Cascade)
 
   @@index([reviewRunId, status])
