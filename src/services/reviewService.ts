@@ -56,6 +56,7 @@ import {
 import {
   deleteCheckpoint,
   deleteRunCheckpoints,
+  readCheckpoint,
   RUN_CHECKPOINT_ID,
   writeCheckpoint,
   type CheckpointState,
@@ -72,6 +73,8 @@ import {
   completeProviderAttempt,
   persistReviewArtifact,
   persistReviewCheckpoint,
+  readDurableScanEvidence,
+  readLatestReviewCheckpoint,
 } from "@/src/services/durableScanState";
 
 export interface ScanResult {
@@ -107,6 +110,12 @@ export interface ScanResult {
   totalIterations?: number;
   lastProvider?: string | null;
   message?: string;
+}
+
+/** A worker restart can leave a durable provider row running without an outcome. */
+export function recoveredProviderOutcome(attempt: { outcome?: string | null; status?: string } | undefined): OutcomeClass | null {
+  const outcome = attempt?.outcome ?? (attempt?.status === "running" ? "interrupted" : null);
+  return outcome as OutcomeClass | null;
 }
 
 /**
@@ -1444,6 +1453,9 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
       let finalReviewEndpoint: string | null = null;
       /** Provider name that produced `finalReview` (for per-attempt success). */
       let finalReviewProvider: string | null = null;
+      const durableAttempts = reviewRunId
+        ? (await readDurableScanEvidence(reviewRunId)).providerAttempts as any[]
+        : [];
 
       if (chain.length === 0) {
         // Distinguish "no chat provider configured" from "all configured
@@ -1464,6 +1476,7 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
         void logReview(prId, `Checking provider: ${name} (${model})`, "info", reviewRunId, reviewChunkId);
         usedModel = model;
         const attemptKey = `${reviewChunkId ?? RUN_CHECKPOINT_ID}:${providerIndex}:${name}`;
+        const durableAttempt = durableAttempts.find((attempt) => attempt.attemptKey === attemptKey);
         if (reviewRunId) {
           const shouldRunAttempt = await beginProviderAttempt({
             reviewRunId,
@@ -1475,7 +1488,35 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
             maxIterations,
           });
           if (!shouldRunAttempt) {
-            void logReview(prId, `Skipping already terminal provider attempt: ${name}`, "info", reviewRunId, reviewChunkId);
+            const recoveredOutcome = recoveredProviderOutcome(durableAttempt);
+            if (recoveredOutcome) {
+              providerAttempts.push({
+                provider: durableAttempt.provider,
+                model: durableAttempt.model,
+                iterationsUsed: durableAttempt.iterationsUsed ?? 0,
+                maxIterations: durableAttempt.maxIterations ?? maxIterations,
+                submitReviewCalled: recoveredOutcome === "success",
+                rating: null,
+                error: durableAttempt.errorMessage
+                  ? new Error(durableAttempt.errorMessage)
+                  : recoveredOutcome === "interrupted"
+                    ? new Error("Provider attempt was left running by a previous worker.")
+                    : null,
+                outcome: recoveredOutcome,
+                promptTokens: durableAttempt.promptTokens ?? 0,
+                completionTokens: durableAttempt.completionTokens ?? 0,
+                costUsd: durableAttempt.costUsd ?? 0,
+              });
+            }
+            void logReview(
+              prId,
+              recoveredOutcome === "interrupted"
+                ? `Recovering abandoned provider attempt: ${name}`
+                : `Skipping already terminal provider attempt: ${name}`,
+              "info",
+              reviewRunId,
+              reviewChunkId,
+            );
             continue;
           }
         }
@@ -1505,14 +1546,57 @@ ${codebaseContext ? `=== PRE-FETCHED AST SYMBOLS & CALL-GRAPH LINKAGES ===\n${co
 === CHANGED FILES & CONTEXT ===
 ${diffPayload}${deterministicPayload}`;
 
-          const messages: any[] = options?.initialMessages && options.initialMessages.length > 0
-            ? [...options.initialMessages]
+          const priorAttempt = providerAttempts[providerAttempts.length - 1];
+          const priorProvider = providerIndex > 0 ? chain[providerIndex - 1] : undefined;
+          const priorAttemptKey = priorProvider
+            ? `${reviewChunkId ?? RUN_CHECKPOINT_ID}:${providerIndex - 1}:${priorProvider.name}`
+            : null;
+          const priorDurableAttempt = priorAttemptKey
+            ? durableAttempts.find((attempt) => attempt.attemptKey === priorAttemptKey)
+            : undefined;
+          const shouldResumeFallback = providerIndex > 0 &&
+            (priorAttempt?.outcome === "transport_failure" ||
+              priorAttempt?.outcome === "interrupted" ||
+              priorDurableAttempt?.status === "running");
+          let fallbackCheckpoint: CheckpointState | null = null;
+          if (shouldResumeFallback && reviewRunId && options?.checkpointMetadata) {
+            const checkpointId = checkpointIdFor(reviewChunkId);
+            const checkpointFromDisk = readCheckpoint(
+              breakerRepoPath ?? "",
+              reviewRunId,
+              checkpointId,
+              pr.repoId,
+            );
+            fallbackCheckpoint = checkpointFromDisk ?? await readLatestReviewCheckpoint(reviewRunId, checkpointId);
+            const metadata = options.checkpointMetadata;
+            if (fallbackCheckpoint && (
+              fallbackCheckpoint.commitHash !== metadata.commitHash ||
+              fallbackCheckpoint.diffHash !== metadata.diffHash ||
+              fallbackCheckpoint.reviewConfigHash !== metadata.reviewConfigHash
+            )) {
+              console.warn(`[review] refusing fallback checkpoint with mismatched scan identity for ${reviewRunId}`);
+              fallbackCheckpoint = null;
+            }
+            if (fallbackCheckpoint) {
+              void logReview(
+                prId,
+                `Resuming fallback provider from ${checkpointId} at iteration ${fallbackCheckpoint.loopCount + 1}`,
+                "info",
+                reviewRunId,
+                reviewChunkId,
+              );
+            }
+          }
+          const messages: any[] = fallbackCheckpoint?.messages?.length
+            ? [...fallbackCheckpoint.messages]
+            : options?.initialMessages && options.initialMessages.length > 0
+              ? [...options.initialMessages]
             : [
                 { role: "system", content: SYSTEM_INSTRUCTION },
                 { role: "user", content: initialPrompt },
               ];
 
-          let loopCount = options?.startLoopCount ?? 0;
+          let loopCount = fallbackCheckpoint?.loopCount ?? options?.startLoopCount ?? 0;
           let lastHadToolCalls = false;
           let consecutiveEmptyResponses = 0;
           // Iteration budget comes from the active chat preset (per-preset

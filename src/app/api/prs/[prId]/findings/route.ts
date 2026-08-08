@@ -19,6 +19,7 @@ import {
   providerOutcomesFromTokensUsed,
 } from "@/src/lib/scanTerminalOutcome";
 import { readLimits } from "@/src/lib/prSizeConfig";
+import { readDurableScanEvidence } from "@/src/services/durableScanState";
 
 const CHUNK_SELECT = {
   id: true,
@@ -176,6 +177,10 @@ export async function GET(req: Request, { params }: { params: Promise<{ prId: st
     // "found so far" while scanning, then swap to the final list on done.
     const activeFindings = activeScan.findings;
     const activeIterations = activeScan.iterationsByChunk;
+    const evidenceRunId = activeScan.reviewRun?.id ?? terminalRun?.id ?? latest.reviewRun?.id ?? null;
+    const durableEvidence = evidenceRunId
+      ? await readDurableScanEvidence(evidenceRunId)
+      : { providerAttempts: [], artifacts: [], checkpoints: [] };
 
     if (!latest.reviewRun) {
       const noRun = isMergeReady(
@@ -234,6 +239,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ prId: st
         activeChunks,
         activeFindings,
         activeIterations,
+        durableEvidence,
         queueJob,
         message: blockedGate
           ? mergeReadyLabel(noRun, blockedGate)
@@ -316,6 +322,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ prId: st
       activeChunks,
       activeFindings,
       activeIterations,
+      durableEvidence,
       queueJob,
     });
   } catch (err: any) {
