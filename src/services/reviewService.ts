@@ -1547,8 +1547,17 @@ ${codebaseContext ? `=== PRE-FETCHED AST SYMBOLS & CALL-GRAPH LINKAGES ===\n${co
 ${diffPayload}${deterministicPayload}`;
 
           const priorAttempt = providerAttempts[providerAttempts.length - 1];
+          const priorProvider = providerIndex > 0 ? chain[providerIndex - 1] : undefined;
+          const priorAttemptKey = priorProvider
+            ? `${reviewChunkId ?? RUN_CHECKPOINT_ID}:${providerIndex - 1}:${priorProvider.name}`
+            : null;
+          const priorDurableAttempt = priorAttemptKey
+            ? durableAttempts.find((attempt) => attempt.attemptKey === priorAttemptKey)
+            : undefined;
           const shouldResumeFallback = providerIndex > 0 &&
-            (priorAttempt?.outcome === "transport_failure" || priorAttempt?.outcome === "interrupted");
+            (priorAttempt?.outcome === "transport_failure" ||
+              priorAttempt?.outcome === "interrupted" ||
+              priorDurableAttempt?.status === "running");
           let fallbackCheckpoint: CheckpointState | null = null;
           if (shouldResumeFallback && reviewRunId && options?.checkpointMetadata) {
             const checkpointId = checkpointIdFor(reviewChunkId);
