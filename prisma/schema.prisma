@@ -88,6 +88,7 @@ model ReviewLog {
   prId          String
   reviewRunId   String? // nullable for backward compat — legacy rows have null
   reviewChunkId String?
+  correlationId String?
   message       String
   level         String // "info" | "warn" | "error" | "tool_call"
   createdAt     DateTime @default(now())
@@ -148,6 +149,9 @@ model ReviewRun {
   systemWarn       String?
   startedAt        DateTime
   completedAt      DateTime?
+  finalizationStatus String @default("pending") // pending | finalizing | finalized | blocked
+  finalizationError String?
+  finalizedAt      DateTime?
   model            String?
   rating           Int?
   reliability      String? // "complete" | "partial" | "incomplete_security_review"
@@ -196,6 +200,10 @@ model ReviewProviderAttempt {
   promptTokens     Int       @default(0)
   completionTokens Int       @default(0)
   costUsd          Float     @default(0)
+  correlationId    String?
+  checkpointPosition Int?
+  resumed          Boolean   @default(false)
+  superseded       Boolean   @default(false)
   startedAt        DateTime  @default(now())
   completedAt      DateTime?
   reviewRun        ReviewRun @relation(fields: [reviewRunId], references: [id], onDelete: Cascade)
@@ -370,6 +378,9 @@ model ReviewFinding {
   resolvedAtRunId    String? // run where it stopped appearing AND code at anchor had changed
   status             String? // "open" | "resolved" | "wontfix"
   sourceHashAtInsert String? // snapshot of Symbol.sourceHash when this finding was last detected
+  sourceCommitHashAtInsert String? // source revision that established the finding state
+  lastSeenCommitHash String?
+  resolvedAtCommitHash String?
   isRegression       Boolean  @default(false) // true if this is a reappearance of a previously resolved finding
   regressedFromRunId String?  // the run where this finding was previously resolved before regressing
   pullRequest          PullRequest  @relation(fields: [prId], references: [id], onDelete: Cascade)
@@ -403,6 +414,7 @@ model BugFixEvent {
   category           String
   severity           String          // blocker | warning | suggestion
   fixedAt            DateTime        @default(now())
+  fixedAtCommitHash  String?
 
   @@unique([prId, fixedAtScanId, filename, line, category, severity])
   @@index([prId, fixedAt(sort: Desc)])

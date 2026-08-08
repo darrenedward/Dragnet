@@ -10,6 +10,7 @@ import {
   type ReviewChunk,
   type ReviewFinding,
 } from "../lib/types";
+import type { ScanRecoveryState } from "../lib/scanRecovery";
 import { fetchJson, NetworkError } from "../lib/http";
 import { toast } from "../lib/toast";
 import { usePrWorkspace } from "./usePrWorkspace";
@@ -96,6 +97,9 @@ export function useDashboardData() {
     chunksCompleted?: number;
     chunksFailed?: number;
     chunksSkipped?: number;
+    finalizationStatus?: string | null;
+    finalizationError?: string | null;
+    scanRecovery?: ScanRecoveryState;
     tokensUsed?: {
       totalCostUsd: number;
       totalPromptTokens: number;
@@ -404,7 +408,9 @@ export function useDashboardData() {
       if (!workspaceCoordinator.current.isCurrentDetails(request)) return;
       if (findingsData && typeof findingsData === "object" && "findings" in findingsData) {
         setFindings(findingsData.findings);
-        setReviewRun(findingsData.reviewRun ?? null);
+        setReviewRun(findingsData.reviewRun
+          ? { ...findingsData.reviewRun, scanRecovery: findingsData.scanRecovery }
+          : null);
         setTerminalOutcome(findingsData.terminalOutcome ?? null);
         setReviewChunks(findingsData.chunks ?? []);
         setActiveScan(findingsData.activeScan ?? null);

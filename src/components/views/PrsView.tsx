@@ -13,6 +13,7 @@ import ScanHistory from "./prs/ScanHistory";
 import type { ScanTerminalOutcome } from "../../lib/scanTerminalOutcome";
 import PrHeader from "./prs/PrHeader";
 import type { InterruptedScan } from "./prs/InterruptedScanBanner";
+import type { ScanRecoveryState } from "../../lib/scanRecovery";
 
 interface ScanResult {
   count: number;
@@ -53,6 +54,9 @@ interface Props {
     chunksCompleted?: number;
     chunksFailed?: number;
     chunksSkipped?: number;
+    finalizationStatus?: string | null;
+    finalizationError?: string | null;
+    scanRecovery?: ScanRecoveryState;
     tokensUsed?: {
       totalCostUsd: number;
       totalPromptTokens: number;

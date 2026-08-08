@@ -181,7 +181,27 @@ export async function GET(req: Request, { params }: { params: Promise<{ prId: st
     const durableEvidence = evidenceRunId
       ? await readDurableScanEvidence(evidenceRunId)
       : { providerAttempts: [], artifacts: [], checkpoints: [] };
-
+    const recoveryAttempts = (durableEvidence.providerAttempts as any[]).map((attempt) => ({
+      id: attempt.id,
+      correlationId: attempt.correlationId ?? null,
+      provider: attempt.provider,
+      model: attempt.model,
+      status: attempt.status,
+      outcome: attempt.outcome ?? null,
+      errorClass: attempt.errorClass ?? null,
+      errorMessage: attempt.errorMessage ?? null,
+      startedAt: attempt.startedAt ?? null,
+      completedAt: attempt.completedAt ?? null,
+      durationMs: attempt.startedAt && attempt.completedAt
+        ? new Date(attempt.completedAt).getTime() - new Date(attempt.startedAt).getTime()
+        : null,
+      checkpointPosition: attempt.checkpointPosition ?? ((durableEvidence.checkpoints as any[])
+        .filter((checkpoint) => checkpoint.provider === attempt.provider)
+        .map((checkpoint) => checkpoint.loopCount)
+        .sort((a, b) => b - a)[0] ?? null),
+      resumed: attempt.resumed ?? (durableEvidence.checkpoints as any[]).some((checkpoint) => checkpoint.provider === attempt.provider),
+      superseded: attempt.superseded ?? false,
+    }));
     if (!latest.reviewRun) {
       const noRun = isMergeReady(
         terminalOutcome.isFailed
@@ -240,6 +260,28 @@ export async function GET(req: Request, { params }: { params: Promise<{ prId: st
         activeFindings,
         activeIterations,
         durableEvidence,
+        scanRecovery: {
+          lifecycle: terminalRun?.status === "failed" ? "failed" : activeScan.reviewRun ? "running" : "partial",
+          providerNeutral: {
+            status: terminalRun?.status ?? "unknown",
+            outcome: terminalOutcome.class,
+            reliability: terminalRun?.reliability ?? null,
+            finalization: {
+              status: (terminalRun as any)?.finalizationStatus ?? null,
+              error: (terminalRun as any)?.finalizationError ?? null,
+              finalizedAt: (terminalRun as any)?.finalizedAt ?? null,
+            },
+          },
+          attempts: recoveryAttempts,
+          artifacts: (durableEvidence.artifacts as any[]).map((artifact) => ({
+            key: artifact.artifactKey,
+            kind: artifact.kind,
+            version: artifact.version ?? null,
+            updatedAt: artifact.updatedAt ?? null,
+          })),
+          checkpoints: durableEvidence.checkpoints,
+          chunks: activeChunks,
+        },
         queueJob,
         message: blockedGate
           ? mergeReadyLabel(noRun, blockedGate)
@@ -263,6 +305,38 @@ export async function GET(req: Request, { params }: { params: Promise<{ prId: st
           terminalRun.completedAt >= latest.reviewRun.completedAt))
         ? terminalRun
         : latest.reviewRun;
+
+    const scanRecovery = {
+      lifecycle: activeScan.reviewRun
+        ? queueJob?.state === "queued" ? "waiting" : "running"
+        : recoveryAttempts.some((attempt) => attempt.resumed)
+          ? "resumed"
+          : recoveryAttempts.some((attempt) => attempt.outcome === "transport_failure") &&
+              recoveryAttempts.some((attempt) => attempt.status === "completed")
+            ? "fallback"
+            : recoveryAttempts.some((attempt) => attempt.outcome === "transport_failure")
+              ? "timeout"
+              : statusRun.status === "completed" ? "completed" : statusRun.status === "failed" ? "failed" : "partial",
+      providerNeutral: {
+        status: activeScan.reviewRun ? "in_progress" : statusRun.status,
+        outcome: terminalOutcome.class,
+        reliability: statusRun.reliability ?? null,
+        finalization: {
+          status: (statusRun as any).finalizationStatus ?? null,
+          error: (statusRun as any).finalizationError ?? null,
+          finalizedAt: (statusRun as any).finalizedAt ?? null,
+        },
+      },
+      attempts: recoveryAttempts,
+      artifacts: (durableEvidence.artifacts as any[]).map((artifact) => ({
+        key: artifact.artifactKey,
+        kind: artifact.kind,
+        version: artifact.version ?? null,
+        updatedAt: artifact.updatedAt ?? null,
+      })),
+      checkpoints: durableEvidence.checkpoints,
+      chunks: activeChunks.length > 0 ? activeChunks : chunks,
+    };
 
     const merge = isMergeReady({
       rating: statusRun.status === "failed" ? null : latest.reviewRun.rating,
@@ -306,6 +380,8 @@ export async function GET(req: Request, { params }: { params: Promise<{ prId: st
         chunksFailed: statusRun.chunksFailed,
         chunksSkipped: statusRun.chunksSkipped,
         tokensUsed: statusRun.tokensUsed ?? null,
+        finalizationStatus: (statusRun as any).finalizationStatus ?? null,
+        finalizationError: (statusRun as any).finalizationError ?? null,
       },
       findings: statusRun.status === "failed" && statusRun.id !== latest.reviewRun.id
         ? latest.findings
@@ -323,6 +399,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ prId: st
       activeFindings,
       activeIterations,
       durableEvidence,
+      scanRecovery,
       queueJob,
     });
   } catch (err: any) {

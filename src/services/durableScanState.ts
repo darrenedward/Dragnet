@@ -31,6 +31,9 @@ export interface ProviderAttemptStart {
   model: string;
   maxIterations: number;
   startedAt?: Date;
+  checkpointPosition?: number;
+  resumed?: boolean;
+  correlationId?: string;
 }
 
 export interface ProviderAttemptCompletion {
@@ -45,6 +48,9 @@ export interface ProviderAttemptCompletion {
   completionTokens: number;
   costUsd: number;
   completedAt?: Date;
+  checkpointPosition?: number;
+  resumed?: boolean;
+  superseded?: boolean;
 }
 
 /** Persisting evidence is best-effort so a telemetry outage cannot fail a review. */
@@ -62,6 +68,9 @@ export async function beginProviderAttempt(input: ProviderAttemptStart): Promise
         model: input.model,
         status: "running",
         maxIterations: input.maxIterations,
+        checkpointPosition: input.checkpointPosition ?? null,
+        resumed: input.resumed ?? false,
+        correlationId: input.correlationId ?? input.attemptKey,
         startedAt: input.startedAt ?? new Date(),
       },
     });
@@ -92,6 +101,9 @@ export async function completeProviderAttempt(input: ProviderAttemptCompletion):
         promptTokens: input.promptTokens,
         completionTokens: input.completionTokens,
         costUsd: input.costUsd,
+        checkpointPosition: input.checkpointPosition ?? null,
+        resumed: input.resumed ?? false,
+        superseded: input.superseded ?? false,
         completedAt: input.completedAt ?? new Date(),
       },
     });

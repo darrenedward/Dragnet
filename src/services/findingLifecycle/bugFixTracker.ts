@@ -12,7 +12,7 @@ export async function recordFixesForCompletedScan(
 ): Promise<RecordFixesResult> {
   const run = await prisma.reviewRun.findUnique({
     where: { id: reviewRunId },
-    select: { prId: true, outcome: true, status: true },
+    select: { prId: true, outcome: true, status: true, commitHash: true },
   });
 
   if (!run || run.status !== "completed" || run.outcome === "skipped") {
@@ -75,6 +75,7 @@ export async function recordFixesForCompletedScan(
             line: finding.line ?? null,
             category: finding.category,
             severity: finding.severity,
+            ...(run.commitHash ? { fixedAtCommitHash: run.commitHash } : {}),
           },
         });
         written++;

@@ -76,6 +76,7 @@ import {
   readDurableScanEvidence,
   readLatestReviewCheckpoint,
 } from "@/src/services/durableScanState";
+import { finalizeValidReviewRun } from "@/src/services/scanFinalizer";
 
 export interface ScanResult {
   success: boolean;
@@ -1482,6 +1483,9 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
             provider: name,
             model,
             maxIterations,
+            checkpointPosition: options?.startLoopCount,
+            resumed: Boolean(options?.initialMessages),
+            correlationId: `${reviewRunId}:${attemptKey}`,
           });
           if (!shouldRunAttempt) {
             if (durableAttempt?.outcome) {
@@ -1995,6 +1999,8 @@ ${diffPayload}${deterministicPayload}${options?.completedChunkContext ? `\n\n===
               promptTokens: attemptPromptTokens,
               completionTokens: attemptCompletionTokens,
               costUsd,
+              checkpointPosition: attemptIterations,
+              resumed: Boolean(options?.initialMessages),
             });
           }
           const endFields = {
@@ -2571,6 +2577,8 @@ ${diffPayload}${deterministicPayload}${options?.completedChunkContext ? `\n\n===
       lastSeenRunId: reviewRunId ?? null,
       status: "open",
       sourceHashAtInsert,
+      sourceCommitHashAtInsert: reviewRunId ? pr.commitHash : null,
+      lastSeenCommitHash: reviewRunId ? pr.commitHash : null,
     };
   });
 
@@ -2608,29 +2616,14 @@ ${diffPayload}${deterministicPayload}${options?.completedChunkContext ? `\n\n===
   const earnedOk = terminal.isEarnedSuccess;
 
   if (reviewRunId && !reviewChunkId) {
-    // Post-aggregate publish seam (shared with large-PR mode):
-    // fingerprint dedupe → (optional cluster) → re-verify → cross-run reconcile.
-    try {
-      await publishFindingsForRun(reviewRunId, {
-        prId,
-        repoPath: repoPathForVerifier ?? null,
-      });
-    } catch (err) {
-      console.error(`[scan] publishFindingsForRun failed for run ${reviewRunId}:`, err);
-    }
     if (earnedOk) {
-      await completeReviewRun(reviewRunId, {
-        status: "completed",
-        rating,
-        refused,
-        refusalNote,
-        outcome: "reviewed",
-        terminalClass: "success",
-        systemWarn,
+      const finalized = await finalizeValidReviewRun(reviewRunId, { rating, systemWarn }, async () => {
+        await publishFindingsForRun(reviewRunId, {
+          prId,
+          repoPath: repoPathForVerifier ?? null,
+        });
       });
-      recordFixesForCompletedScan(reviewRunId).catch((err) =>
-        console.warn(`[scan] recordFixesForCompletedScan failed for run ${reviewRunId}:`, err),
-      );
+      if (finalized.finalized) await recordFixesForCompletedScan(reviewRunId);
     } else {
       const persist = runPersistForTerminal(terminal);
       await completeReviewRun(reviewRunId, {

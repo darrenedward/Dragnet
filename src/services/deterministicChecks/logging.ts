@@ -15,6 +15,9 @@ export async function logReview(
         prId,
         reviewRunId: reviewRunId ?? null,
         reviewChunkId: reviewChunkId ?? null,
+        correlationId: reviewRunId
+          ? `${reviewRunId}:${reviewChunkId ?? "__run"}`
+          : null,
         message,
         level,
       },
