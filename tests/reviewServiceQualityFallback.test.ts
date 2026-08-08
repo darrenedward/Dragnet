@@ -1,4 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
+import { writeCheckpoint } from "../src/services/checkpointStore";
 
 /**
  * Issue #139 — primary quality_failure tries secondary, then hard-fail.
@@ -254,5 +255,60 @@ describe("runPrScan quality_failure provider chain (#139)", () => {
     expect(secondaryCreate).toHaveBeenCalled();
     expect(result.success).toBe(true);
     expect(result.rating).toBe(7);
+  });
+
+  it("resumes a timed-out provider from the latest checkpoint", async () => {
+    const timeout: any = new Error("provider timed out");
+    timeout.code = "ETIMEDOUT";
+    primaryCreate.mockRejectedValue(timeout);
+    secondaryCreate.mockImplementation((body: any) => {
+      if (body?.tools) return Promise.resolve(submitReviewResponse(8));
+      return Promise.resolve({
+        choices: [{ message: { role: "assistant", content: '{"refused": false, "topics": []}' } }],
+        usage: { prompt_tokens: 0, completion_tokens: 0 },
+      });
+    });
+    process.env.DRAGNET_SCAN_STATE_ROOT = "/tmp/dragnet-review-service-fallback-tests";
+    writeCheckpoint("", "run-1", "__run", {
+      version: 1,
+      runId: "run-1",
+      checkpointId: "__run",
+      commitHash: "abc123",
+      diffHash: "diff-hash",
+      reviewConfigHash: "config-hash",
+      messages: [
+        { role: "system", content: "prior system" },
+        { role: "user", content: "prior prompt" },
+        { role: "assistant", content: "prior investigation", tool_calls: [] },
+      ],
+      loopCount: 1,
+      maxIterations: 4,
+      provider: "Primary",
+      model: "primary-model",
+      writtenAt: Date.now(),
+    }, "repo-1");
+
+    const { runPrScan } = await import("../src/services/reviewService");
+    const result = await runPrScan(
+      "pr-1",
+      sampleFiles,
+      "run-1",
+      undefined,
+      undefined,
+      { checkpointMetadata: { commitHash: "abc123", diffHash: "diff-hash", reviewConfigHash: "config-hash" } },
+    );
+
+    expect(result.success).toBe(true);
+    const resumedMessages = secondaryCreate.mock.calls[0][0].messages;
+    expect(resumedMessages).toEqual(expect.arrayContaining([
+      expect.objectContaining({ role: "assistant", content: "prior investigation" }),
+    ]));
+    expect(hoisted.logReview.mock.calls.some((call: any[]) => /Resuming fallback provider/.test(String(call[1])))).toBe(true);
+  });
+
+  it("treats an abandoned running provider attempt as interrupted for fallback", async () => {
+    const { recoveredProviderOutcome } = await import("../src/services/reviewService");
+    expect(recoveredProviderOutcome({ status: "running", outcome: null })).toBe("interrupted");
+    expect(recoveredProviderOutcome({ status: "failed", outcome: "transport_failure" })).toBe("transport_failure");
   });
 });

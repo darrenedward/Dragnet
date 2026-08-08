@@ -166,6 +166,9 @@ model ReviewRun {
   pullRequest      PullRequest     @relation(fields: [prId], references: [id], onDelete: Cascade)
   reviewFindings       ReviewFinding[]
   reviewChunks         ReviewChunk[]
+  providerAttempts     ReviewProviderAttempt[]
+  reviewArtifacts      ReviewArtifact[]
+  reviewCheckpoints    ReviewCheckpoint[]
   bugFixFixedAt        BugFixEvent[] @relation("BugFixFixedAt")
   bugFixOriginatedAt   BugFixEvent[] @relation("BugFixOriginatedAt")
 
@@ -173,6 +176,73 @@ model ReviewRun {
   @@index([repoId, status, completedAt])
   @@index([createdByUserId])
   @@map("review_runs")
+}
+
+/// Durable provider-neutral evidence for one provider execution within a scan.
+model ReviewProviderAttempt {
+  id               String    @id
+  reviewRunId      String
+  reviewChunkId    String?
+  attemptKey       String
+  attemptOrdinal   Int
+  provider         String
+  model            String
+  status           String    // running | completed | failed
+  outcome          String?
+  errorClass       String?
+  errorMessage     String?
+  iterationsUsed   Int       @default(0)
+  maxIterations    Int       @default(0)
+  promptTokens     Int       @default(0)
+  completionTokens Int       @default(0)
+  costUsd          Float     @default(0)
+  startedAt        DateTime  @default(now())
+  completedAt      DateTime?
+  reviewRun        ReviewRun @relation(fields: [reviewRunId], references: [id], onDelete: Cascade)
+
+  @@unique([reviewRunId, attemptKey])
+  @@index([reviewRunId, startedAt])
+  @@index([reviewChunkId, startedAt])
+  @@map("review_provider_attempts")
+}
+
+/// Durable JSON artifacts that explain deterministic checks and final review output.
+model ReviewArtifact {
+  id           String    @id
+  reviewRunId  String
+  reviewChunkId String?
+  artifactKey  String
+  kind         String
+  version      Int       @default(1)
+  contentHash  String
+  content      Json
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  reviewRun    ReviewRun @relation(fields: [reviewRunId], references: [id], onDelete: Cascade)
+
+  @@unique([reviewRunId, artifactKey])
+  @@index([reviewRunId, kind])
+  @@map("review_artifacts")
+}
+
+/// Latest durable checkpoint metadata and payload for a scan/run or chunk.
+model ReviewCheckpoint {
+  id            String    @id
+  reviewRunId   String
+  checkpointId  String
+  version       Int
+  stateHash     String
+  loopCount     Int
+  provider      String
+  model         String
+  state         Json
+  writtenAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  reviewRun     ReviewRun @relation(fields: [reviewRunId], references: [id], onDelete: Cascade)
+
+  @@unique([reviewRunId, checkpointId])
+  @@index([reviewRunId, writtenAt])
+  @@map("review_checkpoints")
 }
 
 /// Durable admission and lease state for manual PR scans. ReviewRun remains
