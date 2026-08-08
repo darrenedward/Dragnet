@@ -17,3 +17,12 @@ export type {
   Runner,
   ProjectType,
 } from "./types";
+export {
+  resolveToolchain,
+  type Ecosystem,
+  type ProjectIdentity,
+  type ResolvedToolchain,
+  type TipTreeManifest,
+  type ToolchainConfiguration,
+  type ToolchainStatus,
+} from "./toolchainResolver";
