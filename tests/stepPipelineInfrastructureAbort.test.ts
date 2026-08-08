@@ -70,6 +70,13 @@ vi.mock("../src/services/deterministicChecks", () => ({
     Boolean(repo?.path) && !repo?.cloneUrl && repo?.localPath !== "/workspace",
   DEFAULT_INSTALL_COMMAND: "npm install",
   DEFAULT_TEST_COMMAND: "npm run typecheck && npm run lint",
+  resolveToolchainFromReader: vi.fn().mockResolvedValue({
+    status: "resolved",
+    identity: { ecosystem: "node" },
+    execution: { image: "node:20-alpine", installCommand: "npm ci", qualityCommands: ["npm run typecheck && npm run lint"] },
+    conflicts: [],
+  }),
+  skippedFinding: (source: "runner", message: string) => ({ filename: "<tooling>", line: null, severity: "info", category: "Skipped", explanation: message, source }),
 }));
 
 vi.mock("../src/lib/tipAlignedChecks", async () => {

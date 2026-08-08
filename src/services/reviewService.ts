@@ -35,11 +35,12 @@ import {
   runContainerizedChecks,
   logReview,
   shouldRunHostTier1,
-  DEFAULT_INSTALL_COMMAND,
+  DEFAULT_TEST_COMMAND,
+  resolveToolchainFromReader,
+  skippedFinding,
   type DeterministicFinding,
 } from "@/src/services/deterministicChecks";
 import { StepPipeline, StepError, isStepFailure, isStepSuccess, type StepResult } from "@/src/services/stepPipeline";
-import { detectBuildSystem } from "@/src/lib/buildsystemDetect";
 import { classifyDiff } from "@/src/lib/diffClassifier";
 import { buildFindingFingerprint, resolveSymbolsBatch } from "@/src/services/largePrReview/fingerprint";
 import { publishFindingsForRun } from "@/src/services/largePrReview/publishFindings";
@@ -1162,7 +1163,7 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
 
   let deterministicFindings: DeterministicFinding[] = [];
   let tier1HadErrors = false;
-  let runnerImage = repo.runnerImage ?? "node:20-alpine";
+  let runnerImage: string | null = null;
   let buildSystemWarn: string | null = null;
   let tier2Supported = true;
 
@@ -1194,26 +1195,6 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
         if (tier1Plan.action === "run") tier1Plan.cleanup?.();
       }
     };
-
-    // 5a. Build system detection — tip tree only when host Tier 1 is planned.
-    //     Remote/volume repos skip host probes (stale/empty mirrors would report
-    //     "unknown" and incorrectly disable Tier 2). They use repo.runnerImage.
-    if (tier1Plan.action === "run") {
-      try {
-        const detected = await detectBuildSystem(tier1Plan.rootPath);
-        runnerImage = detected.image;
-        buildSystemWarn = detected.warn;
-        if (detected.buildSystem !== "node") {
-          tier2Supported = false;
-        }
-        void logReview(
-          prId, `Build system: ${detected.buildSystem} → ${detected.image}${detected.warn ? ` (${detected.warn})` : ""} [tip=${tier1Plan.source}]`,
-          "info", reviewRunId, reviewChunkId,
-        );
-      } catch (err: any) {
-        console.warn(`[scan] runPrScan: build system detection crashed:`, err);
-      }
-    }
 
     // 5b-c. Tier 1 + Tier 2 via StepPipeline with retry-on-infrastructure-error.
     //       Critical: false means code errors collect as findings and continue.
@@ -1289,6 +1270,48 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
           return { ok: true, data: [] as DeterministicFinding[] };
         }
         try {
+          const configuredQuality = repo.testCommand && repo.testCommand !== DEFAULT_TEST_COMMAND
+            ? [repo.testCommand]
+            : undefined;
+          const tipReader = options?.reviewTree
+            ? {
+                headSha: options.reviewTree.headSha,
+                source: tipRootForTier2 ? "pr-tip" as const : "remote-volume" as const,
+                readFile: options.reviewTree.readFile,
+              }
+            : tipRootForTier2
+              ? {
+                  headSha: checkHeadSha,
+                  source: "pr-tip" as const,
+                  readFile: async (file: string) => {
+                    try { return await fs.promises.readFile(path.join(tipRootForTier2 as string, file), "utf8"); }
+                    catch (err: any) {
+                      if (err?.code === "ENOENT") return null;
+                      throw new Error(`Unable to read PR tip file ${file}: ${err?.message ?? String(err)}`);
+                    }
+                  },
+                }
+              : {
+                  headSha: checkHeadSha,
+                  source: "remote-volume" as const,
+                  readFile: async () => null,
+                };
+          const toolchain = await resolveToolchainFromReader({
+            ...tipReader,
+            configuration: configuredQuality ? { qualityCommands: configuredQuality } : undefined,
+            repositoryOverrides: {
+              runnerImage: repo.runnerImage,
+              installCommand: repo.installCommand,
+            },
+          });
+          if (toolchain.status !== "resolved" || !toolchain.execution.image || !toolchain.execution.installCommand) {
+            const msg = `Toolchain resolution ${toolchain.status}: ${toolchain.conflicts.join("; ")}`;
+            buildSystemWarn = msg;
+            void logReview(prId, msg, "warn", reviewRunId, reviewChunkId);
+            return { ok: true, data: [skippedFinding("runner", msg)] };
+          }
+          runnerImage = toolchain.execution.image;
+          void logReview(prId, `Resolved ${toolchain.identity?.ecosystem} toolchain: ${runnerImage}`, "info", reviewRunId, reviewChunkId);
           const { decryptSecret, hasMasterKey } = await import("@/src/lib/crypto");
           let deployKey: string | undefined;
           let pat: string | undefined;
@@ -1298,9 +1321,6 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
           if (repo?.patCipher && repo?.patIv && repo?.patTag && hasMasterKey()) {
             pat = decryptSecret(repo.patCipher, repo.patIv, repo.patTag);
           }
-          const tier2Image = shouldRunHostTier1(repo) && tipRootForTier2
-            ? runnerImage
-            : (repo.runnerImage ?? "node:20-alpine");
           const tier2Findings = await runContainerizedChecks({
             repoId: repo.id,
             cloneUrl: tier2Plan.action === "sync" ? tier2Plan.cloneUrl : "",
@@ -1308,9 +1328,9 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
             hostBindPath: tier2Plan.action === "bind" ? tier2Plan.hostPath : undefined,
             deployKey,
             pat,
-            runnerImage: tier2Image,
-            installCommand: repo.installCommand ?? DEFAULT_INSTALL_COMMAND,
-            testCommand: repo.testCommand,
+            runnerImage,
+            installCommand: toolchain.execution.installCommand,
+            testCommand: toolchain.execution.qualityCommands.join(" && "),
             prId,
             reviewRunId,
             reviewChunkId,

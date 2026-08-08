@@ -15,6 +15,17 @@ export interface ToolchainConfiguration {
   readonly qualityCommands?: readonly string[];
 }
 
+export interface ToolchainRepositoryOverrides {
+  readonly runnerImage?: string | null;
+  readonly installCommand?: string | null;
+}
+
+export interface TipTreeReader {
+  readonly headSha: string;
+  readonly source: Exclude<TipTreeManifest["source"], "host-checkout">;
+  readonly readFile: (path: string) => Promise<string | null>;
+}
+
 export interface ProjectIdentity {
   readonly ecosystem: Ecosystem;
   readonly runtime: Readonly<Record<string, string>>;
@@ -62,6 +73,13 @@ const IMAGES: Record<Ecosystem, string> = {
   ruby: "ruby:3.3-alpine",
   php: "composer:2.8",
 };
+
+export const TOOLCHAIN_MANIFEST_FILES = [
+  "package.json", "package-lock.json", "npm-shrinkwrap.json", "pnpm-lock.yaml", "yarn.lock",
+  ".nvmrc", ".node-version", "pyproject.toml", "uv.lock", "poetry.lock", "requirements.txt",
+  "go.mod", "go.sum", "Cargo.toml", "Cargo.lock", "rust-toolchain", "rust-toolchain.toml",
+  "Gemfile", "Gemfile.lock", ".ruby-version", "composer.json", "composer.lock",
+] as const;
 
 const LOCKFILES: Record<Ecosystem, readonly string[]> = {
   node: ["package-lock.json", "npm-shrinkwrap.json", "pnpm-lock.yaml", "yarn.lock"],
@@ -159,7 +177,29 @@ function qualityCommands(
       .map((name) => typeof scripts?.[name] === "string" ? scripts[name] : undefined)
       .filter((command): command is string => Boolean(command));
   }
-  return ecosystem === "python" ? ["python -m pytest"] : [];
+  return {
+    python: ["python -m pytest"],
+    go: ["go test ./..."],
+    rust: ["cargo test --locked"],
+    ruby: ["bundle exec ruby -Itest"],
+    php: ["composer check-platform-reqs"],
+    node: [],
+  }[ecosystem];
+}
+
+function runtimeImage(ecosystem: Ecosystem, runtime: Readonly<Record<string, string>>): string {
+  const declaration = runtime.node ?? runtime.nodeFile ?? runtime.python ?? runtime.go ?? runtime.rust ?? runtime.ruby ?? runtime.php;
+  const upperBound = declaration?.match(/^<\s*(\d+)/)?.[1];
+  const version = upperBound
+    ? (Number(upperBound) >= 20 ? "18" : String(Math.max(16, Number(upperBound) - 1)))
+    : declaration?.match(/(?:^|[<>=~^ ])(\d+(?:\.\d+)?)/)?.[1];
+  if (!version) return IMAGES[ecosystem];
+  if (ecosystem === "node") return `node:${version}-alpine`;
+  if (ecosystem === "python") return `python:${version}-slim`;
+  if (ecosystem === "go") return `golang:${version}-alpine`;
+  if (ecosystem === "rust") return `rust:${version}-slim`;
+  if (ecosystem === "ruby") return `ruby:${version}-alpine`;
+  return IMAGES[ecosystem];
 }
 
 function canonical(value: unknown): string {
@@ -185,8 +225,9 @@ function withFingerprint(
 export function resolveToolchain(input: {
   tip: TipTreeManifest;
   configuration?: ToolchainConfiguration;
+  repositoryOverrides?: ToolchainRepositoryOverrides;
 }): ResolvedToolchain {
-  const { tip, configuration } = input;
+  const { tip, configuration, repositoryOverrides } = input;
   if (tip.source === "host-checkout") {
     throw new Error("Toolchain resolution requires the PR tip tree; host checkout is not valid");
   }
@@ -233,11 +274,14 @@ export function resolveToolchain(input: {
     if (declaredManager !== lockManager) conflicts.push(`packageManager declares ${declaredManager} but ${lockfiles[0]} requires ${lockManager}`);
   }
   const manager = ecosystem === "node" ? packageManager(files, lockfiles) : undefined;
-  const installCommand = ecosystem === "node" && lockfiles.length === 0 ? null
+  const hasDependencyLock = ecosystem === "python"
+    ? lockfiles.includes("uv.lock") || lockfiles.includes("poetry.lock") || lockfiles.includes("requirements.txt")
+    : lockfiles.length > 0;
+  const installCommand = !hasDependencyLock ? null
     : ecosystem === "node"
-      ? manager?.name === "pnpm" ? "corepack pnpm install --frozen-lockfile"
-        : manager?.name === "yarn" ? "corepack yarn install --immutable"
-          : "npm ci"
+      ? manager?.name === "pnpm" ? `corepack ${manager.name}${manager.version ? `@${manager.version}` : ""} install --frozen-lockfile`
+        : manager?.name === "yarn" ? `corepack yarn${manager.version ? `@${manager.version}` : ""} install --immutable`
+          : `corepack npm${manager?.version ? `@${manager.version}` : ""} ci`
     : ecosystem === "python" && lockfiles.includes("uv.lock") ? "uv sync --locked"
       : ecosystem === "python" && lockfiles.includes("poetry.lock") ? "poetry install --no-root"
         : ecosystem === "python" && lockfiles.includes("requirements.txt") ? "python -m pip install -r requirements.txt"
@@ -253,15 +297,40 @@ export function resolveToolchain(input: {
     ...(manager ? { packageManager: manager } : {}),
     database: "none",
   };
-  if (ecosystem === "node" && lockfiles.length === 0) conflicts.push("No Node lockfile detected; deterministic install cannot use npm ci");
-  if (ecosystem === "python" && lockfiles.length === 0) conflicts.push("No Python dependency lockfile detected");
+  if (!hasDependencyLock) conflicts.push(`No ${ecosystem[0].toUpperCase()}${ecosystem.slice(1)} dependency lockfile detected`);
   const checks = qualityCommands(ecosystem, files, configuration);
+  const image = runtimeImage(ecosystem, runtime);
+  if (ecosystem === "php" && runtime.php && /^(?:<\s*8\.3|~\s*8\.[0-2]|\^\s*8\.[0-2])/.test(runtime.php)) {
+    conflicts.push(`PHP constraint ${runtime.php} is incompatible with the pinned composer:2.8 runtime`);
+  }
+  if (repositoryOverrides?.runnerImage && repositoryOverrides.runnerImage !== image) {
+    conflicts.push(`Repository runnerImage conflicts with the resolved ${ecosystem} toolchain`);
+  }
+  if (repositoryOverrides?.installCommand && repositoryOverrides.installCommand !== installCommand) {
+    conflicts.push(`Repository installCommand conflicts with the resolved ${manager?.name ?? ecosystem} toolchain`);
+  }
   return withFingerprint({
     status: conflicts.length > 0 ? "ambiguous" : "resolved",
     tip: tipInfo,
     identity,
     configuration: resolvedConfiguration,
-    execution: { image: IMAGES[ecosystem], installCommand, qualityCommands: checks },
+    execution: { image, installCommand, qualityCommands: checks },
     conflicts,
   }, files);
+}
+
+export async function resolveToolchainFromReader(input: TipTreeReader & {
+  configuration?: ToolchainConfiguration;
+  repositoryOverrides?: ToolchainRepositoryOverrides;
+}): Promise<ResolvedToolchain> {
+  const entries = await Promise.all(TOOLCHAIN_MANIFEST_FILES.map(async (path) => ({ path, content: await input.readFile(path) })));
+  const files: Record<string, string> = {};
+  for (const entry of entries) {
+    if (typeof entry.content === "string") files[entry.path] = entry.content;
+  }
+  return resolveToolchain({
+    tip: { headSha: input.headSha, source: input.source, files },
+    configuration: input.configuration,
+    repositoryOverrides: input.repositoryOverrides,
+  });
 }
