@@ -21,6 +21,11 @@ export interface RunOptions {
   cpuLimit?: string; // e.g. "2"
   /** Only Git synchronization may pass its scoped SSH command. */
   env?: GitSyncRunnerEnv;
+  /**
+   * Supplies a non-routable placeholder for package lifecycle steps such as
+   * Prisma generate. This is never sourced from the host environment.
+   */
+  provideSyntheticDatabaseUrl?: boolean;
   /** Docker network mode. Defaults to "none" (no network). Set to "bridge"
    *  for git operations that need outbound network access. */
   networkMode?: string;

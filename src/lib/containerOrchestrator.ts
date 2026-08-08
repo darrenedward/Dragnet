@@ -68,6 +68,8 @@ function asyncSpawnWithTimeout(
 
 let cachedEngine: "docker" | "podman" | null = null;
 const ALLOWED_RUNNER_ENV_KEYS = new Set(["GIT_SSH_COMMAND"]);
+export const SYNTHETIC_DATABASE_URL =
+  "postgresql://dragnet-quality-check:dragnet-quality-check@127.0.0.1:5432/placeholder";
 
 /**
  * Detects whether docker or podman is installed and available.
@@ -176,6 +178,9 @@ export class ContainerOrchestrator {
         if (!ALLOWED_RUNNER_ENV_KEYS.has(key)) continue;
         args.push("-e", `${key}=${val}`);
       }
+    }
+    if (options.provideSyntheticDatabaseUrl) {
+      args.push("-e", `DATABASE_URL=${SYNTHETIC_DATABASE_URL}`);
     }
 
     // Override entrypoint to sh — images like alpine/git have git as

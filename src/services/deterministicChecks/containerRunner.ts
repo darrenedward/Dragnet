@@ -153,6 +153,10 @@ export async function runContainerizedChecks(
       commands: [cmd],
       timeoutMs: 300_000,
       networkMode: "bridge",
+      // Prisma's generate step reads DATABASE_URL from its config but does
+      // not connect to Postgres. Give install lifecycle hooks a non-routable
+      // placeholder without exposing any host or repository credentials.
+      provideSyntheticDatabaseUrl: true,
     });
     logs.push(`[install] exit=${result.exitCode} stdout=${result.stdout.slice(0, 2000)} stderr=${result.stderr.slice(0, 2000)}`);
     if (result.timedOut) {
