@@ -294,9 +294,10 @@ async function seedStaleRun(opts: {
   diffHash?: string;
   reviewConfigHash?: string;
   startedAgoMs?: number;
+  lastCheckpointAgoMs?: number;
 } = {}) {
   const runId = opts.runId ?? "run-stale";
-  const startedAt = new Date(Date.now() - (opts.startedAgoMs ?? 10 * 60 * 1000));
+  const startedAt = new Date(Date.now() - (opts.startedAgoMs ?? 20 * 60 * 1000));
   // Bypass the createReviewRun mock by writing directly to the in-memory store.
   const { prisma } = await import("../src/lib/prisma") as any;
   (prisma as any).__seedRun({
@@ -309,6 +310,9 @@ async function seedStaleRun(opts: {
     status: "in_progress",
     startedAt,
     completedAt: null,
+    lastCheckpointAt: opts.lastCheckpointAgoMs === undefined
+      ? null
+      : new Date(Date.now() - opts.lastCheckpointAgoMs),
     model: "test-model",
     rating: null,
     triggerReason: "manual",
@@ -349,6 +353,19 @@ async function resetRuns() {
 }
 
 describe("Phase 7 — assertNoActiveScan stale_inspectable contract", () => {
+  it("does not reap an old run while its durable heartbeat is recent", async () => {
+    await resetRuns();
+    await seedStaleRun({ startedAgoMs: 10 * 60 * 1000, lastCheckpointAgoMs: 30 * 1000 });
+
+    const { assertNoActiveScan } = await import("../src/lib/reviewFreshness");
+    const result = await assertNoActiveScan("pr-resume", false, tmpRepo);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok && "runId" in result) {
+      expect(result.runId).toBe("run-stale");
+    }
+  });
+
   it("returns stale_inspectable when a stale run has a __run checkpoint", async () => {
     await resetRuns();
     const runId = await seedStaleRun();
@@ -380,7 +397,7 @@ describe("Phase 7 — assertNoActiveScan stale_inspectable contract", () => {
 
   it("returns busy when in_progress run is fresh (not stale)", async () => {
     await resetRuns();
-    // Stale threshold is 5 minutes — seed a 30-second-old run.
+    // A 30-second-old run is fresh under the heartbeat inactivity window.
     await seedStaleRun({ startedAgoMs: 30 * 1000 });
     await writeRunCheckpoint("run-stale");
 

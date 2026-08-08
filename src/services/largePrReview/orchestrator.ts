@@ -25,6 +25,7 @@ import type {
   ReviewFileInput,
 } from "./types";
 import { completePrReviewIfCurrent } from "@/src/lib/prRevisionStatus";
+import { touchReviewRunActivity } from "@/src/lib/reviewFreshness";
 
 type ChunkRunner = (
   prId: string,
@@ -640,6 +641,7 @@ async function updateChunkCounters(reviewRunId: string): Promise<void> {
       chunksSkipped: chunks.filter((chunk) => chunk.status === "skipped").length,
     },
   });
+  await touchReviewRunActivity(reviewRunId);
 }
 
 async function logRun(

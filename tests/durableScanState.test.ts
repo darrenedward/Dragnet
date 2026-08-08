@@ -17,9 +17,10 @@ const reviewCheckpoint = {
   findUnique: vi.fn(),
   findMany: vi.fn(),
 };
+const reviewRun = { update: vi.fn() };
 
 vi.mock("../src/lib/prisma", () => ({
-  prisma: { reviewProviderAttempt, reviewArtifact, reviewCheckpoint },
+  prisma: { reviewProviderAttempt, reviewArtifact, reviewCheckpoint, reviewRun },
 }));
 
 describe("durable scan state", () => {
@@ -33,6 +34,7 @@ describe("durable scan state", () => {
     reviewArtifact.findUnique.mockResolvedValue(null);
     reviewCheckpoint.upsert.mockResolvedValue({});
     reviewCheckpoint.findUnique.mockResolvedValue(null);
+    reviewRun.update.mockResolvedValue({});
     reviewProviderAttempt.findMany.mockResolvedValue([{ attemptKey: "primary" }]);
     reviewArtifact.findMany.mockResolvedValue([{ artifactKey: "checks" }]);
     reviewCheckpoint.findMany.mockResolvedValue([{ checkpointId: "__run" }]);
@@ -68,6 +70,10 @@ describe("durable scan state", () => {
     expect(reviewProviderAttempt.update).toHaveBeenCalledWith(expect.objectContaining({
       where: { reviewRunId_attemptKey: { reviewRunId: "run-1", attemptKey: "primary:1" } },
       data: expect.objectContaining({ status: "failed", outcome: "transport_failure", errorClass: "ETIMEDOUT" }),
+    }));
+    expect(reviewRun.update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "run-1" },
+      data: expect.objectContaining({ lastActivityAt: expect.any(Date) }),
     }));
   });
 

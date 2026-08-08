@@ -33,20 +33,24 @@ import {
 import type { RatingTrendEntry } from "./stabilityScore";
 
 /**
- * Max wall-clock time a scan is allowed to run before being treated as
- * orphaned. Real scans typically finish in 2-8 min; the headroom absorbs
- * slow providers + large PRs. If a ReviewRun is older than this and still
- * `in_progress`, the process that started it is gone (dev server restart,
- * crash, OOM kill, serverless cold-start eviction) and the row is stale.
+ * Max inactivity time before an in-progress scan is treated as orphaned.
+ * This is deliberately an inactivity window, not a run-duration limit:
+ * oversized scans may run for hours while provider/chunk heartbeats continue.
  *
  * Layer 2 (assertNoActiveScan) reaps on demand when a new scan would trip
  * on the orphan; Layer 3 (src/services/runReaper.ts) reaps on cold start.
  *
- * 5 min (was 30): dev-server restarts are common in this project, and a
- * 30-min wait before the UI's Force-restart path becomes useful was too
- * patient. Users reported "stuck scan, can't restart" inside that window.
+ * Fifteen minutes gives a provider fallback chain enough time to finish its
+ * bounded requests while still recovering genuinely dead workers promptly.
  */
-export const SCAN_STALE_AFTER_MS = 5 * 60 * 1000;
+const configuredStaleAfterMs = Number(process.env.DRAGNET_SCAN_STALE_AFTER_MS);
+export const SCAN_STALE_AFTER_MS = Number.isFinite(configuredStaleAfterMs) && configuredStaleAfterMs > 0
+  ? configuredStaleAfterMs
+  : 15 * 60 * 1000;
+
+function lastActivityAt(run: { startedAt: Date; lastActivityAt?: Date | null; lastCheckpointAt?: Date | null }): Date {
+  return run.lastActivityAt ?? run.lastCheckpointAt ?? run.startedAt;
+}
 
 /** Minimal shape of what refreshPrFiles returns. Avoids a circular import. */
 export interface DiffHashInput {
@@ -427,6 +431,8 @@ export async function assertNoActiveScan(
       commitHash: true,
       diffHash: true,
       reviewConfigHash: true,
+      lastActivityAt: true,
+      lastCheckpointAt: true,
     },
   });
   if (!inProgress) return { ok: true };
@@ -435,7 +441,7 @@ export async function assertNoActiveScan(
   // SCAN_STALE_AFTER_MS, the process that owned it is gone. Before reaping,
   // check whether a valid checkpoint exists — if so, surface it to the
   // scan route so the user can resume instead of losing the partial work.
-  const ageMs = Date.now() - inProgress.startedAt.getTime();
+  const ageMs = Date.now() - lastActivityAt(inProgress).getTime();
   if (ageMs > SCAN_STALE_AFTER_MS) {
     const inspectable = repoPath
       ? await inspectStaleRun(repoPath, inProgress)
@@ -461,7 +467,13 @@ export async function assertNoActiveScan(
     try {
       await prisma.reviewRun.update({
         where: { id: inProgress.id },
-        data: { status: "failed", completedAt: new Date() },
+        data: {
+          status: "failed",
+          completedAt: new Date(),
+          reliability: "partial",
+          terminalClass: "infrastructure_failure",
+          systemWarn: "Orphaned in_progress run reaped after losing its activity heartbeat.",
+        },
       });
       console.warn(
         `[reviewFreshness] reaped stale in_progress run ${inProgress.id} ` +
@@ -631,11 +643,29 @@ export async function setReviewRunLastCheckpointAt(
   try {
     await prisma.reviewRun.update({
       where: { id: runId },
-      data: { lastCheckpointAt: at },
+      data: { lastCheckpointAt: at, lastActivityAt: at },
     });
   } catch (err) {
     console.warn(
       `[reviewFreshness] failed to persist lastCheckpointAt on run ${runId}:`,
+      err,
+    );
+  }
+}
+
+/** Refresh the durable liveness marker for an active review run. */
+export async function touchReviewRunActivity(
+  runId: string,
+  at = new Date(),
+): Promise<void> {
+  try {
+    await prisma.reviewRun.update({
+      where: { id: runId },
+      data: { lastActivityAt: at },
+    });
+  } catch (err) {
+    console.warn(
+      `[reviewFreshness] failed to persist activity heartbeat on run ${runId}:`,
       err,
     );
   }
@@ -964,6 +994,8 @@ export async function getActiveScan(prId: string): Promise<{
       chunksCompleted: true,
       chunksFailed: true,
       chunksSkipped: true,
+      lastActivityAt: true,
+      lastCheckpointAt: true,
     },
   });
 
@@ -981,7 +1013,7 @@ export async function getActiveScan(prId: string): Promise<{
     select: { status: true },
   });
   const prStatus = (prRow?.status ?? "").trim();
-  const ageMs = Date.now() - reviewRun.startedAt.getTime();
+  const ageMs = Date.now() - lastActivityAt(reviewRun).getTime();
   const prTerminal =
     prStatus === "Failed" || prStatus === "Completed" || prStatus === "Merged";
   if (prTerminal || ageMs > SCAN_STALE_AFTER_MS) {
@@ -991,6 +1023,8 @@ export async function getActiveScan(prId: string): Promise<{
         data: {
           status: "failed",
           completedAt: new Date(),
+          reliability: "partial",
+          terminalClass: "infrastructure_failure",
           systemWarn:
             prTerminal
               ? `Orphaned in_progress run reaped — PR already ${prStatus}.`

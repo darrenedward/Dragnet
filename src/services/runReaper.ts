@@ -32,8 +32,21 @@ export async function reapStaleRuns(): Promise<number> {
   const cutoff = new Date(Date.now() - SCAN_STALE_AFTER_MS);
   try {
     const result = await prisma.reviewRun.updateMany({
-      where: { status: "in_progress", startedAt: { lt: cutoff } },
-      data: { status: "failed", completedAt: new Date() },
+      where: {
+        status: "in_progress",
+        OR: [
+          { lastActivityAt: { lt: cutoff } },
+          { lastActivityAt: null, lastCheckpointAt: { lt: cutoff } },
+          { lastActivityAt: null, lastCheckpointAt: null, startedAt: { lt: cutoff } },
+        ],
+      },
+      data: {
+        status: "failed",
+        completedAt: new Date(),
+        reliability: "partial",
+        terminalClass: "infrastructure_failure",
+        systemWarn: "Orphaned in_progress run reaped after losing its activity heartbeat.",
+      },
     });
     if (result.count > 0) {
       console.warn(
