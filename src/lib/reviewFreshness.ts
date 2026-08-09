@@ -23,6 +23,7 @@
  */
 
 import crypto from "node:crypto";
+import { evaluateCacheEligibility } from "./cacheEligibility";
 import { randomUUID } from "node:crypto";
 import { prisma } from "./prisma";
 import type { ReviewLimits } from "./prSizeConfig";
@@ -307,17 +308,20 @@ export async function assertReviewFreshness(
   pr: { id: string; commitHash: string },
   currentDiffHash: string,
   currentConfigHash: string,
+  currentToolchainFingerprint?: string,
 ): Promise<ReviewFreshness> {
   const latest = await prisma.reviewRun.findFirst({
     where: { prId: pr.id, status: "completed" },
     orderBy: { completedAt: "desc" },
     select: {
       id: true,
+      status: true,
       commitHash: true,
       diffHash: true,
       reviewConfigHash: true,
       rating: true,
       reliability: true,
+      chunksTotal: true,
     },
   });
 
@@ -329,17 +333,20 @@ export async function assertReviewFreshness(
     };
   }
 
-  const matches =
-    latest.commitHash === pr.commitHash &&
-    latest.diffHash === currentDiffHash &&
-    latest.reviewConfigHash === currentConfigHash &&
-    currentDiffHash !== ""; // empty hash = can't verify, don't cache
+  const chunks = latest.chunksTotal > 0 && (prisma as any).reviewChunk?.findMany
+    ? await (prisma as any).reviewChunk.findMany({ where: { reviewRunId: latest.id }, select: { status: true } })
+    : undefined;
+  const eligibility = evaluateCacheEligibility({
+    run: latest,
+    current: { commitHash: pr.commitHash, diffHash: currentDiffHash, reviewConfigHash: currentConfigHash, ...(currentToolchainFingerprint !== undefined ? { toolchainFingerprint: currentToolchainFingerprint } : {}) },
+    chunks,
+  });
 
   const reusable =
     latest.rating !== null &&
     (latest.reliability === null || latest.reliability === "complete");
 
-  if (matches && reusable) {
+  if (eligibility.eligible && reusable) {
     return { ok: true, runId: latest.id, rating: latest.rating };
   }
 
@@ -348,9 +355,9 @@ export async function assertReviewFreshness(
     kind: "STALE_RUN",
     message: !reusable
       ? `Prior review run is not reusable (rating=${latest.rating ?? "null"}, reliability=${latest.reliability ?? "unknown"}).`
-      : `Prior review run (diffHash ${latest.diffHash.slice(0, 8) || "(unknown)"}) ` +
-        `does not match current diffHash ${currentDiffHash.slice(0, 8) || "(unknown)"} ` +
-        `or configHash ${currentConfigHash.slice(0, 8) || "(empty)"}.`,
+      : eligibility.reason === "config_mismatch"
+        ? `Prior review run (diffHash ${latest.diffHash.slice(0, 8) || "(unknown)"}) does not match current diffHash ${currentDiffHash.slice(0, 8) || "(unknown)"} or configHash ${currentConfigHash.slice(0, 8) || "(empty)"}.`
+        : eligibility.message ?? `Prior review run is not reusable.`,
   };
 }
 
@@ -763,6 +770,15 @@ export async function getLatestCompletedReview(
     runDiffHash: latestRun.diffHash,
     currentDiffHash,
   });
+  const chunkRows = latestRun.chunksTotal > 0
+    ? await prisma.reviewChunk.findMany({ where: { reviewRunId: latestRun.id }, select: { status: true } })
+    : [];
+  const cacheEligibility = evaluateCacheEligibility({
+    run: latestRun,
+    current: { commitHash: prRow?.commitHash ?? "", diffHash: currentDiffHash, reviewConfigHash: latestRun.reviewConfigHash },
+    chunks: chunkRows,
+  });
+  const cacheStale = !cacheEligibility.eligible && (cacheEligibility.reason === "incomplete_chunks" || cacheEligibility.reason === "contradictory_chunks");
 
   const reviewFindingSelect = {
     id: true, prId: true, reviewRunId: true, repoId: true,
@@ -848,8 +864,8 @@ export async function getLatestCompletedReview(
     regressions: regressionRows,
     rejectedFindings,
     rejectedCount: rejectedFindings.length,
-    stale,
-    staleReason,
+    stale: stale || cacheStale,
+    staleReason: cacheStale ? "incomplete_chunks" : staleReason,
   };
 }
 

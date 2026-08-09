@@ -9,6 +9,7 @@ import {
   skippedFinding,
   type DeterministicFinding,
 } from "@/src/services/deterministicChecks";
+import { executionMetadataFromToolchain } from "@/src/services/deterministicChecks/scanExecutionContext";
 import {
   planHostTier1,
   planTier2,
@@ -203,6 +204,8 @@ export async function runGlobalDeterministicChecks(
               runnerImage: toolchain.execution.image,
               installCommand: toolchain.execution.installCommand,
               testCommand: toolchain.execution.qualityCommands.join(" && "),
+              qualityChecks: toolchain.execution.checks,
+              toolchainMetadata: executionMetadataFromToolchain(toolchain),
               prId,
               reviewRunId,
             });

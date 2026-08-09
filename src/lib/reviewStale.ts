@@ -10,7 +10,7 @@
  * never false-blocks merge without a known mismatch.
  */
 
-export type ReviewStaleReason = "tip_mismatch" | "diff_changed";
+export type ReviewStaleReason = "tip_mismatch" | "diff_changed" | "incomplete_chunks" | "toolchain_changed";
 
 export interface ReviewStaleInput {
   runCommitHash?: string | null;
@@ -48,5 +48,7 @@ export function reviewStaleLabel(reason: ReviewStaleReason | null | undefined): 
   if (reason === "diff_changed") {
     return "Review is stale vs current diff — re-scan required.";
   }
+  if (reason === "incomplete_chunks") return "Completed run has incomplete or contradictory chunk coverage — start a fresh scan.";
+  if (reason === "toolchain_changed") return "Resolved toolchain changed — start a fresh scan.";
   return "Review is stale vs current tip — re-scan required.";
 }
