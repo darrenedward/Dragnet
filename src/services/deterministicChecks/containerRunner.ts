@@ -7,6 +7,7 @@ import { logReview } from "./logging";
 import type { CheckKind, ResolvedQualityCommand } from "./toolchainResolver";
 import { planQualityChecks, buildTimeEnvironment } from "./qualityPlan";
 import { serviceEnvironment, type DisposableServicePlan } from "./disposableServices";
+import { persistExecutionEvidence, recordExecutionResult, type ToolchainEvidenceMetadata, type ExecutionEvidenceRecord } from "./executionEvidence";
 
 export interface ContainerizedCheckOptions {
   repoId: string;
@@ -33,6 +34,7 @@ export interface ContainerizedCheckOptions {
   /** Network created by the disposable-service lifecycle, when checks require services. */
   qualityNetworkMode?: string;
   servicePlan?: DisposableServicePlan;
+  toolchainMetadata?: ToolchainEvidenceMetadata;
 }
 
 export const QUALITY_CHECK_NETWORK_MODE = "none" as const;
@@ -79,6 +81,7 @@ export async function runContainerizedChecks(
   const vn = volumeName(opts.repoId);
   const findings: DeterministicFinding[] = [];
   const logs: string[] = [];
+  const evidence: ExecutionEvidenceRecord[] = [];
   const hostBindPath = (opts.hostBindPath ?? "").trim() || undefined;
   const cloneUrl = (opts.cloneUrl ?? "").trim();
 
@@ -157,6 +160,7 @@ export async function runContainerizedChecks(
     );
     // Do not pass cpuLimit/memoryLimit — orchestrator applies DRAGNET_RUNNER_*
     // env (or no cap). Hardcoding --cpus 2 breaks 1-vCPU Dokploy hosts (exit 125).
+    const startedAt = new Date();
     const result = await orchestrator.runRunner({
       ...mountOpts,
       image: opts.runnerImage,
@@ -168,7 +172,9 @@ export async function runContainerizedChecks(
       // placeholder without exposing any host or repository credentials.
       ...(opts.installEnvironment ? { environment: opts.installEnvironment } : { provideSyntheticDatabaseUrl: true }),
     });
-    logs.push(`[install] exit=${result.exitCode} stdout=${result.stdout.slice(0, 2000)} stderr=${result.stderr.slice(0, 2000)}`);
+    evidence.push(recordExecutionResult({ phase: "install", command: cmd, startedAt, result }));
+    const installEvidence = evidence[evidence.length - 1];
+    logs.push(`[install] exit=${result.exitCode} stdout=${installEvidence.stdout} stderr=${installEvidence.stderr}`);
     if (result.timedOut) {
       const msg = `Containerized checks: install timed out after 300s (${opts.installCommand})`;
       void logReview(opts.prId, msg, "error", opts.reviewRunId, opts.reviewChunkId);
@@ -209,7 +215,9 @@ export async function runContainerizedChecks(
             ? (opts.qualityNetworkMode ?? QUALITY_CHECK_NETWORK_MODE)
             : QUALITY_CHECK_NETWORK_MODE,
         });
-        logs.push(`[${item.command.kind}] exit=${result.exitCode} stdout=${result.stdout.slice(0, 2000)} stderr=${result.stderr.slice(0, 2000)}`);
+        evidence.push(recordExecutionResult({ phase: "quality", command: item.command.command, cwd: item.command.cwd, startedAt: new Date(), result }));
+        const qualityEvidence = evidence[evidence.length - 1];
+        logs.push(`[${item.command.kind}] exit=${result.exitCode} stdout=${qualityEvidence.stdout} stderr=${qualityEvidence.stderr}`);
         if (result.exitCode === 0 && !result.timedOut) continue;
         const combined = `${result.stdout}\n${result.stderr}`;
         findings.push(...parseTscOutput(combined), ...parseEslintJson(result.stdout), ...parseGenericErrors(combined));
@@ -229,6 +237,7 @@ export async function runContainerizedChecks(
       opts.reviewRunId,
       opts.reviewChunkId,
     );
+    const startedAt = new Date();
     const result = await orchestrator.runRunner({
       ...mountOpts,
       image: opts.runnerImage,
@@ -236,7 +245,9 @@ export async function runContainerizedChecks(
       timeoutMs: 300_000,
       networkMode: QUALITY_CHECK_NETWORK_MODE,
     });
-    logs.push(`[quality] exit=${result.exitCode} stdout=${result.stdout.slice(0, 2000)} stderr=${result.stderr.slice(0, 2000)}`);
+    evidence.push(recordExecutionResult({ phase: "quality", command: cmd, startedAt, result }));
+    const qualityEvidence = evidence[evidence.length - 1];
+    logs.push(`[quality] exit=${result.exitCode} stdout=${qualityEvidence.stdout} stderr=${qualityEvidence.stderr}`);
 
     if (result.exitCode === 0 && !result.timedOut) return [];
 
@@ -273,6 +284,14 @@ export async function runContainerizedChecks(
     for (const log of logs) {
       void logReview(opts.prId, log, "info", opts.reviewRunId, opts.reviewChunkId);
     }
+    if (opts.reviewRunId && opts.toolchainMetadata) {
+      await persistExecutionEvidence({
+        reviewRunId: opts.reviewRunId,
+        reviewChunkId: opts.reviewChunkId,
+        toolchain: { ...opts.toolchainMetadata, ...(opts.servicePlan ? { servicePolicy: opts.servicePlan } : {}) },
+        records: evidence,
+      });
+    }
     throw err;
   }
 
@@ -299,6 +318,15 @@ export async function runContainerizedChecks(
       opts.reviewRunId,
       opts.reviewChunkId,
     );
+  }
+
+  if (opts.reviewRunId && opts.toolchainMetadata) {
+    await persistExecutionEvidence({
+      reviewRunId: opts.reviewRunId,
+      reviewChunkId: opts.reviewChunkId,
+      toolchain: { ...opts.toolchainMetadata, ...(opts.servicePlan ? { servicePolicy: opts.servicePlan } : {}) },
+      records: evidence,
+    });
   }
 
   return findings;

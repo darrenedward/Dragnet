@@ -37,6 +37,7 @@ export interface RunOptions {
 
 export interface RunResult {
   exitCode: number;
+  signal?: string | null;
   stdout: string;
   stderr: string;
   timedOut: boolean;

@@ -18,7 +18,7 @@ function asyncSpawnWithTimeout(
   file: string,
   args: string[],
   timeoutMs: number,
-): Promise<{ stdout: string; stderr: string }> {
+): Promise<{ stdout: string; stderr: string; signal?: string | null }> {
   return new Promise((resolve, reject) => {
     const child = spawn(file, args, { stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "";
@@ -40,7 +40,7 @@ function asyncSpawnWithTimeout(
       child.kill("SIGTERM");
     }, timeoutMs);
 
-    child.on("close", (exitCode) => {
+    child.on("close", (exitCode, signal) => {
       clearTimeout(timer);
       if (didTimeout) {
         const err = new Error("timed out") as Error & Record<string, unknown>;
@@ -55,7 +55,7 @@ function asyncSpawnWithTimeout(
         err.stderr = stderr;
         reject(err);
       } else {
-        resolve({ stdout, stderr });
+        resolve({ stdout, stderr, signal: signal ?? null });
       }
     });
 
@@ -208,11 +208,13 @@ export class ContainerOrchestrator {
     let stdout = "";
     let stderr = "";
     let exitCode = 0;
+    let signal: string | null = null;
     let timedOut = false;
 
     try {
       const result = await asyncSpawnWithTimeout(engine, args, timeoutMs);
       stdout = result.stdout;
+      signal = result.signal ?? null;
     } catch (err: any) {
       if (err.name === "AbortError") {
         timedOut = true;
@@ -228,6 +230,7 @@ export class ContainerOrchestrator {
 
     return {
       exitCode,
+      signal,
       stdout,
       stderr,
       timedOut,

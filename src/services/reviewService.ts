@@ -38,9 +38,9 @@ import {
   shouldRunHostTier1,
   DEFAULT_TEST_COMMAND,
   resolveToolchainFromReader,
-  skippedFinding,
   type DeterministicFinding,
 } from "@/src/services/deterministicChecks";
+import { executionMetadataFromToolchain } from "@/src/services/deterministicChecks/scanExecutionContext";
 import { StepPipeline, StepError, isStepFailure, isStepSuccess, type StepResult } from "@/src/services/stepPipeline";
 import { classifyDiff } from "@/src/lib/diffClassifier";
 import { buildFindingFingerprint, resolveSymbolsBatch } from "@/src/services/largePrReview/fingerprint";
@@ -1309,7 +1309,7 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
             const msg = `Toolchain resolution ${toolchain.status}: ${toolchain.conflicts.join("; ")}`;
             buildSystemWarn = msg;
             void logReview(prId, msg, "warn", reviewRunId, reviewChunkId);
-            return { ok: true, data: [skippedFinding("runner", msg)] };
+            return { ok: false, error: new StepError(msg, false) };
           }
           runnerImage = toolchain.execution.image;
           void logReview(prId, `Resolved ${toolchain.identity?.ecosystem} toolchain: ${runnerImage}`, "info", reviewRunId, reviewChunkId);
@@ -1332,6 +1332,8 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
             runnerImage,
             installCommand: toolchain.execution.installCommand,
             testCommand: toolchain.execution.qualityCommands.join(" && "),
+            qualityChecks: toolchain.execution.checks,
+            toolchainMetadata: executionMetadataFromToolchain(toolchain),
             prId,
             reviewRunId,
             reviewChunkId,
