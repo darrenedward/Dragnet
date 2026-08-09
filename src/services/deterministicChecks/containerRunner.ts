@@ -4,6 +4,9 @@ import type { DeterministicFinding } from "./types";
 import { DEFAULT_TEST_COMMAND, resolveQualityCommand, skippedFinding } from "./helpers";
 import { parseTscOutput, parseEslintJson } from "./parsers";
 import { logReview } from "./logging";
+import type { CheckKind, ResolvedQualityCommand } from "./toolchainResolver";
+import { planQualityChecks, buildTimeEnvironment } from "./qualityPlan";
+import { serviceEnvironment, type DisposableServicePlan } from "./disposableServices";
 
 export interface ContainerizedCheckOptions {
   repoId: string;
@@ -23,6 +26,13 @@ export interface ContainerizedCheckOptions {
    * git sync (avoids empty clone URL pretend-sync).
    */
   hostBindPath?: string;
+  /** Resolved tip checks. When supplied, legacy root-script discovery is bypassed. */
+  qualityChecks?: Readonly<Record<CheckKind, readonly ResolvedQualityCommand[]>>;
+  availableServices?: ReadonlySet<string>;
+  installEnvironment?: Readonly<Record<string, string>>;
+  /** Network created by the disposable-service lifecycle, when checks require services. */
+  qualityNetworkMode?: string;
+  servicePlan?: DisposableServicePlan;
 }
 
 export const QUALITY_CHECK_NETWORK_MODE = "none" as const;
@@ -156,7 +166,7 @@ export async function runContainerizedChecks(
       // Prisma's generate step reads DATABASE_URL from its config but does
       // not connect to Postgres. Give install lifecycle hooks a non-routable
       // placeholder without exposing any host or repository credentials.
-      provideSyntheticDatabaseUrl: true,
+      ...(opts.installEnvironment ? { environment: opts.installEnvironment } : { provideSyntheticDatabaseUrl: true }),
     });
     logs.push(`[install] exit=${result.exitCode} stdout=${result.stdout.slice(0, 2000)} stderr=${result.stderr.slice(0, 2000)}`);
     if (result.timedOut) {
@@ -173,6 +183,40 @@ export async function runContainerizedChecks(
 
   const runQualityChecks = async (): Promise<DeterministicFinding[]> => {
     if (opts.testCommand === "") return [];
+    if (opts.qualityChecks) {
+      const planned = planQualityChecks(opts.qualityChecks, opts.availableServices ?? new Set());
+      const findings: DeterministicFinding[] = [];
+      for (const item of planned) {
+        if (item.status === "skipped_dependency") {
+          void logReview(opts.prId, `Containerized checks: skipped ${item.command.command} — ${item.reason}`, "info", opts.reviewRunId, opts.reviewChunkId);
+          continue;
+        }
+        if (item.status === "infrastructure_failure") {
+          findings.push(skippedFinding("runner", item.reason ?? "Required quality service unavailable"));
+          continue;
+        }
+        const result = await orchestrator.runRunner({
+          ...mountOpts,
+          image: opts.runnerImage,
+          commands: [item.command.command],
+          workingDirectory: item.command.cwd,
+          environment: {
+            ...buildTimeEnvironment(item.command),
+            ...(opts.servicePlan ? serviceEnvironment(item.command, opts.servicePlan) : {}),
+          },
+          timeoutMs: 300_000,
+          networkMode: item.command.requiresServices.length > 0
+            ? (opts.qualityNetworkMode ?? QUALITY_CHECK_NETWORK_MODE)
+            : QUALITY_CHECK_NETWORK_MODE,
+        });
+        logs.push(`[${item.command.kind}] exit=${result.exitCode} stdout=${result.stdout.slice(0, 2000)} stderr=${result.stderr.slice(0, 2000)}`);
+        if (result.exitCode === 0 && !result.timedOut) continue;
+        const combined = `${result.stdout}\n${result.stderr}`;
+        findings.push(...parseTscOutput(combined), ...parseEslintJson(result.stdout), ...parseGenericErrors(combined));
+        if (findings.length === 0) findings.push(skippedFinding("runner", `Quality command failed: ${item.command.command}`));
+      }
+      return findings;
+    }
     const scripts = (opts.testCommand == null || opts.testCommand.trim() === DEFAULT_TEST_COMMAND)
       ? await readPackageScripts()
       : null;
