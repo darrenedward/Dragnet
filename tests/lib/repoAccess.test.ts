@@ -118,6 +118,18 @@ describe("runGitInRepo — local-path mode", () => {
 });
 
 describe("runGitInRepo — remote-volume mode", () => {
+  it("reads a file from a remote repository volume at the requested tip", async () => {
+    mocks.mockSyncToCommit.mockResolvedValue("/workspace");
+    mocks.mockRunRunner.mockResolvedValue({ stdout: "{\"packageManager\":\"pnpm@9\"}\n", stderr: "", exitCode: 0, timedOut: false });
+    const { readFileInRepo } = await getMod();
+    const head = "c".repeat(40);
+    const result = await readFileInRepo({ id: "remote-file", cloneUrl: "git@github.com:o/r.git" }, "package.json", head);
+
+    expect(result).toContain("pnpm@9");
+    expect(mocks.mockSyncToCommit).toHaveBeenCalledWith(expect.objectContaining({ repoId: "remote-file", commitHash: head }));
+    expect(mocks.mockRunRunner.mock.calls[0][0].commands[0]).toContain(`git 'show' '${head}:package.json'`);
+  });
+
   it("calls orchestrator.runRunner with quoted args", async () => {
     mocks.mockRunRunner.mockResolvedValue({ stdout: "abc123\n", stderr: "", exitCode: 0, timedOut: false });
     const { runGitInRepo } = await getMod();
