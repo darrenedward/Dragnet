@@ -38,8 +38,11 @@ export function evaluateCacheEligibility(input: CacheEligibilityInput): CacheEli
     return { eligible: false, reason: "toolchain_mismatch", message: "The resolved toolchain changed since the completed run." };
   }
   const expected = input.run.chunksTotal ?? 0;
+  const chunks = input.chunks ?? [];
+  if (expected === 0 && chunks.length > 0) {
+    return { eligible: false, reason: "contradictory_chunks", message: "The run is marked non-chunked but has persisted chunk records." };
+  }
   if (expected > 0) {
-    const chunks = input.chunks ?? [];
     if (chunks.length !== expected) return { eligible: false, reason: "incomplete_chunks", message: `Chunk coverage is incomplete: ${chunks.length}/${expected} records exist.` };
     if (chunks.some((chunk) => chunk.status !== "completed")) {
       return { eligible: false, reason: "contradictory_chunks", message: "The run is marked completed but one or more chunks are not completed." };

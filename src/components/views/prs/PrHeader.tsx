@@ -76,7 +76,7 @@ export interface PrHeaderProps {
   blockedGate?: string | null;
   seamInput?: SeamChipInput | null;
   stale?: boolean | null;
-  staleReason?: "tip_mismatch" | "diff_changed" | null;
+  staleReason?: "tip_mismatch" | "diff_changed" | "incomplete_chunks" | "toolchain_changed" | null;
 }
 
 export default function PrHeader({

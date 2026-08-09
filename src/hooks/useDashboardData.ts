@@ -174,7 +174,7 @@ export function useDashboardData() {
     source: string | null;
   }>>([]);
   const [stale, setStale] = useState(false);
-  const [staleReason, setStaleReason] = useState<"tip_mismatch" | "diff_changed" | null>(null);
+  const [staleReason, setStaleReason] = useState<"tip_mismatch" | "diff_changed" | "incomplete_chunks" | "toolchain_changed" | null>(null);
   const [stability, setStability] = useState<import("@/src/lib/stabilityScore").StabilityProp | null>(null);
   const [logs, setLogs] = useState<ActivityLog[]>([]);
 

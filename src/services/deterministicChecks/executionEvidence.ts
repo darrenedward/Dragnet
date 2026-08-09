@@ -10,6 +10,7 @@ export interface ToolchainEvidenceMetadata {
   readonly packageManager?: { readonly name: string; readonly version?: string };
   readonly lockfiles: readonly string[];
   readonly workspace: string;
+  readonly workspaces?: unknown;
   readonly commands: readonly string[];
   readonly servicePolicy?: unknown;
   readonly fingerprint: string;
@@ -61,6 +62,30 @@ export function redactExecutionEvidence(
     stdout: clipped(redact(record.stdout, secretValues)),
     stderr: clipped(redact(record.stderr, secretValues)),
   };
+}
+
+export function recordExecutionResult(input: {
+  phase: ExecutionEvidenceRecord["phase"];
+  command: string;
+  cwd?: string;
+  startedAt: Date;
+  result: { exitCode: number; signal?: string | null; timedOut: boolean; stdout: string; stderr: string };
+  retryCount?: number;
+}): ExecutionEvidenceRecord {
+  return redactExecutionEvidence({
+    phase: input.phase,
+    command: input.command,
+    cwd: input.cwd,
+    status: input.result.timedOut ? "timed_out" : input.result.exitCode === 0 ? "passed" : "failed",
+    exitCode: input.result.exitCode,
+    signal: input.result.signal,
+    timedOut: input.result.timedOut,
+    retryCount: input.retryCount ?? 0,
+    stdout: input.result.stdout,
+    stderr: input.result.stderr,
+    startedAt: input.startedAt.toISOString(),
+    completedAt: new Date().toISOString(),
+  }, []);
 }
 
 export function sanitizeToolchainMetadata(value: unknown): unknown {

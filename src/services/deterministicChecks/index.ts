@@ -1,7 +1,7 @@
 export { runDeterministicChecks } from "./orchestrator";
 export { runContainerizedChecks, QUALITY_CHECK_NETWORK_MODE } from "./containerRunner";
 export { resolveScanExecutionContext, executionMetadataFromToolchain, ToolchainResolutionError } from "./scanExecutionContext";
-export { persistExecutionEvidence, redactExecutionEvidence, sanitizeToolchainMetadata } from "./executionEvidence";
+export { persistExecutionEvidence, redactExecutionEvidence, recordExecutionResult, sanitizeToolchainMetadata } from "./executionEvidence";
 export { logReview } from "./logging";
 export {
   shouldRunHostTier1,

@@ -112,7 +112,7 @@ interface Props {
     source: string | null;
   }>;
   stale?: boolean;
-  staleReason?: "tip_mismatch" | "diff_changed" | null;
+  staleReason?: "tip_mismatch" | "diff_changed" | "incomplete_chunks" | "toolchain_changed" | null;
   /** Shared merge gate from findings payload — not the same as status Completed. */
   mergeReady?: boolean | null;
   mergeBlockReason?: string | null;

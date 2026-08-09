@@ -6,7 +6,6 @@ import {
   logReview,
   DEFAULT_TEST_COMMAND,
   resolveToolchainFromReader,
-  skippedFinding,
   type DeterministicFinding,
 } from "@/src/services/deterministicChecks";
 import { executionMetadataFromToolchain } from "@/src/services/deterministicChecks/scanExecutionContext";
@@ -188,8 +187,7 @@ export async function runGlobalDeterministicChecks(
         if (toolchain.status !== "resolved" || !toolchain.execution.image || !toolchain.execution.installCommand) {
           const message = `Toolchain resolution ${toolchain.status}: ${toolchain.conflicts.join("; ")}`;
           void logReview(prId, message, "warn", reviewRunId);
-          findings.push(skippedFinding("runner", message));
-          return { abort: false, infrastructureFailure: false, findings };
+          return { abort: true, infrastructureFailure: false, findings, errorMessage: message };
         }
 
         const tier2Result = await withRetry<DeterministicFinding[]>(

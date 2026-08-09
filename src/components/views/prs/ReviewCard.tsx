@@ -73,7 +73,7 @@ interface Props {
     source: string | null;
   }>;
   stale?: boolean;
-  staleReason?: "tip_mismatch" | "diff_changed" | null;
+  staleReason?: "tip_mismatch" | "diff_changed" | "incomplete_chunks" | "toolchain_changed" | null;
   stability?: StabilityProp | null;
   isScanning?: boolean;
   chunks?: ReviewChunk[];
@@ -246,12 +246,16 @@ export default function ReviewCard({
               title={
                 staleReason === "tip_mismatch"
                   ? "Tip moved — completed review does not match current PR tip. Re-scan required."
-                  : "The saved review no longer matches the current PR tip or diff. Run the scan again to refresh it."
+                  : staleReason === "incomplete_chunks"
+                    ? "This completed run has incomplete chunk coverage. Run a fresh scan."
+                    : staleReason === "toolchain_changed"
+                      ? "The resolved toolchain changed. Run a fresh scan."
+                      : "The saved review no longer matches the current PR tip or diff. Run the scan again to refresh it."
               }
               className="flex items-center gap-1 px-2 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/25 text-[9px] font-mono font-bold uppercase"
             >
               <AlertTriangle size={10} />
-              <span>{staleReason === "tip_mismatch" ? "Tip mismatch" : "Review out of date"}</span>
+              <span>{staleReason === "incomplete_chunks" ? "Incomplete coverage" : staleReason === "toolchain_changed" ? "Toolchain changed" : staleReason === "tip_mismatch" ? "Tip mismatch" : "Review out of date"}</span>
             </span>
           )}
         </div>

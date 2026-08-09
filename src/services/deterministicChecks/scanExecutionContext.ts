@@ -32,6 +32,7 @@ export function executionMetadataFromToolchain(toolchain: ResolvedToolchain): To
     packageManager: toolchain.identity?.packageManager,
     lockfiles: toolchain.identity?.lockfiles ?? [],
     workspace: toolchain.configuration?.workspace ?? ".",
+    workspaces: toolchain.execution.workspaces,
     commands: toolchain.execution.qualityCommands,
     fingerprint: toolchain.fingerprint,
   };
