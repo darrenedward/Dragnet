@@ -384,6 +384,26 @@ describe("runContainerizedChecks", () => {
     expect(findings[0].explanation).toContain("exited with code 1");
   });
 
+  it("classifies unavailable project services without creating a source finding", async () => {
+    mockRunRunner
+      .mockResolvedValueOnce({ exitCode: 0, stdout: "", stderr: "", timedOut: false })
+      .mockResolvedValueOnce({
+        exitCode: 1,
+        stdout: "",
+        stderr: "Error: connect ECONNREFUSED 127.0.0.1:5433",
+        timedOut: false,
+      });
+
+    const findings = await runContainerizedChecks(baseOpts);
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toMatchObject({
+      filename: "<tooling>",
+      category: "External Dependency Skipped",
+      severity: "info",
+      source: "runner",
+    });
+  });
+
   it("logs container output with 'info' level, not 'tool_call'", async () => {
     mockRunRunner
       .mockResolvedValueOnce({ exitCode: 0, stdout: "installed", stderr: "", timedOut: false })

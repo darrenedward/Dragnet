@@ -1,7 +1,7 @@
 import { ContainerOrchestrator } from "@/src/lib/containerOrchestrator";
 import { gitService } from "@/src/lib/gitService";
 import type { DeterministicFinding } from "./types";
-import { DEFAULT_TEST_COMMAND, resolveQualityCommand, skippedFinding } from "./helpers";
+import { DEFAULT_TEST_COMMAND, externalDependencySkip, isExternalDependencyFailure, resolveQualityCommand, skippedFinding } from "./helpers";
 import { parseTscOutput, parseEslintJson } from "./parsers";
 import { logReview } from "./logging";
 import type { CheckKind, ResolvedQualityCommand } from "./toolchainResolver";
@@ -221,6 +221,12 @@ export async function runContainerizedChecks(
         logs.push(`[${item.command.kind}] exit=${result.exitCode} stdout=${qualityEvidence.stdout} stderr=${qualityEvidence.stderr}`);
         if (result.exitCode === 0 && !result.timedOut) continue;
         const combined = `${result.stdout}\n${result.stderr}`;
+        if (isExternalDependencyFailure(combined)) {
+          const skip = externalDependencySkip("runner", item.command.command, combined);
+          findings.push(skip);
+          void logReview(opts.prId, skip.explanation, "warn", opts.reviewRunId, opts.reviewChunkId);
+          continue;
+        }
         findings.push(...parseTscOutput(combined), ...parseEslintJson(result.stdout), ...parseGenericErrors(combined));
         if (findings.length === 0) findings.push(skippedFinding("runner", `Quality command failed: ${item.command.command}`));
       }
@@ -253,6 +259,12 @@ export async function runContainerizedChecks(
     if (result.exitCode === 0 && !result.timedOut) return [];
 
     const combined = `${result.stdout}\n${result.stderr}`;
+
+    if (isExternalDependencyFailure(combined)) {
+      const skip = externalDependencySkip("runner", cmd, combined);
+      void logReview(opts.prId, skip.explanation, "warn", opts.reviewRunId, opts.reviewChunkId);
+      return [skip];
+    }
 
     const tscFindings = parseTscOutput(combined);
     if (tscFindings.length > 0) return tscFindings;
