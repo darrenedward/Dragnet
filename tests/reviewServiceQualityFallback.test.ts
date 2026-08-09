@@ -219,6 +219,35 @@ describe("runPrScan quality_failure provider chain (#139)", () => {
     expect(logMsgs.some((m) => /fallback-after-quality-failure/i.test(m))).toBe(true);
   });
 
+  it("continues the LLM review after an external dependency skip", async () => {
+    primaryCreate.mockImplementation((body: any) => {
+      if (body?.tools) return Promise.resolve(submitReviewResponse(8));
+      return Promise.resolve({
+        choices: [{ message: { role: "assistant", content: '{"refused": false, "topics": []}' } }],
+        usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+      });
+    });
+
+    const { runPrScan } = await import("../src/services/reviewService");
+    const result = await runPrScan("pr-1", sampleFiles, undefined, undefined, undefined, {
+      precomputedFindings: [{
+        filename: "<tooling>",
+        line: null,
+        severity: "info",
+        category: "External Dependency Skipped",
+        explanation: "[runner] External dependency unavailable while running npm test",
+        source: "runner",
+      }],
+    });
+
+    expect(primaryCreate).toHaveBeenCalled();
+    expect(result.success).toBe(true);
+    expect(result.rating).toBe(8);
+    expect(result.findings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ category: "External Dependency Skipped", source: "runner" }),
+    ]));
+  });
+
   it("both providers quality_failure → hard_fail, null rating, no fabricated AI findings", async () => {
     primaryCreate.mockImplementation((body: any) => Promise.resolve(qualityFailResponse(body)));
     secondaryCreate.mockImplementation((body: any) => Promise.resolve(qualityFailResponse(body)));
