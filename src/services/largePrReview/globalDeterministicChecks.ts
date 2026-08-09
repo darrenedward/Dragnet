@@ -1,8 +1,12 @@
+import fs from "node:fs";
+import path from "node:path";
 import {
   runDeterministicChecks,
   runContainerizedChecks,
   logReview,
-  DEFAULT_INSTALL_COMMAND,
+  DEFAULT_TEST_COMMAND,
+  resolveToolchainFromReader,
+  skippedFinding,
   type DeterministicFinding,
 } from "@/src/services/deterministicChecks";
 import {
@@ -11,9 +15,10 @@ import {
   planTier2BindRoot,
   resolveCheckHeadSha,
 } from "@/src/lib/tipAlignedChecks";
-import { detectBuildSystem } from "@/src/lib/buildsystemDetect";
 import { withRetry, isStepFailure } from "@/src/services/stepPipeline";
 import { prisma } from "@/src/lib/prisma";
+import type { ReviewTree } from "@/src/lib/reviewTree";
+import { readFileInRepo } from "@/src/lib/repoAccess";
 
 export interface GlobalChecksResult {
   abort: boolean;
@@ -25,6 +30,7 @@ export interface GlobalChecksResult {
 export async function runGlobalDeterministicChecks(
   reviewRunId: string,
   prId: string,
+  reviewTree?: ReviewTree,
 ): Promise<GlobalChecksResult> {
   const run = await prisma.reviewRun.findUnique({
     where: { id: reviewRunId },
@@ -122,16 +128,7 @@ export async function runGlobalDeterministicChecks(
       }
     }
 
-    // Detect build system for Tier 2 gating (tip tree only; remote uses node default)
     let tier2Supported = true;
-    if (tier1Plan.action === "run") {
-      try {
-        const detected = await detectBuildSystem(tier1Plan.rootPath);
-        tier2Supported = detected.buildSystem === "node";
-      } catch {
-        // Fall through — assume supported
-      }
-    }
 
     // Tier 2: same head SHA as tools; local-only bind or explicit skip.
     const tier2Plan = planTier2({
@@ -157,7 +154,43 @@ export async function runGlobalDeterministicChecks(
         if (repo.patCipher && repo.patIv && repo.patTag && hasMasterKey()) {
           pat = decryptSecret(repo.patCipher, repo.patIv, repo.patTag);
         }
-        const tier2Image = repo.runnerImage ?? "node:20-alpine";
+        const tipReader = reviewTree
+          ? {
+              headSha: reviewTree.headSha,
+              source: tier1Plan.action === "run" ? "pr-tip" as const : "remote-volume" as const,
+              readFile: reviewTree.readFile,
+            }
+          : tier1Plan.action === "run"
+            ? {
+                headSha: checkHeadSha,
+                source: "pr-tip" as const,
+                readFile: async (file: string) => {
+                  try { return await fs.promises.readFile(path.join(tier1Plan.rootPath, file), "utf8"); }
+                  catch (err: any) {
+                    if (err?.code === "ENOENT") return null;
+                    throw new Error(`Unable to read PR tip file ${file}: ${err?.message ?? String(err)}`);
+                  }
+                },
+              }
+            : {
+                headSha: checkHeadSha,
+                source: "remote-volume" as const,
+                readFile: (file: string) => readFileInRepo(repo, file, checkHeadSha),
+              };
+        const configuredQuality = repo.testCommand && repo.testCommand !== DEFAULT_TEST_COMMAND
+          ? [repo.testCommand]
+          : undefined;
+        const toolchain = await resolveToolchainFromReader({
+          ...tipReader,
+          configuration: configuredQuality ? { qualityCommands: configuredQuality } : undefined,
+          repositoryOverrides: { runnerImage: repo.runnerImage, installCommand: repo.installCommand },
+        });
+        if (toolchain.status !== "resolved" || !toolchain.execution.image || !toolchain.execution.installCommand) {
+          const message = `Toolchain resolution ${toolchain.status}: ${toolchain.conflicts.join("; ")}`;
+          void logReview(prId, message, "warn", reviewRunId);
+          findings.push(skippedFinding("runner", message));
+          return { abort: false, infrastructureFailure: false, findings };
+        }
 
         const tier2Result = await withRetry<DeterministicFinding[]>(
           async () => {
@@ -168,9 +201,9 @@ export async function runGlobalDeterministicChecks(
               hostBindPath: tier2Plan.action === "bind" ? tier2Plan.hostPath : undefined,
               deployKey,
               pat,
-              runnerImage: tier2Image,
-              installCommand: repo.installCommand ?? DEFAULT_INSTALL_COMMAND,
-              testCommand: repo.testCommand,
+              runnerImage: toolchain.execution.image,
+              installCommand: toolchain.execution.installCommand,
+              testCommand: toolchain.execution.qualityCommands.join(" && "),
               prId,
               reviewRunId,
             });

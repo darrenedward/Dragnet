@@ -215,7 +215,7 @@ export async function runLargePrReview({
   // compiler/linter/container tests. Infrastructure failure aborts the
   // entire large-PR scan (no chunks run), matching existing behaviour in
   // normal-sized PR scans (AC: "Infrastructure failure stops the scan").
-  const globalChecks = await runGlobalDeterministicChecks(reviewRunId, prId);
+  const globalChecks = await runGlobalDeterministicChecks(reviewRunId, prId, reviewTree);
   if (globalChecks.abort) {
     await logRun(
       prId,

@@ -19,10 +19,12 @@ export type {
 } from "./types";
 export {
   resolveToolchain,
+  resolveToolchainFromReader,
   type Ecosystem,
   type ProjectIdentity,
   type ResolvedToolchain,
   type TipTreeManifest,
   type ToolchainConfiguration,
+  type ToolchainRepositoryOverrides,
   type ToolchainStatus,
 } from "./toolchainResolver";

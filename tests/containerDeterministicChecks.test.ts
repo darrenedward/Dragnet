@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { runContainerizedChecks } from "../src/services/deterministicChecks/containerRunner";
 import type { ContainerizedCheckOptions } from "../src/services/deterministicChecks/containerRunner";
 import { DEFAULT_TEST_COMMAND } from "../src/services/deterministicChecks/helpers";
+import { resolveToolchain } from "../src/services/deterministicChecks/toolchainResolver";
 
 const mockSyncToCommit = vi.fn();
 const mockRunRunner = vi.fn();
@@ -156,6 +157,73 @@ describe("runContainerizedChecks", () => {
     expect(secondCall.networkMode).toBe("none");
     expect(secondCall.env).toBeUndefined();
     expect(secondCall.provideSyntheticDatabaseUrl).toBeUndefined();
+  });
+
+  it("smoke-tests the pnpm toolchain path without npm fallback", async () => {
+    mockRunRunner
+      .mockResolvedValueOnce({ exitCode: 0, stdout: "", stderr: "", timedOut: false })
+      .mockResolvedValueOnce({ exitCode: 0, stdout: "quality passed", stderr: "", timedOut: false });
+
+    await runContainerizedChecks({
+      ...baseOpts,
+      runnerImage: "node:20-alpine",
+      installCommand: "corepack pnpm install --frozen-lockfile",
+      testCommand: "pnpm test",
+    });
+
+    expect(mockRunRunner).toHaveBeenNthCalledWith(1,
+      expect.objectContaining({
+        image: "node:20-alpine",
+        commands: ["corepack pnpm install --frozen-lockfile"],
+      }),
+    );
+    expect(mockRunRunner).toHaveBeenNthCalledWith(2,
+      expect.objectContaining({ commands: ["pnpm test"] }),
+    );
+    expect(mockRunRunner.mock.calls.flatMap((call) => call[0].commands)).not.toContain("npm install");
+  });
+
+  it("smoke-tests resolver output through the container runner", async () => {
+    const toolchain = resolveToolchain({
+      tip: {
+        headSha: "a".repeat(40),
+        source: "remote-volume",
+        files: {
+          "package.json": JSON.stringify({ packageManager: "pnpm@9.15.0", scripts: { test: "pnpm test" } }),
+          "pnpm-lock.yaml": "lockfileVersion: '9.0'\n",
+        },
+      },
+    });
+    mockRunRunner
+      .mockResolvedValueOnce({ exitCode: 0, stdout: "", stderr: "", timedOut: false })
+      .mockResolvedValueOnce({ exitCode: 0, stdout: "quality passed", stderr: "", timedOut: false });
+
+    await runContainerizedChecks({
+      ...baseOpts,
+      runnerImage: toolchain.execution.image!,
+      installCommand: toolchain.execution.installCommand!,
+      testCommand: toolchain.execution.qualityCommands.join(" && "),
+    });
+
+    expect(mockRunRunner.mock.calls[0][0].commands[0]).toBe("corepack pnpm@9.15.0 install --frozen-lockfile");
+    expect(mockRunRunner.mock.calls[1][0].commands[0]).toBe("pnpm test");
+  });
+
+  it.each([
+    ["python", "python:3.12-slim", "uv sync --locked", "python -m pytest"],
+    ["go", "golang:1.22-alpine", "go mod download", "go test ./..."],
+    ["rust", "rust:1.80-slim", "cargo check --locked", "cargo test --locked"],
+    ["ruby", "ruby:3.3-alpine", "bundle install --deployment", "bundle exec ruby -Itest"],
+    ["php", "composer:2.8", "composer install --no-interaction --prefer-dist --no-progress", "composer check-platform-reqs"],
+  ])("smoke-tests the %s adapter command path", async (_name, image, installCommand, testCommand) => {
+    mockRunRunner
+      .mockResolvedValueOnce({ exitCode: 0, stdout: "", stderr: "", timedOut: false })
+      .mockResolvedValueOnce({ exitCode: 0, stdout: "quality passed", stderr: "", timedOut: false });
+
+    await runContainerizedChecks({ ...baseOpts, runnerImage: image, installCommand, testCommand });
+
+    expect(mockRunRunner.mock.calls[0][0]).toEqual(expect.objectContaining({ image, commands: [installCommand] }));
+    expect(mockRunRunner.mock.calls[1][0]).toEqual(expect.objectContaining({ image, commands: [testCommand] }));
   });
 
   it("resolves the default command to build plus lint when typecheck is absent", async () => {

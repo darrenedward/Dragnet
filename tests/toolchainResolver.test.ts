@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   resolveToolchain,
+  resolveToolchainFromReader,
   type TipTreeManifest,
 } from "../src/services/deterministicChecks/toolchainResolver";
 
@@ -30,7 +31,7 @@ describe("resolveToolchain", () => {
       packageManager: { name: "pnpm", version: "9.15.0" },
       runtime: { node: ">=20" },
     });
-    expect(result.execution.installCommand).toBe("corepack pnpm install --frozen-lockfile");
+    expect(result.execution.installCommand).toBe("corepack pnpm@9.15.0 install --frozen-lockfile");
     expect(result.execution.qualityCommands).toEqual(["vite build", "vitest run"]);
     expect(result.configuration.workspace).toBe(".");
     expect(result.identity.database).toBe("none");
@@ -105,6 +106,47 @@ describe("resolveToolchain", () => {
     expect(result.execution.installCommand).toBe("uv sync --locked");
   });
 
+  it.each([
+    ["Poetry", { "pyproject.toml": "[tool.poetry]\n", "poetry.lock": "[[package]]\n" }, "poetry install --no-root"],
+    ["requirements", { "requirements.txt": "pytest==8.3.0\n" }, "python -m pip install -r requirements.txt"],
+  ])("resolves the Python %s workflow", (_name, files, install) => {
+    const result = resolveToolchain({ tip: tip(files) });
+    expect(result.status).toBe("resolved");
+    expect(result.identity?.ecosystem).toBe("python");
+    expect(result.execution.installCommand).toBe(install);
+    expect(result.execution.qualityCommands).toEqual(["python -m pytest"]);
+  });
+
+  it("uses a compatible Node image for an upper-bound runtime", () => {
+    const result = resolveToolchain({
+      tip: tip({ "package.json": JSON.stringify({ engines: { node: "<20" } }), "package-lock.json": "{}" }),
+    });
+    expect(result.execution.image).toBe("node:18-alpine");
+  });
+
+  it("enforces a declared npm Corepack version", () => {
+    const result = resolveToolchain({
+      tip: tip({ "package.json": JSON.stringify({ packageManager: "npm@10.8.2" }), "package-lock.json": "{}" }),
+    });
+    expect(result.execution.installCommand).toBe("corepack npm@10.8.2 ci");
+  });
+
+  it("enforces a declared Yarn Corepack version", () => {
+    const result = resolveToolchain({
+      tip: tip({ "package.json": JSON.stringify({ packageManager: "yarn@4.5.0" }), "yarn.lock": "__metadata:\n" }),
+    });
+    expect(result.execution.installCommand).toBe("corepack yarn@4.5.0 install --immutable");
+  });
+
+  it("rejects PHP constraints that the pinned Composer runtime cannot satisfy", () => {
+    const result = resolveToolchain({
+      tip: tip({ "composer.json": JSON.stringify({ require: { php: "<8.3" } }), "composer.lock": "{}" }),
+    });
+    expect(result.status).toBe("ambiguous");
+    expect(result.execution.image).toBe("composer:2.8");
+    expect(result.conflicts[0]).toContain("incompatible");
+  });
+
   it("returns actionable results for unsupported and empty projects", () => {
     const unsupported = resolveToolchain({ tip: tip({ "pom.xml": "<project/>" }) });
     expect(unsupported.status).toBe("unsupported");
@@ -135,6 +177,52 @@ describe("resolveToolchain", () => {
     expect(() => resolveToolchain({ tip: { headSha: "a".repeat(40), source: "host-checkout", files: {} } })).toThrow(
       "PR tip tree",
     );
+  });
+
+  it.each([
+    ["go", { "go.mod": "module example\ngo 1.22\n", "go.sum": "hash" }, "golang:1.22-alpine", "go mod download", "go test ./..."],
+    ["rust", { "Cargo.toml": "[package]\nname = \"example\"\n", "Cargo.lock": "version = 3\n", "rust-toolchain.toml": "channel = \"1.80\"\n" }, "rust:1.80-slim", "cargo check --locked", "cargo test --locked"],
+    ["ruby", { Gemfile: "source \"https://rubygems.org\"\n", "Gemfile.lock": "GEM\n", ".ruby-version": "3.3\n" }, "ruby:3.3-alpine", "bundle install --deployment", "bundle exec ruby -Itest"],
+    ["php", { "composer.json": JSON.stringify({ require: { php: ">=8.2" } }), "composer.lock": "{}" }, "composer:2.8", "composer install --no-interaction --prefer-dist --no-progress", "composer check-platform-reqs"],
+  ])("resolves the %s adapter with a locked command", (_name, files, image, install, quality) => {
+    const result = resolveToolchain({ tip: tip(files) });
+    expect(result.status).toBe("resolved");
+    expect(result.execution.image).toBe(image);
+    expect(result.execution.installCommand).toBe(install);
+    expect(result.execution.qualityCommands).toEqual([quality]);
+  });
+
+  it("reports missing non-Node lockfiles without selecting Node", () => {
+    const result = resolveToolchain({ tip: tip({ "Cargo.toml": "[package]\nname=\"x\"\n" }) });
+    expect(result.status).toBe("ambiguous");
+    expect(result.identity?.ecosystem).toBe("rust");
+    expect(result.execution.image).not.toContain("node");
+    expect(result.execution.installCommand).toBeNull();
+  });
+
+  it("rejects repository overrides that conflict with the detected package manager", () => {
+    const result = resolveToolchain({
+      tip: tip({ "package.json": "{}", "pnpm-lock.yaml": "lockfileVersion: '9.0'\n" }),
+      repositoryOverrides: { runnerImage: "node:20-alpine", installCommand: "npm install" },
+    });
+    expect(result.status).toBe("ambiguous");
+    expect(result.conflicts).toContain("Repository installCommand conflicts with the resolved pnpm toolchain");
+    expect(result.execution.installCommand).toBe("corepack pnpm install --frozen-lockfile");
+  });
+
+  it("resolves a manifest through a tip reader without filesystem access", async () => {
+    const files: Record<string, string> = {
+      "package.json": JSON.stringify({ packageManager: "pnpm@9.15.0", scripts: { test: "pnpm test" } }),
+      "pnpm-lock.yaml": "lockfileVersion: '9.0'\n",
+    };
+    const result = await resolveToolchainFromReader({
+      headSha: "b".repeat(40),
+      source: "remote-volume",
+      readFile: async (path) => files[path] ?? null,
+    });
+    expect(result.status).toBe("resolved");
+    expect(result.tip.source).toBe("remote-volume");
+    expect(result.execution.installCommand).toContain("pnpm@9.15.0 install --frozen-lockfile");
   });
 
   it("resolves declared Node workspaces with explicit command working directories", () => {

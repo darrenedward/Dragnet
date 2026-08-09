@@ -79,6 +79,21 @@ describe("resolveRepoAccess", () => {
 });
 
 describe("runGitInRepo — local-path mode", () => {
+  it("reads a file from the requested tip", async () => {
+    writeFileSync(join(tmpDir, "package.json"), "{\"packageManager\":\"pnpm@9\"}\n");
+    execFileSync("git", ["-C", tmpDir, "add", "package.json"]);
+    execFileSync("git", ["-C", tmpDir, "commit", "-q", "-m", "manifest"]);
+    const head = execFileSync("git", ["-C", tmpDir, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+    const { readFileInRepo } = await getMod();
+    await expect(readFileInRepo({ id: "r1", path: tmpDir }, "package.json", head)).resolves.toContain("pnpm@9");
+  });
+
+  it("returns null when the tip file does not exist", async () => {
+    const head = execFileSync("git", ["-C", tmpDir, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+    const { readFileInRepo } = await getMod();
+    await expect(readFileInRepo({ id: "r1", path: tmpDir }, "package.json", head)).resolves.toBeNull();
+  });
+
   it("returns stdout on success", async () => {
     const { runGitInRepo } = await getMod();
     const repo = { id: "r1", path: tmpDir };
@@ -103,6 +118,18 @@ describe("runGitInRepo — local-path mode", () => {
 });
 
 describe("runGitInRepo — remote-volume mode", () => {
+  it("reads a file from a remote repository volume at the requested tip", async () => {
+    mocks.mockSyncToCommit.mockResolvedValue("/workspace");
+    mocks.mockRunRunner.mockResolvedValue({ stdout: "{\"packageManager\":\"pnpm@9\"}\n", stderr: "", exitCode: 0, timedOut: false });
+    const { readFileInRepo } = await getMod();
+    const head = "c".repeat(40);
+    const result = await readFileInRepo({ id: "remote-file", cloneUrl: "git@github.com:o/r.git" }, "package.json", head);
+
+    expect(result).toContain("pnpm@9");
+    expect(mocks.mockSyncToCommit).toHaveBeenCalledWith(expect.objectContaining({ repoId: "remote-file", commitHash: head }));
+    expect(mocks.mockRunRunner.mock.calls[0][0].commands[0]).toContain(`git 'show' '${head}:package.json'`);
+  });
+
   it("calls orchestrator.runRunner with quoted args", async () => {
     mocks.mockRunRunner.mockResolvedValue({ stdout: "abc123\n", stderr: "", exitCode: 0, timedOut: false });
     const { runGitInRepo } = await getMod();

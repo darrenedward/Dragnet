@@ -182,6 +182,7 @@ export async function runContainerizedChecks(
   };
 
   const runQualityChecks = async (): Promise<DeterministicFinding[]> => {
+    if (opts.testCommand === "") return [];
     if (opts.qualityChecks) {
       const planned = planQualityChecks(opts.qualityChecks, opts.availableServices ?? new Set());
       const findings: DeterministicFinding[] = [];
