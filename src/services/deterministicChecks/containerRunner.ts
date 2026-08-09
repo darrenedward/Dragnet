@@ -222,7 +222,7 @@ export async function runContainerizedChecks(
         if (result.exitCode === 0 && !result.timedOut) continue;
         const combined = `${result.stdout}\n${result.stderr}`;
         if (isExternalDependencyFailure(combined)) {
-          const skip = externalDependencySkip("runner", item.command.command, combined);
+          const skip = externalDependencySkip("runner", item.command.command);
           findings.push(skip);
           void logReview(opts.prId, skip.explanation, "warn", opts.reviewRunId, opts.reviewChunkId);
           continue;
@@ -261,7 +261,7 @@ export async function runContainerizedChecks(
     const combined = `${result.stdout}\n${result.stderr}`;
 
     if (isExternalDependencyFailure(combined)) {
-      const skip = externalDependencySkip("runner", cmd, combined);
+      const skip = externalDependencySkip("runner", cmd);
       void logReview(opts.prId, skip.explanation, "warn", opts.reviewRunId, opts.reviewChunkId);
       return [skip];
     }

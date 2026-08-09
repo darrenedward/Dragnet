@@ -113,7 +113,7 @@ describe("default quality-gate commands", () => {
 describe("external dependency classification", () => {
   it("recognizes refused project services without treating them as source diagnostics", () => {
     expect(isExternalDependencyFailure("Error: connect ECONNREFUSED 127.0.0.1:5433")).toBe(true);
-    const finding = externalDependencySkip("runner", "npm test", "connect ECONNREFUSED 127.0.0.1:5433");
+    const finding = externalDependencySkip("runner", "npm test");
     expect(finding.category).toBe("External Dependency Skipped");
     expect(finding.filename).toBe("<tooling>");
     expect(finding.severity).toBe("info");

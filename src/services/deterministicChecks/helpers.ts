@@ -85,10 +85,9 @@ export function skippedFinding(
   };
 }
 
-export function externalDependencySkip(source: "runner", command: string, output: string): DeterministicFinding {
-  const detail = output.split("\n").map((line) => line.trim()).find(Boolean) ?? "external service unavailable";
+export function externalDependencySkip(source: "runner", command: string): DeterministicFinding {
   return {
-    ...skippedFinding(source, `External dependency unavailable while running ${command}: ${detail}`),
+    ...skippedFinding(source, `External dependency unavailable while running ${command}`),
     category: "External Dependency Skipped",
   };
 }
