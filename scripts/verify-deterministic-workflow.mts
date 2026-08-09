@@ -1,10 +1,20 @@
-import { resolveToolchain, type Ecosystem, type TipTreeManifest } from "../src/services/deterministicChecks/toolchainResolver";
+import { createDisposableServicePlan } from "../src/services/deterministicChecks/disposableServices";
+import { resolveToolchain, type Ecosystem, type TipTreeManifest, type ToolchainStatus } from "../src/services/deterministicChecks/toolchainResolver";
+
+type Fingerprint = string & { readonly __sha256: true };
 
 export interface VerificationCase {
   readonly name: string;
   readonly ecosystem: Ecosystem;
   readonly files: Readonly<Record<string, string>>;
   readonly requiresService?: string;
+}
+
+export interface VerificationResult {
+  readonly name: string;
+  readonly ecosystem: Ecosystem;
+  readonly status: ToolchainStatus;
+  readonly fingerprint: Fingerprint;
 }
 
 export const VERIFICATION_MATRIX: readonly VerificationCase[] = [
@@ -30,16 +40,25 @@ export const VERIFICATION_MATRIX: readonly VerificationCase[] = [
   },
 ];
 
-function tip(files: Readonly<Record<string, string>>): TipTreeManifest {
+function createTipManifest(files: Readonly<Record<string, string>>): TipTreeManifest {
   return { headSha: "verification-fixture".padEnd(40, "0"), source: "pr-tip", files };
 }
 
-export function verifyLocalMatrix(): readonly { name: string; ecosystem: Ecosystem; status: string; fingerprint: string }[] {
+export function verifyLocalMatrix(): readonly VerificationResult[] {
   return VERIFICATION_MATRIX.map((fixture) => {
-    const result = resolveToolchain({ tip: tip(fixture.files) });
+    const result = resolveToolchain({ tip: createTipManifest(fixture.files) });
     if (result.identity?.ecosystem !== fixture.ecosystem) throw new Error(`${fixture.name}: expected ${fixture.ecosystem}, got ${result.identity?.ecosystem ?? "none"}`);
     if (result.status !== "resolved") throw new Error(`${fixture.name}: ${result.status} — ${result.conflicts.join("; ")}`);
-    return { name: fixture.name, ecosystem: fixture.ecosystem, status: result.status, fingerprint: result.fingerprint };
+    if (fixture.requiresService) {
+      const servicePlan = createDisposableServicePlan(`verification-${fixture.name}`, [{
+        name: fixture.requiresService,
+        image: "postgres:16.4",
+        alias: "db",
+        healthcheck: { command: ["pg_isready"] },
+      }]);
+      if (servicePlan.services[0]?.alias !== "db") throw new Error(`${fixture.name}: service plan was not created`);
+    }
+    return { name: fixture.name, ecosystem: fixture.ecosystem, status: result.status, fingerprint: result.fingerprint as Fingerprint };
   });
 }
 
