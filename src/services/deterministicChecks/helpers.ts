@@ -9,6 +9,12 @@ export const DEFAULT_INSTALL_COMMAND = "npm install";
  */
 export const DEFAULT_TEST_COMMAND = "npm run typecheck && npm run lint";
 const BROAD_TEST_COMMAND = /\b(?:npm\s+(?:run\s+)?test|vitest|jest|playwright|cypress|pytest)\b/i;
+const EXTERNAL_DEPENDENCY_FAILURE = /(?:ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|connection\s+refused|could not connect|failed to connect|connection timed out|missing (?:service|database|credentials?)|service unavailable|localhost:\d+|127\.0\.0\.1:\d+)/i;
+
+/** Environmental failures are coverage gaps, not defects in the reviewed source. */
+export function isExternalDependencyFailure(output: string): boolean {
+  return EXTERNAL_DEPENDENCY_FAILURE.test(output);
+}
 
 export type QualityCommandOptions = {
   /** A repository-specific command already verified to be service-free. */
@@ -76,5 +82,12 @@ export function skippedFinding(
     category: "Skipped",
     explanation: `[${source}] ${message}`,
     source,
+  };
+}
+
+export function externalDependencySkip(source: "runner", command: string): DeterministicFinding {
+  return {
+    ...skippedFinding(source, `External dependency unavailable while running ${command}`),
+    category: "External Dependency Skipped",
   };
 }

@@ -8,6 +8,8 @@ export {
   DEFAULT_INSTALL_COMMAND,
   DEFAULT_TEST_COMMAND,
   resolveQualityCommand,
+  externalDependencySkip,
+  isExternalDependencyFailure,
   skippedFinding,
 } from "./helpers";
 export type { ContainerizedCheckOptions } from "./containerRunner";

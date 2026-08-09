@@ -123,6 +123,8 @@ Per-repo **install** and **test** commands run in an ephemeral container (Tier 2
 
 **Remote / volume-backed repos** (clone URL or Docker volume) skip host Tier 1 (local tsc/eslint) and use container Tier 2 only — no host/container double-run. Local path-only repos still run host Tier 1 when a real checkout exists.
 
+Quality containers are clean-room checks: they do not receive Dragnet's PostgreSQL URL, repository secrets, or arbitrary host environment variables. Dragnet PostgreSQL remains control-plane storage for indexing and review persistence; it is never exposed to the reviewed repository. Full unit, integration, and end-to-end suites are not the default merge gate. If a configured command reaches an unavailable project service, the result is recorded as `External Dependency Skipped` with its runner provenance and the LLM review may continue, but the scan is not treated as an earned clean quality pass.
+
 ---
 
 ## Who can help

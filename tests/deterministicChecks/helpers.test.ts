@@ -3,6 +3,8 @@ import {
   skippedFinding,
   shouldRunHostTier1,
   DEFAULT_TEST_COMMAND,
+  externalDependencySkip,
+  isExternalDependencyFailure,
   DEFAULT_INSTALL_COMMAND,
   resolveQualityCommand,
 } from "@/src/services/deterministicChecks/helpers";
@@ -105,5 +107,19 @@ describe("default quality-gate commands", () => {
       configuredCommand: DEFAULT_TEST_COMMAND,
       scripts: { lint: "eslint" },
     })).toBe("npm run lint");
+  });
+});
+
+describe("external dependency classification", () => {
+  it("recognizes refused project services without treating them as source diagnostics", () => {
+    expect(isExternalDependencyFailure("Error: connect ECONNREFUSED 127.0.0.1:5433")).toBe(true);
+    const finding = externalDependencySkip("runner", "npm test");
+    expect(finding.category).toBe("External Dependency Skipped");
+    expect(finding.filename).toBe("<tooling>");
+    expect(finding.severity).toBe("info");
+  });
+
+  it("does not classify compiler diagnostics as external dependency failures", () => {
+    expect(isExternalDependencyFailure("src/app.ts(4,2): error TS2322: type mismatch")).toBe(false);
   });
 });
