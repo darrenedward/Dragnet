@@ -225,7 +225,7 @@ export async function runContainerizedChecks(
       }
       return findings;
     }
-    const scripts = (opts.testCommand == null || opts.testCommand.trim() === DEFAULT_TEST_COMMAND)
+    const scripts = !opts.testCommand || opts.testCommand.trim() === DEFAULT_TEST_COMMAND
       ? await readPackageScripts()
       : null;
     const cmd = resolveQualityCommand({ configuredCommand: opts.testCommand, scripts });
