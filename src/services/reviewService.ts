@@ -13,6 +13,7 @@ import { rerateWithSurvivors } from "@/src/services/findingVerifier/skepticRerat
 import { reasoningOptions, supportsJsonResponseFormat } from "@/src/lib/llmResponseFormat";
 import { completeReviewRun, setReviewRunTokens, setReviewRunLastCheckpointAt, setReviewChunkLastCheckpointAt } from "@/src/lib/reviewFreshness";
 import { safeReadFileSync, resolveSafePath } from "@/src/lib/pathSafety";
+import { readFileInRepo } from "@/src/lib/repoAccess";
 import type { ReviewTree } from "@/src/lib/reviewTree";
 import {
   searchTipOverlay,
@@ -1294,7 +1295,7 @@ export async function runPrScan(prId: string, preloadedFiles?: any[], reviewRunI
               : {
                   headSha: checkHeadSha,
                   source: "remote-volume" as const,
-                  readFile: async () => null,
+                  readFile: (file: string) => readFileInRepo(repo, file, checkHeadSha),
                 };
           const toolchain = await resolveToolchainFromReader({
             ...tipReader,
