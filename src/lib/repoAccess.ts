@@ -196,6 +196,17 @@ export async function runGitInRepo(
   );
 }
 
+/** Read a text file from the PR tip in either repository access mode. */
+export async function readFileInRepo(
+  repo: RepoLike,
+  filePath: string,
+  commitHash: string,
+): Promise<string | null> {
+  const result = await runGitInRepo(repo, ["show", `${commitHash}:${filePath}`], { commitHash });
+  if (result.exitCode !== 0) return null;
+  return result.stdout;
+}
+
 function runLocalGit(
   access: { mode: "local-path" } | { mode: RepoAccessMode },
   repo: RepoLike,
