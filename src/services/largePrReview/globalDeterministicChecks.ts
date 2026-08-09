@@ -18,6 +18,7 @@ import {
 import { withRetry, isStepFailure } from "@/src/services/stepPipeline";
 import { prisma } from "@/src/lib/prisma";
 import type { ReviewTree } from "@/src/lib/reviewTree";
+import { readFileInRepo } from "@/src/lib/repoAccess";
 
 export interface GlobalChecksResult {
   abort: boolean;
@@ -174,7 +175,7 @@ export async function runGlobalDeterministicChecks(
             : {
                 headSha: checkHeadSha,
                 source: "remote-volume" as const,
-                readFile: async () => null,
+                readFile: (file: string) => readFileInRepo(repo, file, checkHeadSha),
               };
         const configuredQuality = repo.testCommand && repo.testCommand !== DEFAULT_TEST_COMMAND
           ? [repo.testCommand]
