@@ -11,6 +11,7 @@
     "start": "next start",
     "test": "vitest run",
     "test:watch": "vitest",
+    "verify:deterministic": "tsx scripts/verify-deterministic-workflow.mts",
     "clean": "rm -rf .next",
     "lint": "tsc --noEmit",
     "dragnet": "node scripts/dragnet.mjs",

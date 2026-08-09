@@ -6,7 +6,7 @@ import { parseTscOutput, parseEslintJson } from "./parsers";
 import { logReview } from "./logging";
 import type { CheckKind, ResolvedQualityCommand } from "./toolchainResolver";
 import { planQualityChecks, buildTimeEnvironment } from "./qualityPlan";
-import { serviceEnvironment, type DisposableServicePlan } from "./disposableServices";
+import { serviceEnvironment, withDisposableServices, type DisposableServicePlan, type ServiceLifecycleAdapter } from "./disposableServices";
 import { persistExecutionEvidence, recordExecutionResult, type ToolchainEvidenceMetadata, type ExecutionEvidenceRecord } from "./executionEvidence";
 
 export interface ContainerizedCheckOptions {
@@ -34,6 +34,7 @@ export interface ContainerizedCheckOptions {
   /** Network created by the disposable-service lifecycle, when checks require services. */
   qualityNetworkMode?: string;
   servicePlan?: DisposableServicePlan;
+  serviceAdapter?: ServiceLifecycleAdapter;
   toolchainMetadata?: ToolchainEvidenceMetadata;
 }
 
@@ -295,7 +296,17 @@ export async function runContainerizedChecks(
     throw err;
   }
 
-  const testFindings = await runQualityChecks();
+  let testFindings: DeterministicFinding[];
+  if (opts.servicePlan && opts.serviceAdapter) {
+    const lifecycle = await withDisposableServices(opts.servicePlan, opts.serviceAdapter, runQualityChecks);
+    if (lifecycle.lifecycle.errors.length > 0) {
+      testFindings = [skippedFinding("runner", `Disposable service lifecycle failed: ${lifecycle.lifecycle.errors.join("; ")}`)];
+    } else {
+      testFindings = lifecycle.value ?? [];
+    }
+  } else {
+    testFindings = await runQualityChecks();
+  }
   findings.push(...testFindings);
 
   const logSummary = findings.length === 0
