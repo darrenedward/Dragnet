@@ -16,11 +16,15 @@ export interface RunOptions {
   hostBindPath?: string;
   image: string;
   commands: string[]; // e.g. ["npm install", "npm test"]
+  /** Workspace-relative command directory. Defaults to the repository root. */
+  workingDirectory?: string;
   timeoutMs?: number;
   memoryLimit?: string; // e.g. "4g"
   cpuLimit?: string; // e.g. "2"
   /** Only Git synchronization may pass its scoped SSH command. */
   env?: GitSyncRunnerEnv;
+  /** Explicit command environment. Never populated from the host process environment. */
+  environment?: Readonly<Record<string, string>>;
   /**
    * Supplies a non-routable placeholder for package lifecycle steps such as
    * Prisma generate. This is never sourced from the host environment.

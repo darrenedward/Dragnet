@@ -13,6 +13,36 @@ export interface TipTreeManifest {
 export interface ToolchainConfiguration {
   readonly workspace?: string;
   readonly qualityCommands?: readonly string[];
+  /** Explicit package directories to check. Identity is still detected at the root. */
+  readonly workspaces?: readonly string[];
+  readonly checks?: Partial<Record<CheckKind, readonly QualityCommandConfiguration[]>>;
+}
+
+export type CheckKind = "static" | "unit" | "integration" | "e2e";
+
+export interface QualityCommandConfiguration {
+  readonly command: string;
+  readonly cwd?: string;
+  readonly environment?: Readonly<Record<string, string>>;
+  readonly buildTimeEnvironment?: readonly string[];
+  readonly requiresServices?: readonly string[];
+  readonly optional?: boolean;
+}
+
+export interface ResolvedQualityCommand {
+  readonly kind: CheckKind;
+  readonly command: string;
+  readonly cwd: string;
+  readonly environment: Readonly<Record<string, string>>;
+  readonly buildTimeEnvironment: readonly string[];
+  readonly requiresServices: readonly string[];
+  readonly optional: boolean;
+}
+
+export interface ResolvedWorkspace {
+  readonly path: string;
+  readonly installRoot: string;
+  readonly commands: Readonly<Record<CheckKind, readonly ResolvedQualityCommand[]>>;
 }
 
 export interface ProjectIdentity {
@@ -30,11 +60,15 @@ export interface ResolvedToolchain {
   readonly configuration: {
     readonly workspace: string;
     readonly qualityCommands: readonly string[];
+    readonly workspaces?: readonly string[];
+    readonly checks?: Partial<Record<CheckKind, readonly QualityCommandConfiguration[]>>;
   };
   readonly execution: {
     readonly image: string | null;
     readonly installCommand: string | null;
     readonly qualityCommands: readonly string[];
+    readonly checks: Readonly<Record<CheckKind, readonly ResolvedQualityCommand[]>>;
+    readonly workspaces: readonly ResolvedWorkspace[];
   };
   readonly conflicts: readonly string[];
   readonly fingerprint: string;
@@ -162,6 +196,78 @@ function qualityCommands(
   return ecosystem === "python" ? ["python -m pytest"] : [];
 }
 
+const EMPTY_CHECKS: Readonly<Record<CheckKind, readonly ResolvedQualityCommand[]>> = {
+  static: [], unit: [], integration: [], e2e: [],
+};
+
+function checkKindForScript(name: string): CheckKind {
+  if (/e2e|playwright|cypress/i.test(name)) return "e2e";
+  if (/integration|contract/i.test(name)) return "integration";
+  if (/test|unit|vitest|jest/i.test(name)) return "unit";
+  return "static";
+}
+
+function packageDirectories(files: Readonly<Record<string, string>>): string[] {
+  return [...new Set(Object.keys(files)
+    .filter((file) => file.endsWith("/package.json"))
+    .map((file) => file.slice(0, -"/package.json".length)))]
+    .filter(Boolean)
+    .sort();
+}
+
+function packageWorkspaces(files: Readonly<Record<string, string>>, config: ToolchainConfiguration | undefined): string[] {
+  if (config?.workspaces) return [...new Set(config.workspaces)].sort();
+  if (config?.workspace && config.workspace !== ".") return [config.workspace];
+  const root = jsonFile(files, "package.json");
+  const declared = Array.isArray(root.workspaces)
+    ? root.workspaces.filter((item): item is string => typeof item === "string")
+    : isRecord(root.workspaces) && Array.isArray(root.workspaces.packages)
+      ? root.workspaces.packages.filter((item): item is string => typeof item === "string")
+      : [];
+  const candidates = packageDirectories(files);
+  if (declared.length === 0) return ["."];
+  const prefixes = declared.map((pattern) => pattern.replace(/\*.*$/, "").replace(/\/$/, ""));
+  return [".", ...candidates.filter((path) => prefixes.some((prefix) => path === prefix || path.startsWith(`${prefix}/`)))];
+}
+
+function checksForWorkspace(
+  files: Readonly<Record<string, string>>,
+  workspace: string,
+  config: ToolchainConfiguration | undefined,
+): Readonly<Record<CheckKind, readonly ResolvedQualityCommand[]>> {
+  const packagePath = workspace === "." ? "package.json" : `${workspace}/package.json`;
+  const scriptsValue = jsonFile(files, packagePath).scripts;
+  const scripts = isRecord(scriptsValue) ? scriptsValue : {};
+  const result: Record<CheckKind, ResolvedQualityCommand[]> = { static: [], unit: [], integration: [], e2e: [] };
+  if (config?.qualityCommands && workspace === (config.workspace ?? ".")) {
+    result.static = config.qualityCommands.map((command) => ({
+      kind: "static", command, cwd: workspace, environment: {}, buildTimeEnvironment: [], requiresServices: [], optional: false,
+    }));
+    return result;
+  }
+  const configured = config?.checks;
+  if (configured) {
+    for (const kind of ["static", "unit", "integration", "e2e"] as const) {
+      result[kind] = (configured[kind] ?? []).map((item) => ({
+        kind,
+        command: item.command,
+        cwd: item.cwd ?? workspace,
+        environment: item.environment ?? {},
+        buildTimeEnvironment: item.buildTimeEnvironment ?? [],
+        requiresServices: item.requiresServices ?? [],
+        optional: item.optional ?? false,
+      }));
+    }
+    return result;
+  }
+  for (const [name, value] of Object.entries(scripts)) {
+    if (typeof value !== "string") continue;
+    const kind = checkKindForScript(name);
+    result[kind].push({ kind, command: value, cwd: workspace, environment: {}, buildTimeEnvironment: [], requiresServices: [], optional: false });
+  }
+  return result;
+}
+
 function canonical(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
   if (value && typeof value === "object") {
@@ -191,10 +297,14 @@ export function resolveToolchain(input: {
     throw new Error("Toolchain resolution requires the PR tip tree; host checkout is not valid");
   }
   const files = Object.fromEntries(Object.entries(tip.files).map(([path, content]) => [path.replace(/^\.\//, ""), content]));
-  const detectors = DETECTORS.filter((detector) => detector.declarations.some((file) => file in files));
+  const detectors = DETECTORS.filter((detector) => detector.declarations.some((file) =>
+    Object.keys(files).some((path) => path === file || path.endsWith(`/${file}`)),
+  ));
   const resolvedConfiguration = {
     workspace: configuration?.workspace ?? ".",
     qualityCommands: configuration?.qualityCommands ? [...configuration.qualityCommands] : [],
+    ...(configuration?.workspaces ? { workspaces: [...configuration.workspaces] } : {}),
+    ...(configuration?.checks ? { checks: configuration.checks } : {}),
   };
   const tipInfo = { headSha: tip.headSha, source: tip.source } as const;
 
@@ -205,7 +315,7 @@ export function resolveToolchain(input: {
       tip: tipInfo,
       identity: null,
       configuration: resolvedConfiguration,
-      execution: { image: null, installCommand: null, qualityCommands: [] },
+      execution: { image: null, installCommand: null, qualityCommands: [], checks: EMPTY_CHECKS, workspaces: [] },
       conflicts: [unsupported ? `Unsupported project declaration: ${unsupported}` : "No supported project declaration found in the PR tip tree"],
     }, files);
   }
@@ -256,12 +366,33 @@ export function resolveToolchain(input: {
   if (ecosystem === "node" && lockfiles.length === 0) conflicts.push("No Node lockfile detected; deterministic install cannot use npm ci");
   if (ecosystem === "python" && lockfiles.length === 0) conflicts.push("No Python dependency lockfile detected");
   const checks = qualityCommands(ecosystem, files, configuration);
+  const workspacePaths = ecosystem === "node" ? packageWorkspaces(files, configuration) : [configuration?.workspace ?? "."];
+  const workspaceDeclarations = ecosystem === "node" ? packageDirectories(files) : Object.keys(files)
+    .filter((file) => DETECTORS.some((detector) => detector.declarations.includes(file.split("/").pop() ?? "")))
+    .map((file) => file.includes("/") ? file.slice(0, file.lastIndexOf("/")) : ".");
+  for (const workspace of workspacePaths) {
+    if (workspace !== "." && !(`${workspace}/package.json` in files || Object.keys(files).some((file) => file.startsWith(`${workspace}/`)))) {
+      conflicts.push(`Configured workspace does not exist in the PR tip tree: ${workspace}`);
+    }
+  }
+  if (workspaceDeclarations.length > 1 && workspacePaths.length === 1 && workspacePaths[0] === "." && ecosystem !== "node") {
+    conflicts.push(`Multiple ${ecosystem} package roots detected (${workspaceDeclarations.join(", ")}); configure workspaces to select one`);
+  }
+  const workspaceResults = workspacePaths.map((path) => ({
+    path,
+    installRoot: ecosystem === "node" ? "." : path,
+    commands: checksForWorkspace(files, path, configuration),
+  }));
+  const categorized = workspaceResults.reduce<Record<CheckKind, ResolvedQualityCommand[]>>((all, workspace) => {
+    for (const kind of ["static", "unit", "integration", "e2e"] as const) all[kind].push(...workspace.commands[kind]);
+    return all;
+  }, { static: [], unit: [], integration: [], e2e: [] });
   return withFingerprint({
     status: conflicts.length > 0 ? "ambiguous" : "resolved",
     tip: tipInfo,
     identity,
     configuration: resolvedConfiguration,
-    execution: { image: IMAGES[ecosystem], installCommand, qualityCommands: checks },
+    execution: { image: IMAGES[ecosystem], installCommand, qualityCommands: checks, checks: categorized, workspaces: workspaceResults },
     conflicts,
   }, files);
 }
