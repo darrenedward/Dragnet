@@ -34,6 +34,10 @@ export function executionMetadataFromToolchain(toolchain: ResolvedToolchain): To
     workspace: toolchain.configuration?.workspace ?? ".",
     workspaces: toolchain.execution.workspaces,
     commands: toolchain.execution.qualityCommands,
+    servicePolicy: Object.fromEntries(Object.entries(toolchain.execution.checks ?? {}).map(([kind, commands]) => [
+      kind,
+      commands.filter((command) => command.requiresServices.length > 0).map((command) => ({ command: command.command, services: command.requiresServices })),
+    ])),
     fingerprint: toolchain.fingerprint,
   };
 }
