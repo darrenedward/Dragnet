@@ -162,11 +162,16 @@ export class ContainerOrchestrator {
     if (!mountSource) {
       throw new Error("runRunner requires volumeName or hostBindPath");
     }
+    const workingDirectory = options.workingDirectory?.replace(/^\/+|\/+$/g, "") || "";
+    if (workingDirectory && workingDirectory.split("/").some((part) =>
+      !part || part === "." || part === ".." || !/^[A-Za-z0-9_.-]+$/.test(part))) {
+      throw new Error(`Invalid workspace working directory: ${options.workingDirectory}`);
+    }
     args.push(
       "-v",
       `${mountSource}:/workspace:rw`,
       "-w",
-      "/workspace",
+      workingDirectory ? `/workspace/${workingDirectory}` : "/workspace",
     );
 
     // Add minimal safe environment variables (e.g. clean PATH)
@@ -176,6 +181,12 @@ export class ContainerOrchestrator {
     if (options.env) {
       for (const [key, val] of Object.entries(options.env)) {
         if (!ALLOWED_RUNNER_ENV_KEYS.has(key)) continue;
+        args.push("-e", `${key}=${val}`);
+      }
+    }
+    if (options.environment) {
+      for (const [key, val] of Object.entries(options.environment)) {
+        if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
         args.push("-e", `${key}=${val}`);
       }
     }

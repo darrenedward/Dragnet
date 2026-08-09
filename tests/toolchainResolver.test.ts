@@ -136,4 +136,36 @@ describe("resolveToolchain", () => {
       "PR tip tree",
     );
   });
+
+  it("resolves declared Node workspaces with explicit command working directories", () => {
+    const result = resolveToolchain({ tip: tip({
+      "package.json": JSON.stringify({ workspaces: ["packages/*"] }),
+      "package-lock.json": "{}",
+      "packages/app/package.json": JSON.stringify({ scripts: { typecheck: "tsc --noEmit", test: "vitest run" } }),
+      "packages/api/package.json": JSON.stringify({ scripts: { integration: "npm run integration" } }),
+    }) });
+
+    expect(result.status).toBe("resolved");
+    expect(result.execution.workspaces.map((workspace) => workspace.path)).toEqual([".", "packages/api", "packages/app"]);
+    expect(result.execution.checks.static).toEqual(expect.arrayContaining([
+      expect.objectContaining({ command: "tsc --noEmit", cwd: "packages/app" }),
+    ]));
+    expect(result.execution.checks.unit).toEqual(expect.arrayContaining([
+      expect.objectContaining({ command: "vitest run", cwd: "packages/app" }),
+    ]));
+    expect(result.execution.checks.integration).toEqual([
+      expect.objectContaining({ command: "npm run integration", cwd: "packages/api" }),
+    ]);
+  });
+
+  it("reports actionable ambiguity for independent non-Node package roots", () => {
+    const result = resolveToolchain({ tip: tip({
+      "services/api/pyproject.toml": "[project]\nname='api'\n",
+      "services/api/uv.lock": "version = 1\n",
+      "services/worker/pyproject.toml": "[project]\nname='worker'\n",
+      "services/worker/uv.lock": "version = 1\n",
+    }) });
+    expect(result.status).toBe("ambiguous");
+    expect(result.conflicts.join(" ")).toContain("configure workspaces");
+  });
 });

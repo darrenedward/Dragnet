@@ -183,6 +183,20 @@ describe("ContainerOrchestrator.runRunner", () => {
     expect(args[vIndex + 1]).toMatch(/dragnet-repo-abc:\/workspace/);
   });
 
+  it("runs a workspace command with only its declared environment", async () => {
+    mockSpawnSuccess("");
+    const orc = ContainerOrchestrator.getInstance();
+    await orc.runRunner({
+      ...baseOpts,
+      workingDirectory: "packages/app",
+      environment: { BUILD_MODE: "test", SECRET: "declared" },
+    });
+    const args: string[] = mockSpawn.mock.calls[0][1] as string[];
+    expect(args[args.indexOf("-w") + 1]).toBe("/workspace/packages/app");
+    expect(args).toContain("BUILD_MODE=test");
+    expect(args).toContain("SECRET=declared");
+  });
+
   it("runs the combined shell command via sh -c", async () => {
     mockSpawnSuccess("");
     const orc = ContainerOrchestrator.getInstance();
